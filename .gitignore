@@ -1,0 +1,10 @@
+.env
+.db.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+node_modules/
+.wrangler/
+.dev.vars*
+.cloud-run-token
