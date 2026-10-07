@@ -222,3 +222,7 @@ uv run pytest -q
 測試會模擬外部網站、OpenAI 與 Telegram 回應，不需要真實的 API 金鑰。
 
 > 這是給個人本機使用的服務，沒有身分驗證，請讓 API 與資料庫只監聽 `127.0.0.1`。
+
+## 授權
+
+[MIT](LICENSE)
