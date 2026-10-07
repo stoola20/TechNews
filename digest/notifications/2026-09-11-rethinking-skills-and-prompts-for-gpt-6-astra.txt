@@ -1,8 +1,0 @@
-有新文章：〈Rethinking skills and prompts for GPT-6 Astra〉
-
-• 精簡技能描述，讓代理更容易選到正確技能。
-• 複雜技能只載入當下需要的文件。
-• 定期精簡 AGENTS.md，讓規則依工作情境生效。
-• 長任務寫清楚完成標準，避免太早停下。
-
-原文：https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra

@@ -83,6 +83,5 @@ D1 用網址保存永久文章身份，用待處理狀態保存尚未完成的�
 程式以待處理清單與每次上限控制工作量，目前沒有加入 Cloudflare Queues。
 
 選用的 Python RAG 問答服務仍獨立運作，沒有同步這個 D1 資料庫。
-本機 Python Telegram CLI 是舊工具，也沒有接入這個模型設定介面。
 
 模型與平台成本、來源策略及 Worker／n8n 比較見 [設計說明](digest-design.md)。

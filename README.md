@@ -19,8 +19,7 @@ API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時�
 | 目錄 | 用途 | 需要什麼 |
 | --- | --- | --- |
 | [`cloud-digest/`](cloud-digest/) | **建議使用。** Cloudflare Worker，每天台北時間 09:00 由 Cron 觸發，讀取全文、呼叫可切換的模型並推送 Telegram | Cloudflare 帳號、Node.js 22.13+；付費模型另需 API 金鑰 |
-| [`app/digest/`](app/digest/)、[`digest/`](digest/README.md) | 本機版：把摘要存成 Markdown，再用 CLI 推送 Telegram | Python 3.12+、`uv` |
-| [`app/`](app/) 其餘部分 | 選用：FastAPI + pgvector 的 RAG 問答 | PostgreSQL + pgvector、OpenAI API 金鑰 |
+| [`app/`](app/) | 選用：FastAPI + pgvector 的 RAG 問答 | Python 3.12+、`uv`、PostgreSQL + pgvector、OpenAI API 金鑰 |
 
 使用 Workers AI 收 Telegram 通知，只需要 Worker 與 D1，不需要自行架設 PostgreSQL 或提供 OpenAI 金鑰。
 
@@ -45,8 +44,6 @@ API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時�
   ```
 
   在回傳的 JSON 中找 `"channel_post"` → `"chat"` → `"id"`，那串數字就是 chat ID。若結果是空的，再貼一則新訊息後重試。
-
-  已經裝好 Python 環境的話，也可以用本專案的 CLI 列出（見下方「本機版」）。
 
 > Bot token 等同密碼，不要提交到 git，也不要貼到公開場合。外洩時可到 @BotFather 用 `/revoke` 重新產生。
 
@@ -156,32 +153,6 @@ npm test
 
 ---
 
-## 本機舊工具：Markdown 存檔 + Telegram CLI
-
-這個 CLI 仍保留舊版的摘要＋通知兩則行為，與上方新版 Worker 分開運作。
-
-適合想把摘要以 Markdown 存在 repo 裡（[`digest/`](digest/README.md)），或自行搭配排程工具（cron、launchd、AI agent 等）產生摘要的情況。這個版本只負責**發送**，摘要內容要由你的排程流程依 [`digest/TEMPLATE.md`](digest/TEMPLATE.md) 產生。
-
-```bash
-uv sync --extra test
-cp .env.example .env
-```
-
-在 `.env` 中填入 `TELEGRAM_BOT_TOKEN` 與 `TELEGRAM_CHAT_ID`（取得方式同上；`.env` 已列入 `.gitignore`）。
-
-```bash
-# 列出 bot 最近看得到的頻道與數字 ID（私人頻道用）
-uv run python -m app.digest.telegram --list-chats
-
-# 發送測試訊息：先一則靜音摘要，再一則正常通知
-uv run python -m app.digest.telegram --test
-
-# 發送實際摘要：summary 以靜音訊息送出（過長會自動分段），alert 以正常通知送出
-uv run python -m app.digest.telegram --summary-file summary.md --alert-file alert.txt
-```
-
----
-
 ## 選用：RAG 問答服務
 
 用 FastAPI 提供 `/ingest`（匯入 OpenAI Developer Blog 文章並產生向量）與 `/ask`（語意檢索後由 LLM 回答並附引用）。只收通知的話不需要這部分。
@@ -241,7 +212,8 @@ curl -X POST http://127.0.0.1:8000/ask \
 uv run pytest -q
 ```
 
-測試會模擬外部網站、OpenAI 與 Telegram 回應，不需要真實的 API 金鑰。
+Python 測試會模擬外部網站與 OpenAI 回應，不需要真實的 API 金鑰。
+首次執行切片測試需要下載 tiktoken 的公開分詞資料，之後會使用本機快取。
 
 > 這是給個人本機使用的服務，沒有身分驗證，請讓 API 與資料庫只監聽 `127.0.0.1`。
 

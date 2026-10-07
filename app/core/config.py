@@ -15,8 +15,6 @@ class Settings(BaseSettings):
     rag_top_k: int = Field(default=5, ge=1, le=50)
     chunk_size: int = Field(default=800, ge=1)
     chunk_overlap: int = Field(default=120, ge=0)
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
 
     @model_validator(mode="after")
     def validate_chunking(self) -> "Settings":
