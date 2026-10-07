@@ -2,30 +2,27 @@
 
 每天自動追蹤開發者技術部落格的新文章，整理成繁體中文摘要並推送到你的 Telegram 頻道。另附一套 Python + PostgreSQL（pgvector）的 RAG 問答服務，可以對文章提問。
 
-目前追蹤的來源（白名單規則見 [`cloud-digest/SOURCES.md`](cloud-digest/SOURCES.md)）：
+預設追蹤 OpenAI Developer Blog、OpenAI News、Apple Developer News、Claude Blog、claude.dev、Anthropic News 與 Engineering。入口與擷取方式見 [`cloud-digest/SOURCES.md`](cloud-digest/SOURCES.md)。
 
-| 來源 | 入口 |
-| --- | --- |
-| OpenAI Developer Blog | https://developers.openai.com/blog |
-| Apple Developer News | https://developer.apple.com/news/rss/news.rss |
-| Claude Blog | https://claude.com/blog |
+每篇先抓原文正文，再交給選中的模型寫繁中導讀。Telegram 只收到一則完整文字，含來源與原文連結，不另發重點通知。
+內容使用自然段落，依文章深度保留機制、例子、操作與限制；整則訊息控制在 4,096 字串單位內。
+沒有相關新文章時不發送訊息。
 
-每篇新文章會在頻道收到兩則訊息：
+模型共用同一個介面。預設為 Workers AI Google Gemma 4，可切換 NVIDIA Nemotron 3、OpenAI GPT-5.6 Terra 或 Anthropic Claude Sonnet 5.5。
+部署後從 Worker 網址的 `/settings` 頁面輸入 `RUN_TOKEN`，就能用手機切換模型、主題與來源 JSON，不需要重部署。
+API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時自動啟用。
 
-1. **靜音的完整摘要**：繁中摘要、技術重點、關鍵字與原文連結，當作頻道內可搜尋的存檔。
-2. **正常通知**：「有新文章」加上 3～5 個重點，手機會跳通知。
-
-沒有新文章時不會發送任何訊息。
+[資料流與 input/output](docs/architecture.md) · [模型額度與 Worker／n8n 比較](docs/digest-design.md)
 
 ## 專案結構
 
 | 目錄 | 用途 | 需要什麼 |
 | --- | --- | --- |
-| [`cloud-digest/`](cloud-digest/) | **建議使用。** Cloudflare Worker，每天台北時間 09:00 由 Cron 觸發，用 Workers AI 摘要並推送 Telegram | Cloudflare 帳號（免費方案即可）、Node.js |
+| [`cloud-digest/`](cloud-digest/) | **建議使用。** Cloudflare Worker，每天台北時間 09:00 由 Cron 觸發，讀取全文、呼叫可切換的模型並推送 Telegram | Cloudflare 帳號、Node.js 22.13+；付費模型另需 API 金鑰 |
 | [`app/digest/`](app/digest/)、[`digest/`](digest/README.md) | 本機版：把摘要存成 Markdown，再用 CLI 推送 Telegram | Python 3.12+、`uv` |
 | [`app/`](app/) 其餘部分 | 選用：FastAPI + pgvector 的 RAG 問答 | PostgreSQL + pgvector、OpenAI API 金鑰 |
 
-只想收 Telegram 通知的話，照「快速開始」做完就夠了，不需要資料庫或 OpenAI 金鑰。
+使用 Workers AI 收 Telegram 通知，只需要 Worker 與 D1，不需要自行架設 PostgreSQL 或提供 OpenAI 金鑰。
 
 ---
 
@@ -82,6 +79,12 @@ npx wrangler d1 migrations apply developer-digest-cloud --remote
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 npx wrangler secret put RUN_TOKEN
+
+# 如需使用 GPT Terra，再設定 OpenAI 金鑰
+# npx wrangler secret put OPENAI_API_KEY
+
+# 如需使用 Claude，再設定 Anthropic 金鑰
+# npx wrangler secret put ANTHROPIC_API_KEY
 ```
 
 每個指令執行後，依提示貼上對應的值：
@@ -90,7 +93,12 @@ npx wrangler secret put RUN_TOKEN
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | 步驟 1 拿到的 bot token |
 | `TELEGRAM_CHAT_ID` | 步驟 2 的 `@頻道帳號` 或數字 ID |
-| `RUN_TOKEN` | 自訂的隨機字串，用來保護手動觸發的 API，可用 `openssl rand -base64 32` 產生 |
+| `RUN_TOKEN` | 自訂的隨機字串，保護執行、設定與預覽 API，可用 `openssl rand -base64 32` 產生 |
+| `OPENAI_API_KEY` | 選用：切換 GPT Terra 時使用的 OpenAI API 金鑰 |
+| `ANTHROPIC_API_KEY` | 選用：切換 Claude Sonnet 時使用的 Anthropic API 金鑰 |
+
+請保存自己設定的 RUN_TOKEN，登入手機設定頁時使用同一份值。若存成本機 `.cloud-run-token`，此檔案已由 `.gitignore` 排除。
+`.env*`、`.dev.vars*`、Wrangler 本機狀態與資料庫檔也不會提交；只有空白或示範值的環境設定範例會保留。
 
 ### 6. 部署
 
@@ -108,23 +116,35 @@ curl -X POST \
   https://developer-digest-cloud.<你的子網域>.workers.dev/run
 ```
 
-**第一次執行**時，每個來源會挑最新一篇送出（共三篇），其餘既有文章只記錄網址當作去重基準，不會通知。之後每天只推送新文章。
+**新來源首次執行**會補收最近 14 天有日期的文章；沒有日期時只處理列表第一篇。每次最多嘗試 6 篇，其餘保存在 D1 待處理清單，下次繼續。擷取失敗時不使用 RSS 簡介代替全文。
+
+新增 D1 遷移後，部署前先執行 `npx wrangler d1 migrations apply developer-digest-cloud --remote`。只測本機時使用 `--local`。
 
 ### Worker 提供的端點
 
 | 端點 | 驗證 | 說明 |
 | --- | --- | --- |
 | `GET /health` | 不需要 | 健康檢查 |
+| `GET /settings` | 頁面入口不需要 | 載入手機設定頁，讀寫設定時仍需 RUN_TOKEN |
+| `GET /config` | `Authorization: Bearer <RUN_TOKEN>` | 讀取模型、主題與來源 JSON；不回傳金鑰 |
+| `PUT /config` | `Authorization: Bearer <RUN_TOKEN>` | 取代設定 JSON，下次執行生效 |
 | `POST /run` | `Authorization: Bearer <RUN_TOKEN>` | 立即執行一次 digest（與 Cron 相同流程） |
-| `GET /preview?source=<id>` | `Authorization: Bearer <RUN_TOKEN>` | 摘要該來源最新一篇，只回傳 JSON、不發 Telegram。`id` 為 `openai_developer_blog`、`apple_developer_news` 或 `claude_blog` |
+| `GET /preview?source=<id>` | `Authorization: Bearer <RUN_TOKEN>` | 導讀來源列表第一篇，只回傳 JSON、不發 Telegram。可加 `profile=gemma4` 或 `nemotron3`、`url=<原文網址>` 比較模型；來源 ID 見 SOURCES.md |
 
-未帶正確 token 的請求一律回 404。
+除 `/health` 與 `/settings` 的公開入口外，未帶正確 token 的請求一律回 404。
+
+### 手機設定
+
+開啟 `https://<Worker 網址>/settings`，輸入 RUN_TOKEN，再選擇模型與關注主題。
+設定存進 D1。`GET /config` 與 `PUT /config` 可讀寫同一份設定 JSON，皆需 Bearer RUN_TOKEN。
+設定頁的「先試讀一篇」不發送 Telegram，可在儲存模型前比較導讀。
+已產生但尚未發送的導讀會重用原模型結果；切換主要影響尚未生成導讀的文章。
 
 ### 自訂
 
 - **修改推送時間**：編輯 `wrangler.jsonc` 的 `triggers.crons`（UTC 時間），再重新 `npx wrangler deploy`。
-- **新增或移除來源**：修改 [`cloud-digest/src/sources.js`](cloud-digest/src/sources.js) 的 `SOURCES`，並確認擷取規則支援該網站格式。
-- **更換摘要模型**：修改 [`cloud-digest/src/index.js`](cloud-digest/src/index.js) 的 `MODEL`（Workers AI 模型 ID）。
+- **新增或移除來源**：在 `/settings` 編輯來源 JSON；特殊網站可指定 `contentSelector`，仍需確認能完整擷取。
+- **更換摘要模型**：在 `/settings` 選擇 `gemma4`、`nemotron3`、`gpt_terra` 或 `claude_sonnet`。模型 ID 定義在 `src/settings.js`。
 - **查看執行紀錄**：`npx wrangler tail`，或到 Cloudflare Dashboard → Workers → Observability。
 
 ### 執行測試
@@ -136,7 +156,9 @@ npm test
 
 ---
 
-## 本機版：Markdown 存檔 + Telegram CLI
+## 本機舊工具：Markdown 存檔 + Telegram CLI
+
+這個 CLI 仍保留舊版的摘要＋通知兩則行為，與上方新版 Worker 分開運作。
 
 適合想把摘要以 Markdown 存在 repo 裡（[`digest/`](digest/README.md)），或自行搭配排程工具（cron、launchd、AI agent 等）產生摘要的情況。這個版本只負責**發送**，摘要內容要由你的排程流程依 [`digest/TEMPLATE.md`](digest/TEMPLATE.md) 產生。
 

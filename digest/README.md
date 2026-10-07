@@ -1,8 +1,11 @@
-# Developer Digest
+# Developer Digest 本機舊工具
+
+此目錄保留舊版的 Markdown 存檔、通知範例與網址基準，沒有與新版 Worker 的 D1 同步。
+目前雲端流程使用七個官方來源、可切換模型與單則 Telegram 導讀。設定與操作見 [專案 README](../README.md) 和 [來源說明](../cloud-digest/SOURCES.md)。
 
 這裡保存已整理的技術文章。每篇文章都有原文連結，方便日後搜尋與核對；`index.md` 是目錄，`known_urls.json` 記錄檢查過的網址，避免重複通知。
 
-## 每篇文章的固定格式
+## 舊版文章格式
 
 1. 文章標題、發布日期、作者、原文連結與來源。
 2. 繁體中文摘要：說明文章核心內容，不照字面逐段翻譯。
@@ -12,6 +15,6 @@
 
 Telegram 頻道會先收到一則靜音的完整摘要，再收到「有新文章」與 3～5 個重點的正常通知。頻道與此目錄都可回查；沒有新文章時不發通知。
 
-目前先追蹤 OpenAI Developer Blog；未來可加入 Anthropic、Apple Developer、Google AI 等來源。RAG 服務保留在專案中，並非這個 Digest 工作流程的必要條件。
+此目錄的既有範例只包含 OpenAI Developer Blog。RAG 服務仍獨立運作，並非雲端 Digest 流程的必要條件。
 
 `known_urls.json` 在 2026-09-23 以當時的部落格文章網址建立基準。基準內的舊文章不會被當成新文章通知；目前先示範整理最新一篇，後續新文章會持續累積。

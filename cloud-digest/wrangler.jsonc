@@ -16,6 +16,13 @@
       "database_id": "58114115-4d4d-47e6-8092-730fe58b4eb0"
     }
   ],
-  "ai": { "binding": "AI" },
+  "ai": { "binding": "AI", "remote": true },
+  "browser": { "binding": "BROWSER", "remote": true },
+  "vars": {
+    "MODEL_PROFILE": "gemma4",
+    "MAX_ARTICLES_PER_RUN": "6",
+    "MAX_ARTICLE_CHARS": "150000",
+    "BACKFILL_DAYS": "14"
+  },
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

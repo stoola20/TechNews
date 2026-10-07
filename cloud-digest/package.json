@@ -2,10 +2,14 @@
   "name": "developer-digest-cloud",
   "private": true,
   "type": "module",
+  "engines": { "node": ">=22.13.0" },
   "scripts": {
     "test": "node --test"
   },
   "devDependencies": {
     "wrangler": "^4.137.0"
+  },
+  "dependencies": {
+    "linkedom": "^0.18.13"
   }
 }
