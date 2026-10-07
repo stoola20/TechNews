@@ -1,146 +1,224 @@
-# 個人開發者知識庫
+# Developer Digest
 
-這個專案會追蹤 [OpenAI Developer Blog](https://developers.openai.com/blog) 的新文章，整理繁體中文摘要並傳送 Telegram 通知，同時保存可回查的 Markdown 檔案。另有 Python、FastAPI、PostgreSQL、pgvector 與 OpenAI API 的 RAG 問答功能，但通知流程不需要啟用它。這個版本尚未加入知識圖譜。
+每天自動追蹤開發者技術部落格的新文章，整理成繁體中文摘要並推送到你的 Telegram 頻道。另附一套 Python + PostgreSQL（pgvector）的 RAG 問答服務，可以對文章提問。
 
-## 先使用：Developer Digest 與 Telegram 通知
+目前追蹤的來源（白名單規則見 [`cloud-digest/SOURCES.md`](cloud-digest/SOURCES.md)）：
 
-目前最直接的使用方式是每天上午 9 點檢查新文章、整理成繁體中文，將完整摘要存到 [`digest/`](digest/README.md)，並送到你的 Telegram 頻道。每篇文章會先在頻道存一則靜音的完整摘要，再送一則含 3～5 個重點的正常通知。因此 Telegram 頻道本身也能用手機回頭搜尋。這條流程**不需要** PostgreSQL、Apple Container、RAG 或 OpenAI API 金鑰；下面的資料庫與 API 步驟是之後想用 RAG 問答時才需要的。
+| 來源 | 入口 |
+| --- | --- |
+| OpenAI Developer Blog | https://developers.openai.com/blog |
+| Apple Developer News | https://developer.apple.com/news/rss/news.rss |
+| Claude Blog | https://claude.com/blog |
 
-已建立目前部落格文章的去重基準與[一篇繁中範例](digest/articles/2026-09-11-rethinking-skills-and-prompts-for-gpt-6-astra.md)。每天台北時間上午 9 點的排程已啟用；Telegram 設定尚未填好時，排程會安靜略過，不會把新文章誤記為已通知。填好後從下一次排程開始運作。這是讀取本機檔案的排程，Mac 必須開機且 Codex 桌面 App 持續運作，才能準時執行。
+每篇新文章會在頻道收到兩則訊息：
 
-### 設定 Telegram 頻道
+1. **靜音的完整摘要**：繁中摘要、技術重點、關鍵字與原文連結，當作頻道內可搜尋的存檔。
+2. **正常通知**：「有新文章」加上 3～5 個重點，手機會跳通知。
 
-1. 在 Telegram 找 [@BotFather](https://t.me/BotFather)，傳送 `/newbot`，依指示建立 bot，取得 token。這一步必須由你在 Telegram 完成。
-2. 建立或選擇要收通知的頻道，到頻道資訊的「管理員」名單把新 bot 加進去，開啟「發佈訊息」權限。只在貼文寫 `@bot帳號` 不等於加入管理員。頻道可以是公開或私人。
-3. 在本專案的 `.env` 中填入 `TELEGRAM_BOT_TOKEN=你的token`。公開頻道可直接填 `TELEGRAM_CHAT_ID=@頻道帳號`。這兩個值不要貼到對話中。
-4. 私人頻道沒有公開帳號時，**在 bot 加入管理員之後**於頻道貼一則新訊息，再執行 `uv run python -m app.digest.telegram --list-chats`，把列出的數字 ID 填入 `.env` 的 `TELEGRAM_CHAT_ID`。
-5. 執行 `uv run python -m app.digest.telegram --test`。頻道應先收到一則靜音測試摘要，再收到一則正常測試通知。確認收到後就完成設定，不需要重新建立排程。
+沒有新文章時不會發送任何訊息。
 
-`.env` 已列入 `.gitignore`。Bot token 是密鑰，只保存在本機。Telegram 頻道與本機 Markdown 都會保存之後的新文章；沒有新文章時不會發訊息。
+## 專案結構
 
-## 可選：啟用資料庫與 RAG 問答
+| 目錄 | 用途 | 需要什麼 |
+| --- | --- | --- |
+| [`cloud-digest/`](cloud-digest/) | **建議使用。** Cloudflare Worker，每天台北時間 09:00 由 Cron 觸發，用 Workers AI 摘要並推送 Telegram | Cloudflare 帳號（免費方案即可）、Node.js |
+| [`app/digest/`](app/digest/)、[`digest/`](digest/README.md) | 本機版：把摘要存成 Markdown，再用 CLI 推送 Telegram | Python 3.12+、`uv` |
+| [`app/`](app/) 其餘部分 | 選用：FastAPI + pgvector 的 RAG 問答 | PostgreSQL + pgvector、OpenAI API 金鑰 |
 
-以下段落只在你想使用 `/ingest`、`/ask` 和 pgvector 語意搜尋時才需要。
+只想收 Telegram 通知的話，照「快速開始」做完就夠了，不需要資料庫或 OpenAI 金鑰。
 
-### 開始前需要什麼
+---
 
-- Apple Silicon Mac，macOS 26 或更新版本。
-- Python 3.12 以上與 `uv`。
-- [Apple Container](https://github.com/apple/container)：用來執行已包含 pgvector 的 PostgreSQL 資料庫。
-- 你自己的 OpenAI API 金鑰：匯入文章時產生向量，以及回答問題時都會用到。
+## 快速開始：部署到 Cloudflare 並接上你的 Telegram
 
-Python 套件由 `uv` 安裝到專案的 `.venv`。資料庫則在 Apple Container 中執行；兩者會透過本機的 `127.0.0.1:5432` 連線。
+### 1. 建立 Telegram bot 與頻道
 
-## 第一次使用
+1. 在 Telegram 找 [@BotFather](https://t.me/BotFather)，傳送 `/newbot`，依指示命名後會拿到一組 **bot token**（格式類似 `123456789:AA...`）。
+2. 建立一個頻道（公開或私人都可以），或使用現有頻道。
+3. 進入頻道資訊 →「管理員」→ 新增管理員，搜尋你的 bot 加進去，並開啟「**發佈訊息**」權限。
+   > 只在貼文中提及 `@你的bot` 並不會把它加入頻道，一定要加為管理員。
 
-以下指令都要在本專案目錄執行：
+### 2. 取得頻道的 chat ID
+
+- **公開頻道**：直接用 `@頻道帳號` 當作 chat ID，例如 `@my_dev_digest`。
+- **私人頻道**：需要數字 ID（通常是 `-100` 開頭）。在 bot 成為管理員**之後**，先到頻道貼一則任意訊息，再執行：
+
+  ```bash
+  curl -s "https://api.telegram.org/bot<你的BOT_TOKEN>/getUpdates"
+  ```
+
+  在回傳的 JSON 中找 `"channel_post"` → `"chat"` → `"id"`，那串數字就是 chat ID。若結果是空的，再貼一則新訊息後重試。
+
+  已經裝好 Python 環境的話，也可以用本專案的 CLI 列出（見下方「本機版」）。
+
+> Bot token 等同密碼，不要提交到 git，也不要貼到公開場合。外洩時可到 @BotFather 用 `/revoke` 重新產生。
+
+### 3. 安裝依賴並登入 Cloudflare
 
 ```bash
-cd /Users/chenyingxun/Developer/TechNews
+git clone https://github.com/stoola20/TechNews.git
+cd TechNews/cloud-digest
+npm install
+npx wrangler login
 ```
 
-### 1. 安裝並啟動 Apple Container
-
-從 [Apple Container 官方發行頁](https://github.com/apple/container/releases) 下載有簽署的 `installer-signed.pkg`，開啟安裝程式並輸入 Mac 的管理員密碼。安裝後執行：
+### 4. 建立 D1 資料庫
 
 ```bash
-container system start
+npx wrangler d1 create developer-digest-cloud
 ```
 
-這個步驟只要安裝一次；往後通常只需要啟動資料庫容器。
+指令會輸出一組 `database_id`。打開 [`cloud-digest/wrangler.jsonc`](cloud-digest/wrangler.jsonc)，把 `d1_databases[0].database_id` **換成你自己的 ID**（repo 內的是作者帳號的 ID，你的帳號無法使用）。
 
-### 2. 建立設定檔並填入 API 金鑰
+接著建立資料表：
 
 ```bash
-test -f .env || cp .env.example .env
-test -f .db.env || cp .db.env.example .db.env
+npx wrangler d1 migrations apply developer-digest-cloud --remote
 ```
 
-前往 [OpenAI API 金鑰頁](https://platform.openai.com/api-keys) 建立金鑰。用文字編輯器開啟 `.env`，把 `OPENAI_API_KEY=` 改為你的金鑰，例如 `OPENAI_API_KEY=你的金鑰`。金鑰不要貼進程式碼或提交到版本控制；`.env` 和 `.db.env` 已列入 `.gitignore`。
+### 5. 設定 secrets
 
-範例設定使用僅供本機開發的資料庫帳號與密碼。如果你修改 `.db.env` 裡的 `POSTGRES_PASSWORD`，也要同步修改 `.env` 裡 `DATABASE_URL` 的密碼。資料庫第一次建立後，單純修改設定檔不會變更資料庫內已建立帳號的密碼。
+```bash
+npx wrangler secret put TELEGRAM_BOT_TOKEN
+npx wrangler secret put TELEGRAM_CHAT_ID
+npx wrangler secret put RUN_TOKEN
+```
 
-### 3. 安裝 Python 套件
+每個指令執行後，依提示貼上對應的值：
+
+| Secret | 值 |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | 步驟 1 拿到的 bot token |
+| `TELEGRAM_CHAT_ID` | 步驟 2 的 `@頻道帳號` 或數字 ID |
+| `RUN_TOKEN` | 自訂的隨機字串，用來保護手動觸發的 API，可用 `openssl rand -base64 32` 產生 |
+
+### 6. 部署
+
+```bash
+npx wrangler deploy
+```
+
+部署完成後會顯示 Worker 網址（`https://developer-digest-cloud.<你的子網域>.workers.dev`）。Cron 已設定為每天 `01:00 UTC`（台北時間 09:00）自動執行。
+
+### 7. 手動執行一次，確認 Telegram 有收到
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer <你的RUN_TOKEN>" \
+  https://developer-digest-cloud.<你的子網域>.workers.dev/run
+```
+
+**第一次執行**時，每個來源會挑最新一篇送出（共三篇），其餘既有文章只記錄網址當作去重基準，不會通知。之後每天只推送新文章。
+
+### Worker 提供的端點
+
+| 端點 | 驗證 | 說明 |
+| --- | --- | --- |
+| `GET /health` | 不需要 | 健康檢查 |
+| `POST /run` | `Authorization: Bearer <RUN_TOKEN>` | 立即執行一次 digest（與 Cron 相同流程） |
+| `GET /preview?source=<id>` | `Authorization: Bearer <RUN_TOKEN>` | 摘要該來源最新一篇，只回傳 JSON、不發 Telegram。`id` 為 `openai_developer_blog`、`apple_developer_news` 或 `claude_blog` |
+
+未帶正確 token 的請求一律回 404。
+
+### 自訂
+
+- **修改推送時間**：編輯 `wrangler.jsonc` 的 `triggers.crons`（UTC 時間），再重新 `npx wrangler deploy`。
+- **新增或移除來源**：修改 [`cloud-digest/src/sources.js`](cloud-digest/src/sources.js) 的 `SOURCES`，並確認擷取規則支援該網站格式。
+- **更換摘要模型**：修改 [`cloud-digest/src/index.js`](cloud-digest/src/index.js) 的 `MODEL`（Workers AI 模型 ID）。
+- **查看執行紀錄**：`npx wrangler tail`，或到 Cloudflare Dashboard → Workers → Observability。
+
+### 執行測試
+
+```bash
+cd cloud-digest
+npm test
+```
+
+---
+
+## 本機版：Markdown 存檔 + Telegram CLI
+
+適合想把摘要以 Markdown 存在 repo 裡（[`digest/`](digest/README.md)），或自行搭配排程工具（cron、launchd、AI agent 等）產生摘要的情況。這個版本只負責**發送**，摘要內容要由你的排程流程依 [`digest/TEMPLATE.md`](digest/TEMPLATE.md) 產生。
 
 ```bash
 uv sync --extra test
+cp .env.example .env
 ```
 
-### 4. 建立資料卷並啟動資料庫
-
-第一次啟動時執行：
+在 `.env` 中填入 `TELEGRAM_BOT_TOKEN` 與 `TELEGRAM_CHAT_ID`（取得方式同上；`.env` 已列入 `.gitignore`）。
 
 ```bash
-container volume create developer-kb-pgdata
-container run --detach --name developer-kb-db \
+# 列出 bot 最近看得到的頻道與數字 ID（私人頻道用）
+uv run python -m app.digest.telegram --list-chats
+
+# 發送測試訊息：先一則靜音摘要，再一則正常通知
+uv run python -m app.digest.telegram --test
+
+# 發送實際摘要：summary 以靜音訊息送出（過長會自動分段），alert 以正常通知送出
+uv run python -m app.digest.telegram --summary-file summary.md --alert-file alert.txt
+```
+
+---
+
+## 選用：RAG 問答服務
+
+用 FastAPI 提供 `/ingest`（匯入 OpenAI Developer Blog 文章並產生向量）與 `/ask`（語意檢索後由 LLM 回答並附引用）。只收通知的話不需要這部分。
+
+### 需求
+
+- Python 3.12+ 與 `uv`
+- PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)（以下用 Docker 示範；macOS 也可以用 [Apple Container](https://github.com/apple/container)，指令幾乎相同，把 `docker` 換成 `container`）
+- OpenAI API 金鑰
+
+### 設定與啟動
+
+```bash
+cp .env.example .env        # 填入 OPENAI_API_KEY
+cp .db.env.example .db.env
+uv sync --extra test
+
+docker volume create developer-kb-pgdata
+docker run --detach --name developer-kb-db \
   --env-file .db.env \
   --publish 127.0.0.1:5432:5432 \
   --volume developer-kb-pgdata:/var/lib/postgresql/data \
   pgvector/pgvector:pg17
-container exec developer-kb-db pg_isready -U knowledge -d knowledge
-```
 
-如果最後一行顯示資料庫還在啟動，等幾秒再執行一次 `pg_isready` 指令。`developer-kb-pgdata` 會保存資料；停止容器不會刪除文章。`.db.env` 的 `PGDATA` 會讓 PostgreSQL 使用資料卷內的子目錄，避開資料卷根目錄的 `lost+found`。
-
-### 5. 建立資料表並啟動 API
-
-```bash
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-第二行會持續執行服務。看到啟動完成訊息後，可在瀏覽器打開 [API 文件](http://127.0.0.1:8000/docs)，或另外開一個終端機執行下面的範例。
+範例設定使用僅供本機開發的資料庫帳密。若修改 `.db.env` 的 `POSTGRES_PASSWORD`，也要同步修改 `.env` 中 `DATABASE_URL` 的密碼。
 
-## 匯入文章與提問
-
-先匯入文章；第一次執行會下載文章並呼叫 OpenAI 產生向量，可能需要一些時間與 API 費用。
+### 使用
 
 ```bash
+# 匯入文章（會呼叫 OpenAI 產生向量，有 API 費用）
 curl -X POST http://127.0.0.1:8000/ingest
-```
 
-查看已匯入文章：
-
-```bash
+# 列出已匯入的文章
 curl http://127.0.0.1:8000/articles
-```
 
-提出問題：
-
-```bash
+# 提問
 curl -X POST http://127.0.0.1:8000/ask \
   -H 'Content-Type: application/json' \
   -d '{"question":"OpenAI 最近對 Codex 做了哪些改動？"}'
 ```
 
-`/ask` 會回傳 `answer` 與 `sources`；`sources` 包含文章標題、原文網址、片段位置及相似度分數。`/ingest` 會回傳發現、首次匯入、更新的文章數與建立的片段數。再次執行時，內容未變的文章不會重複建立片段。
+`/ask` 回傳 `answer` 與 `sources`（標題、原文網址、片段位置、相似度）。API 文件在 http://127.0.0.1:8000/docs 。
 
-## 下次啟動、停止及排錯
+### 運作方式
 
-下次使用時，先啟動 Apple Container 服務，再啟動既有資料庫容器與 API：
+發現文章網址 → 擷取內文 → 計算內容雜湊（未變動則略過）→ 切片（預設約 800 token、重疊 120）→ 產生 embedding → 存入 PostgreSQL。提問時以 pgvector 餘弦相似度取前 `RAG_TOP_K` 個片段，交給模型回答並標註引用；資訊不足時會回覆無法確認。
 
-```bash
-container system start
-container start developer-kb-db
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
+可調整的設定見 [`.env.example`](.env.example)。變更 `EMBEDDING_DIMENSIONS` 需要資料庫遷移；更換 embedding 模型則要重新產生所有片段的向量。
 
-停止 API 時按 `Ctrl+C`；停止資料庫時執行 `container stop developer-kb-db`。若資料庫啟動失敗，用 `container logs developer-kb-db` 查看訊息。可用 `container exec developer-kb-db pg_isready -U knowledge -d knowledge` 確認資料庫是否可連線。
-
-如果埠 `5432` 已被其他 PostgreSQL 服務使用，請先停止該服務，或同時修改容器的 `--publish` 主機埠與 `.env` 中的 `DATABASE_URL`。
-
-## 架構與設定
-
-匯入流程是：發現文章網址 → 擷取內文與中繼資料 → 計算內容雜湊 → 切成片段 → 呼叫 OpenAI 產生向量 → 存入 PostgreSQL。內容雜湊相同的文章會略過；更新文章及替換片段會在同一個資料庫交易中完成。搜尋時，系統用 pgvector 的餘弦相似度排序片段，再讓 OpenAI 模型依片段回答並標註引用。若找不到足夠資訊，會回覆無法確認。
-
-`.env.example` 列出可調整的 `DATABASE_URL`、`OPENAI_API_KEY`、`OPENAI_CHAT_MODEL`、`OPENAI_EMBEDDING_MODEL`、`EMBEDDING_DIMENSIONS`、`RAG_TOP_K`、`CHUNK_SIZE` 與 `CHUNK_OVERLAP`。預設片段大小約 800 個 token，重疊約 120 個 token。首次使用 tokenizer 時可能需要下載編碼資料。若變更向量維度，需要資料庫遷移；若更換 embedding 模型，既有片段也必須重新產生向量。
-
-資料庫遷移會啟用 `vector` 擴充功能並建立資料表。需要撤銷時可執行 `uv run alembic downgrade base`，但這會刪除文章與片段資料，請先備份。
-
-## 執行測試
+### 測試
 
 ```bash
 uv run pytest -q
 ```
 
-測試會模擬外部網站與 OpenAI 回應，不需要真實 API 金鑰。服務日誌採 JSON 格式，記錄問題、檢索耗時、片段 ID、相似度與模型耗時，不會記錄 API 金鑰。這是供個人本機使用的服務，請保持 API 與資料庫只監聽本機位址。
+測試會模擬外部網站、OpenAI 與 Telegram 回應，不需要真實的 API 金鑰。
+
+> 這是給個人本機使用的服務，沒有身分驗證，請讓 API 與資料庫只監聽 `127.0.0.1`。
