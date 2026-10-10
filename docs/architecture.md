@@ -1,6 +1,7 @@
 # TechNews 新版架構
 
 這份文件描述目前 Worker 的架構。部署後，手機設定頁位於 `https://<你的 Worker 網址>/settings`。
+本頁的流程圖描述既有部落格 digest；新增的 X 收藏學習流程見 [實作計畫](plans/x-learning.md) 與 [設定說明](learning-setup.md)，預設尚未啟用。
 說明採用 [SimpleEnglish](https://github.com/AminBlg/SimpleEnglish/blob/main/skills/simple-english/SKILL.md) 的短句與明確主詞原則。
 
 ```mermaid
@@ -80,7 +81,7 @@ claude.dev 使用官方 Markdown。其他來源擷取文章頁的正文、程式
 D1 用網址保存永久文章身份，用待處理狀態保存尚未完成的工作。
 處理鎖避免一般並行重複，但 Telegram 發送和 D1 寫入分開，仍有少數重複發送的可能。
 舊的 `alert_message_id` 保留供遷移相容，新版不再寫入它。
-程式以待處理清單與每次上限控制工作量，目前沒有加入 Cloudflare Queues。
+部落格 digest 以 D1 待處理清單與每次上限控制工作量。X 收藏學習另外使用 Cloudflare Queues 喚醒持續保存的任務，不套用部落格導讀的篇幅與相關性規則。
 
 選用的 Python RAG 問答服務仍獨立運作，沒有同步這個 D1 資料庫。
 

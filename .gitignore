@@ -19,3 +19,4 @@ node_modules/
 *.sqlite3-wal
 # Local UI verification screenshots; public examples remain Markdown.
 /docs/previews/*.png
+/docs/previews/*.jpg

@@ -16,6 +16,10 @@ API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時�
 
 [X 收藏與技術學習工具 Survey（2026-10-10）](docs/research/2026-10-10-x-learning-survey.md)：手動分享、書籤同步、Grok Bot、Jev、雲端與 Mac mini 本機方案的評估快照；價格與能力在採用前須重新查核。
 
+[OpenAI 如何處理影片](docs/research/2026-10-10-openai-video-support.md) · [原生影片輸入與自行前處理](docs/research/2026-10-10-native-video-vs-preprocessing.md)：模型輸入能力、畫面取樣、音畫對齊與教材生成的差異。
+
+[X 收藏學習工具規格](docs/specs/x-learning.md) · [實作計畫](docs/plans/x-learning.md) · [設定與驗證](docs/learning-setup.md)：方案二搭配 Gemini 已完成本機開發；包含分享、X 書籤、完整教材、私人文章庫與來源追問。預設未啟用，正式使用需完成憑證、資源設定與真實 API 驗證。
+
 ## 專案結構
 
 | 目錄 | 用途 | 需要什麼 |

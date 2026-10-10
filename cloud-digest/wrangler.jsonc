@@ -7,7 +7,7 @@
   "workers_dev": true,
   "triggers": {
     // 01:00 UTC = 09:00 Asia/Taipei.
-    "crons": ["0 1 * * *"]
+    "crons": ["0 1 * * *", "*/5 * * * *"]
   },
   "d1_databases": [
     {
@@ -18,11 +18,20 @@
   ],
   "ai": { "binding": "AI", "remote": true },
   "browser": { "binding": "BROWSER", "remote": true },
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "technews-learning-media" }],
+  "queues": {
+    "producers": [{ "binding": "LEARNING_JOBS", "queue": "technews-learning-jobs" }],
+    "consumers": [{ "queue": "technews-learning-jobs", "max_batch_size": 1, "max_batch_timeout": 5, "max_retries": 3, "max_concurrency": 1 }]
+  },
   "vars": {
     "MODEL_PROFILE": "gemma4",
     "MAX_ARTICLES_PER_RUN": "6",
     "MAX_ARTICLE_CHARS": "150000",
-    "BACKFILL_DAYS": "14"
+    "BACKFILL_DAYS": "14",
+    "LEARNING_ENABLED": "false",
+    "LEARNING_MODEL": "gemini-3.8-flash",
+    "LEARNING_MONTHLY_USD": "30",
+    "X_API_FIELDS_STYLE": "post"
   },
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

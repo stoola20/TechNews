@@ -4,6 +4,7 @@ import { summarize, modelConfiguration } from "./models.js";
 import { MODEL_PROFILES, readSettings, saveSettings, effectiveEnvironment, applySettings } from "./settings.js";
 import { SETTINGS_PAGE } from "./settings-page.js";
 import { timingSafeEqual } from "node:crypto";
+import { learning } from "./learning/http.js";
 
 const LEASE_MS = 10 * 60 * 1000;
 function log(event, details = {}) { console.log(JSON.stringify({ event, ...details })); }
@@ -173,8 +174,21 @@ export async function runDigest(env, dependencies = {}) {
 }
 
 export default {
-  async scheduled(_controller, env, _ctx) { await runDigest(env); },
-  async fetch(request, env) {
+  async scheduled(controller, env, _ctx) {
+    const daily = !controller?.cron || controller.cron === "0 1 * * *";
+    const results = await Promise.allSettled([
+      ...(daily ? [runDigest(env)] : []),
+      ...(env.LEARNING_ENABLED === "true" ? [learning.scheduled(env, daily)] : []),
+    ]);
+    for (const result of results) if (result.status === "rejected") throw result.reason;
+  },
+  async queue(batch, env) {
+    if (env.LEARNING_ENABLED === "true") await learning.queue(batch, env);
+    else for (const message of batch.messages) message.ack();
+  },
+  async fetch(request, env, ctx) {
+    const learningResponse = await learning.fetch(request, env, ctx);
+    if (learningResponse) return learningResponse;
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") return Response.json({ ok: true, service: "developer-digest-cloud" });
     if (url.pathname === "/settings" && request.method === "GET") return new Response(SETTINGS_PAGE, { headers: {
