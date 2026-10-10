@@ -14,6 +14,8 @@ API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時�
 
 [資料流與 input/output](docs/architecture.md) · [模型額度與 Worker／n8n 比較](docs/digest-design.md)
 
+[X 收藏與技術學習工具 Survey（2026-10-10）](docs/research/2026-10-10-x-learning-survey.md)：手動分享、書籤同步、Grok Bot、Jev、雲端與 Mac mini 本機方案的評估快照；價格與能力在採用前須重新查核。
+
 ## 專案結構
 
 | 目錄 | 用途 | 需要什麼 |
