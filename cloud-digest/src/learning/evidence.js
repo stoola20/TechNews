@@ -1,5 +1,5 @@
 import {rows,query,saveEvidence,evidence,setting,setSetting} from './store.js';
-import {webEvidence} from './network.js';
+import {webEvidence,canonicalUrl} from './network.js';
 import {postEvidence,xRead,postParameters,normalizePost,registerMedia} from './x.js';
 
 export async function acquireEvidence(env,item,deps={}) {
@@ -77,7 +77,8 @@ export async function acquireEvidence(env,item,deps={}) {
     try {
       const host=new URL(url).hostname;
       if(/(^|\.)(x\.com|twitter\.com)$/.test(host)){
-        if(!sources.some(s=>s.url===url || (s.url.split('/').at(-1)===url.split('/').at(-1)&&s.url.includes('x.com/'))))await saveEvidence(env,item.id,{url,relation:'external',status:'missing',metadata:{error:'額外 X 連結未列為父貼文、引用或作者續寫，尚未取得'}});
+        const postUrl=canonicalUrl(url);
+        if(!sources.some(s=>s.status==='available'&&s.url===postUrl))await saveEvidence(env,item.id,{url,relation:'external',status:'missing',metadata:{error:'額外 X 連結未列為父貼文、引用或作者續寫，尚未取得'}});
         state.external_done.push(url);continue;
       }
       const source=await loadWeb(url,fetcher);

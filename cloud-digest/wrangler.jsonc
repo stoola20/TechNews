@@ -28,9 +28,10 @@
     "MAX_ARTICLES_PER_RUN": "6",
     "MAX_ARTICLE_CHARS": "150000",
     "BACKFILL_DAYS": "14",
-    "LEARNING_ENABLED": "false",
+    "LEARNING_ENABLED": "true",
     "LEARNING_MODEL": "gemini-3.8-flash",
     "LEARNING_MONTHLY_USD": "30",
+    "LEARNING_BASE_USD": "0",
     "X_API_FIELDS_STYLE": "post"
   },
   "observability": { "enabled": true, "head_sampling_rate": 1 }

@@ -77,6 +77,24 @@ test('登入 session 與請求來源：不接受外站變更，登出撤銷 sess
   assert.equal((await handler.fetch(request('api/status','GET',null,{authorization:'',cookie:session}),env)).status,401);
 });
 
+test('Free 基本費可設為零，切換方案保留已計入的用量',async()=>{
+  const env=environment();
+  assert.equal((await budget(env)).base_micro,5000000);
+  await reserve(env,'test',800000);
+  env.LEARNING_BASE_USD='0';
+  const free=await budget(env);
+  assert.equal(free.base_micro,0);
+  assert.equal(free.metered_micro,800000);
+  assert.equal(free.remaining_micro,29200000);
+  const small=environment();small.LEARNING_BASE_USD='0';small.LEARNING_MONTHLY_USD='1';
+  await reserve(small,'test',800000);
+  await assert.rejects(()=>reserve(small,'test',300000),{name:'BudgetPaused'});
+  for(const invalid of ['-1','not-a-number']){
+    small.LEARNING_BASE_USD=invalid;
+    await assert.rejects(()=>budget(small),/基本費設定無效/);
+  }
+});
+
 test('預算預留原子檢查、未知失敗持續計入、暫停後仍收件',async()=>{
   const env=environment();env.LEARNING_MONTHLY_USD='6';
   const concurrent=await Promise.allSettled([reserve(env,'test',800000),reserve(env,'test',800000)]);
@@ -183,6 +201,22 @@ test('作者補充、引用、外連缺漏與重試後補齊同一篇',async()=>
   const first=await (await handler.fetch(request('api/items/'+id),env)).json();assert.ok(first.sources.some(s=>s.relation==='author_reply'));assert.ok(first.sources.some(s=>s.relation==='quote'));assert.ok(first.sources.find(s=>s.relation==='primary').content.length>20000);
   externalFails=false;await handler.fetch(request('api/items/'+id+'/retry','POST',{}),env);await handler.service.process(env,id);
   assert.equal((await item(env,id)).status,'ready');assert.equal((await item(env,id)).revision,2);assert.equal((await rows(env,'SELECT * FROM learning_items')).length,1);
+});
+
+test('已取得貼文的影片與圖片連結不誤報缺漏，未取得的貼文仍保留缺漏',async()=>{
+  assert.equal(canonicalUrl('https://x.com/author/status/111/video/1?s=52'),'https://x.com/i/status/111');
+  assert.equal(canonicalUrl('https://twitter.com/author/status/111/photo/2'),'https://x.com/i/status/111');
+  for(const unknown of [false,true]){
+    const env=environment();await connect(env);
+    const net=network({fetch(url){
+      if(url.pathname==='/2/tweets/111')return Response.json({data:{id:'111',author_id:'9',text:'主貼文與影片',conversation_id:'111',entities:{urls:[{expanded_url:'https://x.com/author/status/111/video/1?s=52'},...(unknown?[{expanded_url:'https://x.com/other/status/999/video/1'}]:[])]}}});
+      if(url.pathname==='/2/tweets/search/all')return Response.json({data:[{id:'333',author_id:'9',text:'作者補充與圖片',entities:{urls:[{expanded_url:'https://twitter.com/author/status/333/photo/1'}]}}],meta:{}});
+    }}),handler=createLearningHandler(net);
+    const id=await handler.service.collect(env,'https://x.com/author/status/111');await handler.service.process(env,id);
+    const row=await item(env,id),gaps=JSON.parse(row.gaps_json);
+    assert.equal(row.status,unknown?'partial':'ready');
+    assert.deepEqual(gaps.map(g=>g.url),unknown?['https://x.com/other/status/999/video/1']:[]);
+  }
 });
 
 test('書籤通知沒有篇數上限，超長時分批且包含每個來源',async()=>{

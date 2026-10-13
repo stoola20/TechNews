@@ -18,7 +18,15 @@ API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時�
 
 [OpenAI 如何處理影片](docs/research/2026-10-10-openai-video-support.md) · [原生影片輸入與自行前處理](docs/research/2026-10-10-native-video-vs-preprocessing.md)：模型輸入能力、畫面取樣、音畫對齊與教材生成的差異。
 
-[X 收藏學習工具規格](docs/specs/x-learning.md) · [實作計畫](docs/plans/x-learning.md) · [設定與驗證](docs/learning-setup.md)：方案二搭配 Gemini 已完成本機開發；包含分享、X 書籤、完整教材、私人文章庫與來源追問。預設未啟用，正式使用需完成憑證、資源設定與真實 API 驗證。
+[X 收藏學習工具規格](docs/specs/x-learning.md) · [實作計畫](docs/plans/x-learning.md) · [設定與使用](docs/learning-setup.md)：Gemini 學習流程已部署並啟用，以 Workers Free 完成首篇真實貼文的 Telegram 收件、主文與作者補充、影片處理、教材生成、完成通知及單篇來源追問。[實測紀錄](docs/testing/learning-setup-2026-10-13.md) 列出已驗證範圍與待驗項目；其他帳號仍須自行建立資源與設定憑證。
+
+### X 文章搜集與閱讀
+
+將 X 貼文或外部文章連結傳到允許收件的 Telegram 私聊／頻道，或在 Worker 的 `/learning` 頁面加入連結。文章完成後會收到導讀與私人文章庫連結；完整教材、來源、媒體時間點、筆記與追問保存在文章庫。
+
+文章庫使用 RUN_TOKEN 登入。每天台灣時間 09:00 同步 X 書籤；首次取得的舊收藏先等待確認，按「整理已取得的既有書籤」才會啟動整批回補。先以少量素材測試品質與費用，再決定是否回補。
+
+Cloudflare Free 已完成這次試跑，X 與 Gemini 仍分別計費；系統月預算預設 US$30。Free 的執行限制、設定步驟與故障處理見 [設定與使用](docs/learning-setup.md)。
 
 ## 專案結構
 

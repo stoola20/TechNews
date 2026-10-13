@@ -7,7 +7,7 @@ export function canonicalUrl(value) {
   const h=u.hostname.toLowerCase();
   if(!h.includes('.') || h.includes(':') || /^[\d.]+$/.test(h) || /(^|\.)(localhost|local|internal|test|invalid|lan)$/.test(h))throw new Error('不接受本機或內網來源');
   if(['x.com','www.x.com','twitter.com','www.twitter.com','mobile.twitter.com'].includes(h)) {
-    const match=u.pathname.match(/^\/(?:[^/]+\/status|i\/web\/status|i\/status)\/(\d+)\/?$/);
+    const match=u.pathname.match(/^\/(?:[^/]+\/status|i\/web\/status|i\/status)\/(\d+)(?:\/(?:video|photo)\/[1-9]\d*)?\/?$/);
     if(!match)throw new Error('請提供 X 貼文連結');
     return `https://x.com/i/status/${match[1]}`;
   }

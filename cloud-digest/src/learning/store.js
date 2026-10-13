@@ -32,9 +32,11 @@ export function monthKey(time = Date.now()) {
 export class BudgetPaused extends Error { constructor(){super('費用不足或處理已暫停，工作已保留，請手動恢復。');this.name='BudgetPaused';} }
 export async function budget(env) {
   const month=monthKey();
-  const limit=Math.round(Number(env.LEARNING_MONTHLY_USD || 30)*1e6);
-  if (!Number.isFinite(limit) || limit<5000000) throw new Error('月預算不得低於基本費 US$5');
-  await query(env,'INSERT OR IGNORE INTO learning_months(month,limit_micro,base_micro) VALUES(?,?,5000000)',month,limit).run();
+  const limit=Math.round(Number(env.LEARNING_MONTHLY_USD ?? 30)*1e6);
+  const base=Math.round(Number(env.LEARNING_BASE_USD ?? 5)*1e6);
+  if (!Number.isSafeInteger(base) || base<0) throw new Error('基本費設定無效');
+  if (!Number.isSafeInteger(limit) || limit<=0 || limit<base) throw new Error('月預算須大於零，且不得低於基本費');
+  await query(env,'INSERT INTO learning_months(month,limit_micro,base_micro) VALUES(?,?,?) ON CONFLICT(month) DO UPDATE SET base_micro=excluded.base_micro',month,limit,base).run();
   const b=await query(env,`SELECT m.*,COALESCE(SUM(c.amount_micro),0) AS metered_micro,
     COALESCE(SUM(CASE WHEN c.status IN ('reserved','uncertain') THEN c.amount_micro ELSE 0 END),0) AS unsettled_micro
     FROM learning_months m LEFT JOIN learning_costs c ON c.month=m.month WHERE m.month=? GROUP BY m.month`,month).first();

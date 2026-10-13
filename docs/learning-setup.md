@@ -1,8 +1,19 @@
-# X 收藏學習工具：設定與驗證
+# X 收藏學習工具：設定、使用與驗證
 
-程式已完成本機開發與模擬整合驗證。正式啟用仍需 Gemini 與 X 憑證、Cloudflare Queue／R2、資料庫 migration、Telegram webhook 與真實 API 驗證。
+學習流程已完成正式部署與首篇真實 API 試跑：Telegram 收件、X 主文與作者補充、3 支影片的原生處理、繁中教材生成、完成通知及單篇來源追問均已驗證。完整證據與待驗項目見 [正式環境實測紀錄](testing/learning-setup-2026-10-13.md)。
 
-預設 `LEARNING_ENABLED=false`，避免只有程式部署完成就開始消耗付費 API。既有部落格 digest 的模型與流程維持獨立。
+本專案目前設定 `LEARNING_ENABLED=true`。新帳號或重新建置環境時，先改為 `false`，完成 Gemini、X、Cloudflare Queue／R2、D1 migration 與 Telegram webhook 設定後再啟用。既有部落格 digest 的模型與流程維持獨立。
+
+## 日常使用
+
+1. 開啟 `https://<Worker 網址>/learning`，以 RUN_TOKEN 登入。根目錄 `/` 沒有首頁，顯示 `Not Found` 是正常的；`/health` 可檢查服務，`/settings` 是既有 digest 的設定頁。
+2. 將連結傳到允許收件的 Telegram 私聊／頻道，或在文章庫輸入連結並按「加入文章庫」。Telegram 收件成功時會先回覆已保存，處理完成後再送導讀與文章連結。
+3. 在文章庫閱讀教材與原始來源，核對來源缺漏及媒體時間點。可搜尋、標記已讀、保存筆記，並選擇目前文章或整個文章庫進行來源追問；追問會呼叫 Gemini，依用量計費。
+4. 新書籤每天台灣時間 09:00 同步，也可按「同步／續跑書籤」手動啟動。首次既有書籤先等待確認；「整理已取得的既有書籤」會開始整批回補，並非只處理目前選取的一篇。
+
+按鈕請求期間顯示 loading 圖示與操作文字，避免同一按鈕重複送出。書籤背景同步中會每 5 秒更新進度，切換到背景分頁時停止輪詢；教材整理或媒體處理可能繼續在背景執行，按鈕恢復不代表教材已完成。成功與錯誤提示顯示在頁面上方。
+
+RUN_TOKEN 若保存為本機 `.cloud-run-token`，檔案位於專案根目錄；本機 webhook secret 可保存在 `cloud-digest/.dev.vars`。這些檔案已由 git 排除，憑證值不得寫入公開文件或提交。Cloudflare 遠端 secret 無法透過 `secret list` 取回原值；不要為找回登入憑證直接重設 RUN_TOKEN，它也用於解密已保存的 X 授權。
 
 ## 本機閱讀與操作示範
 
@@ -18,7 +29,9 @@ node scripts/learning-demo.mjs
 
 ## 建立 Cloudflare 資源
 
-在 `cloud-digest` 使用現有 Cloudflare 帳號與已安裝的 Wrangler。正式環境使用 Workers Paid，月預算已預留 US$5 基本費。
+在 `cloud-digest` 使用現有 Cloudflare 帳號與已安裝的 Wrangler。目前先使用 Workers Free 小量實測，設定 `LEARNING_BASE_USD=0`；升級 Workers Paid 後改為 `5`，納入每月基本費估算。Free 支援 Queue，每日含 10,000 次操作、訊息保留 24 小時；HTTP 與 Cron 的 CPU 限制為每次 10 ms，解析長文章是否足夠需實測，等待外部 API 不計入 CPU 時間。
+
+官方額度：[Queues](https://developers.cloudflare.com/queues/platform/pricing/)、[Workers 限制](https://developers.cloudflare.com/workers/platform/limits/)。Cloudflare Free 不代表 X、Gemini 或超出 R2 免費額度的用量免付費。
 
 ```bash
 npx wrangler queues create technews-learning-jobs
@@ -27,6 +40,8 @@ npx wrangler d1 migrations apply developer-digest-cloud --remote
 ```
 
 資源名稱已在 Worker 設定中定義。若同名資源已存在，確認它是此專案的資源後重用，不刪除或覆蓋其他用途的資料。migration 只新增學習流程資料表。
+
+R2 建立指令若詢問是否自動加入設定檔，已設定 `MEDIA` binding 的專案選 `n`，避免新增不同名稱的 binding。R2 採 Standard 儲存，每月包含 10 GB-month 免費額度，與同帳號其他 bucket 共用；超出額度另計費。[官方價格](https://developers.cloudflare.com/r2/pricing/)。
 
 ## Gemini 設定
 
@@ -48,6 +63,8 @@ npx wrangler secret put GEMINI_API_KEY
 https://<Worker 網址>/learning/x/callback
 ```
 
+若 Console 已自動建立 App，可直接沿用。App permissions 選 `Read`；Type of App 選 `Web App, Automated App or Bot`；Website URL 填正式 Worker 的 HTTPS origin。程式使用 OAuth 2.0 的 Client ID 與 Client Secret，不是 OAuth 1.0 的 Consumer Key、Access Token 或 App-only Bearer Token。
+
 程式要求 `bookmark.read tweet.read users.read offline.access`。`offline.access` 用於刷新授權；OAuth token 以 RUN_TOKEN 衍生的金鑰加密後保存在 D1，不回傳前端。
 
 ```bash
@@ -55,7 +72,11 @@ npx wrangler secret put X_CLIENT_ID
 npx wrangler secret put X_CLIENT_SECRET
 ```
 
-在 Worker vars 加入 `PUBLIC_BASE_URL`，值為正式 Worker 的 HTTPS origin，不包含 `/learning`、金鑰或登入憑證。
+以 Cloudflare Secret 設定 `PUBLIC_BASE_URL`，值為正式 Worker 的 HTTPS origin，不包含 `/learning`、金鑰或登入憑證。個人部署設定不寫入公開的 `wrangler.jsonc`：
+
+```bash
+npx wrangler secret put PUBLIC_BASE_URL
+```
 
 登入文章庫後選「連接 X」。完成後，首次掃描建立待確認的既有書籤清單，預覽也會產生讀取費。未掃完時，顯示的是已取得數量；無法可靠區分初次掃描期間新增與原本已有的書籤。
 
@@ -63,7 +84,7 @@ npx wrangler secret put X_CLIENT_SECRET
 
 目前 X 官方文件的欄位名稱有 `post.fields` 與 `tweet.fields` 差異。預設 `X_API_FIELDS_STYLE=post`，輸入正規化相容兩種回應。若真實 API 契約驗證顯示需要舊命名，改為 `tweet` 後重新部署；不要把 HTTP 錯誤視為沒有作者補充。
 
-X credits 與供應商 spending limit 需在 X 控制台設定。來源失效、權限不足或 API 不提供的內容，會保留缺漏，不繞過登入或來源限制。
+連接 X 前，先在 Console 的 Credits 頁面確認餘額；試跑可將 Billing Cycle Cap 設為 US$5，Auto Recharge 保持 Off。供應商端上限與文章庫的 US$30 總預算分開運作。首次授權會立即啟動既有書籤掃描，即使尚未回補，仍會產生讀取費。來源失效、權限不足或 API 不提供的內容，會保留缺漏，不繞過登入或來源限制。
 
 ## Telegram 收件與通知
 
@@ -75,7 +96,15 @@ X credits 與供應商 spending limit 需在 X 控制台設定。來源失效、
 npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 ```
 
-在 Worker vars 設定 `TELEGRAM_ALLOWED_CHAT_IDS`，填入允許收件的 chat ID，多個 ID 用逗號分隔。不要預設公開接受所有使用者。
+以 Cloudflare Secret 設定 `TELEGRAM_ALLOWED_CHAT_IDS`，填入允許收件的數字 chat ID，多個 ID 用逗號分隔。個人的頻道 ID 不寫入公開設定檔：
+
+```bash
+npx wrangler secret put TELEGRAM_ALLOWED_CHAT_IDS
+```
+
+頻道 ID 通常以 `-100` 開頭；通知目的地可以使用 `@username`，但收件 allowlist 要與 update 的數字 ID 一致。不要預設公開接受所有使用者。
+
+頻道貼文可能以頻道身分顯示，程式依 `chat.id` 與 webhook secret 驗證，不依個人傳送者名稱決定是否接受。bot 必須是該頻道管理員；收件與通知沿用同一頻道時，通知權限也需保留。
 
 部署後，以 Telegram Bot API `setWebhook` 指向：
 
@@ -83,7 +112,7 @@ npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
 https://<Worker 網址>/learning/telegram
 ```
 
-同時設定與 Worker 一致的 `secret_token`，以及 `allowed_updates` 為 `message`、`channel_post`。以下本機設定程序從互動輸入取得 Bot token 與 webhook secret，不把它們放進命令參數或文件：
+同時設定與 Worker 完全一致的 `secret_token`，以及 `allowed_updates` 為 `message`、`channel_post`。兩邊使用同一份保存的值，不要各自產生一份。輪替時必須同步更新 Worker 與 Telegram，避免待送訊息持續驗證失敗。以下本機設定程序從互動輸入取得 Bot token 與 webhook secret，不把它們放進命令參數或文件：
 
 ```python
 import getpass
@@ -115,9 +144,11 @@ print("設定成功" if result.get("ok") else "設定未成功，請檢查 Teleg
 
 Webhook 和 `getUpdates` 不能同時用來收件。收件設定完成後，既有通知的 `sendMessage` 功能仍可使用。
 
+`setWebhook` 成功只表示 Telegram 接受設定，不能證明 Worker 已接受 secret。啟用後需透過真實分享確認收件回覆、文章庫紀錄與完成通知；更新 webhook 時不要為排除錯誤直接丟棄待送更新。
+
 ## 啟用與部署
 
-確認 vars 與所有秘密已設定，再將 `LEARNING_ENABLED` 改為 `true`。
+確認 vars 與所有秘密已設定，再將 `LEARNING_ENABLED` 改為 `true`。一般部署會保留已設定的 Cloudflare Secrets；本機 `.dev.vars` 不會自動上傳。
 
 ```bash
 npm test
@@ -133,11 +164,26 @@ Node 必須符合專案要求；若 shell 選到舊版，先切換至 Node 22，
 
 ## 費用與恢復
 
-月預算為 US$30，先預留基本費 US$5，其他支出按 X 回傳資源、Gemini token 與媒體儲存估算。系統不把 UTC 日的去重計費當成可靠免費重讀。
+月預算為 US$30，基本費依 `LEARNING_BASE_USD` 預留；目前 Free 設為 US$0，未指定時預設 US$5。其他支出按 X 回傳資源、Gemini token 與媒體儲存估算。系統不把 UTC 日的去重計費當成可靠免費重讀。切換基本費會更新當月估算，保留已記錄的用量、月預算與暫停狀態；月預算設定在新月份生效。
 
 呼叫前預留費用；成功後結算可取得的用量。無法確認是否已計費的失敗仍保留預留，避免因重試低估支出。顯示數字是控管估算，不保證等同供應商帳單。
 
 達門檻後停止新的付費工作，但保留分享、文章、待處理項目與同步 checkpoint。下月不自動解除暫停。點「手動恢復」後，仍會檢查剩餘預算；不足時繼續保留工作。
+
+## 故障處理
+
+| 現象 | 檢查與處理 |
+| --- | --- |
+| Worker 根目錄顯示 `Not Found` | 開啟 `/learning`，並以 `/health` 確認服務；根目錄沒有首頁 |
+| Telegram 沒有收件回覆、文章庫也沒有來源 | 用 `getWebhookInfo` 查待送數量與錯誤；不要先重貼連結或重跑模型 |
+| Webhook 回傳 404 | 核對目的地 `/learning/telegram` 與兩邊的 webhook secret；驗證不符時程式回傳 404 |
+| Webhook 回傳 503 | 確認已部署 `LEARNING_ENABLED=true` |
+| Webhook 成功，但頻道訊息未收件 | 核對數字 chat ID、`channel_post` 收件類型，以及 bot 是否已加入該頻道 |
+| 文章仍顯示等待／處理中 | 查看來源、媒體與錯誤狀態；影片可能等待 Gemini Files 處理，背景工作會保留進度 |
+| X 同步需要手動處理 | 核對授權、credits 與欄位設定，修正後按「同步／續跑書籤」；必要時重新連接 X |
+| 出現 `Exceeded CPU Time Limits`／1102 | 依實際素材評估 Free 是否足夠，再決定是否升級 Paid；升級後將 `LEARNING_BASE_USD` 改為 `5` |
+
+排查時先讀取已保存狀態與供應商錯誤，不在日誌、終端機參數或公開文件輸出 token、請求憑證或含憑證的網址。
 
 ## 來源與媒體的邊界
 
