@@ -98,9 +98,9 @@ export async function generate(config,job,{signal,fetcher=fetch}={}){
   const model={name:config.model,digest:job.modelDigest || '',done_reason:final.done_reason};
   if(final.done_reason!=='stop'){await debugDump(config,job,content,'incomplete');return {output:null,model,metrics,raw:content};}
   try{
-    const output=job.kind==='question'?parseAnswer(content):parseArticle(content,!!job.input.official);
+    const output=job.kind==='question'?parseAnswer(content,{stopped:true}):parseArticle(content,!!job.input.official,{stopped:true});
     return {output,model,metrics,raw:content};
-  }catch(error){await debugDump(config,job,content,'unparsed');throw error;}
+  }catch(error){await debugDump(config,job,content,'unparsed');error.raw=content;throw error;}
 }
 
 // 只在明確設定 RUNNER_DEBUG_DIR 時保存原始輸出到本機，方便調整提示；不會上傳。

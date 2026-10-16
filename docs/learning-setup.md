@@ -201,6 +201,20 @@ Node 必須符合專案要求；若 shell 選到舊版，先切換至 Node 22，
 
 切換前，08:00 仍執行舊的官方 Telegram 導讀流程，舊導讀會在維護排程時搬進文章庫並標成「既有導讀」。
 
+## 切換到本機 Gemma
+
+依序進行；任何一步沒通過就停在切換前，既有 Gemini 路徑仍可運作。
+
+1. 套用新 migration 再部署：`npx wrangler d1 migrations apply developer-digest-cloud --remote`，然後 `npx wrangler deploy`。新 Cron（08:00 官方與完整核對、每 10 分鐘局部檢查、每 5 分鐘維護）隨部署生效。
+2. 第一次維護排程會把舊官方導讀搬進文章庫並標成「既有導讀」，不呼叫模型、不發通知。也可在管理頁按「搬移舊官方導讀」。
+3. 設定執行器憑證：`npx wrangler secret put LEARNING_RUNNER_TOKEN`。不要重用 `RUN_TOKEN`；新增這個憑證不會影響既有登入與 X 授權加密。
+4. 在 Mac 上設定 Ollama 與執行器，見 [Mac 本機文字執行器](../cloud-digest/runner/README.md)。`runner.mjs --check` 通過後再用 `install-launchd.sh` 常駐。
+5. 在 Mac 上跑代表素材驗收：`node scripts/acceptance.mjs --ctx <選定值>`。重大事實錯誤、捏造引用或未標示缺漏都不能通過。結果紀錄見[驗收紀錄](testing/unified-learning-acceptance-2026-10-17.md)。
+6. 先用網站加入幾篇真實文章比較兩條路徑，再到 `/learning/admin` 按「改用本機 Gemma」。
+7. 切換後確認：管理頁顯示 Mac 在線、工作有被領取；Telegram 收到逐篇完成通知；追問能回覆。
+
+回退：在管理頁按「改回 Gemini」。已完成的文章、筆記與通知紀錄不受影響；等待本機的工作會留在佇列，Mac 恢復後或下次切回本機時繼續。
+
 ## 費用與恢復
 
 統一流程的雲端預算是每個台灣曆月 US$30，包含 X 讀取、Gemini（媒體解析與切換前的寫作）、R2 保存與 `LEARNING_BASE_USD` 預留的基本費（目前 Free 設為 US$0，未指定時預設 US$5）。Mac 電費不計入。舊資料搬移不會再計一次費用。

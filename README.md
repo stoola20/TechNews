@@ -20,6 +20,14 @@ API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時�
 
 [X 收藏學習工具規格](docs/specs/x-learning.md) · [實作計畫](docs/plans/x-learning.md) · [設定與使用](docs/learning-setup.md)：Gemini 學習流程已部署並啟用，以 Workers Free 完成首篇真實貼文的 Telegram 收件、主文與作者補充、影片處理、教材生成、完成通知及單篇來源追問。[實測紀錄](docs/testing/learning-setup-2026-10-13.md) 列出已驗證範圍與待驗項目；其他帳號仍須自行建立資源與設定憑證。
 
+### 統一整理流程（本機 Gemma）
+
+[統一整理規格](docs/specs/unified-learning.md) · [實作計畫](docs/plans/unified-learning.md) · [驗收紀錄](docs/testing/unified-learning-acceptance-2026-10-17.md) · [Mac 執行器](cloud-digest/runner/README.md)
+
+官方文章、X 書籤、Telegram 與網站分享進同一個私人文章庫，全部詳細整理。雲端保存網站、收件、排程、原文、媒體與工作；Mac 上的執行器主動領取文字工作，用原生 Ollama 的 Gemma 寫作與回答追問；Gemini Flash 只負責解析圖片與影片並保存證據。
+
+切換前預設仍是既有 Gemini 路徑。完成代表素材驗收並啟動 Mac 執行器後，才在 `/learning/admin` 把文字模型切到本機。Mac 離線時工作會等待，不會自動改用雲端文字模型。
+
 ### X 文章搜集與閱讀
 
 將 X 貼文或外部文章連結傳到允許收件的 Telegram 私聊／頻道，或在 Worker 的 `/learning` 頁面加入連結。文章完成後會收到導讀與私人文章庫連結；完整教材、來源、媒體時間點、筆記與追問保存在文章庫。
@@ -141,6 +149,8 @@ curl -X POST \
 | `PUT /config` | `Authorization: Bearer <RUN_TOKEN>` | 取代設定 JSON，下次執行生效 |
 | `POST /run` | `Authorization: Bearer <RUN_TOKEN>` | 立即執行一次 digest（與 Cron 相同流程） |
 | `GET /preview?source=<id>` | `Authorization: Bearer <RUN_TOKEN>` | 導讀來源列表第一篇，只回傳 JSON、不發 Telegram。可加 `profile=gemma4` 或 `nemotron3`、`url=<原文網址>` 比較模型；來源 ID 見 SOURCES.md |
+| `GET /learning`、`GET /learning/admin` | 登入 session | 文章庫（列表／閱讀）與管理入口 |
+| `POST /learning/runner/{claim,heartbeat,complete,fail,release}` | `Authorization: Bearer <LEARNING_RUNNER_TOKEN>` | Mac 執行器專用；網站登入憑證不能使用 |
 
 除 `/health` 與 `/settings` 的公開入口外，未帶正確 token 的請求一律回 404。
 

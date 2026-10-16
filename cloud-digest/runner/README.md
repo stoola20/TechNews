@@ -12,6 +12,18 @@
 - 已下載模型：`ollama pull gemma4:26b`。
 - Node.js 22.13 以上。執行器沒有額外套件依賴，直接使用本 repo 的 `cloud-digest/runner/`。
 
+## Ollama 服務設定
+
+用 Homebrew 安裝的 Ollama，可用腳本把服務設成適合常駐單工執行器的狀態：只聽 `127.0.0.1`、一次一份推論、只載入一個模型、保留模型 30 分鐘。原本的 flash attention 與 q8 KV cache 設定會保留。
+
+```bash
+runner/configure-ollama.sh
+```
+
+`brew services restart ollama` 會依 formula 重寫服務設定，之後要再執行一次。使用 Ollama.app 時，改用 `launchctl setenv` 設定相同變數後重開 Ollama。
+
+`OLLAMA_NUM_CTX` 與 `OLLAMA_NUM_PREDICT` 由執行器在每次請求帶入，請依[驗收紀錄](../../docs/testing/unified-learning-acceptance-2026-10-17.md)的實測選擇；固定一個值，避免每份工作改變 context 而重新載入模型。模型檔大小不等於執行時記憶體，context 越大，KV cache 越大。
+
 ## 雲端設定
 
 1. 產生執行器專用憑證，設成 Worker secret。這組憑證和網站登入用的 `RUN_TOKEN` 不同，也不會影響 X 授權加密：

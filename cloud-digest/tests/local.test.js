@@ -66,7 +66,7 @@ test('網站分享純文字：雲端保存工作，Mac 以 Gemma 生成完整教
   const saved=await item(env,id),article=JSON.parse(saved.article_json);
   assert.equal(saved.status,'ready');assert.equal(saved.revision,1);assert.match(saved.body,/2\.3 版以上/);
   assert.equal(article.provider,'ollama');assert.equal(article.model,'gemma4:26b');assert.equal(article.model_digest,'48eb98ec778c');
-  assert.equal(article.prompt_version,'local-article-v1');assert.ok(article.input_fingerprint);assert.equal(article.intro,'背景、操作與版本限制都保留。');
+  assert.equal(article.prompt_version,'local-article-v2');assert.ok(article.input_fingerprint);assert.equal(article.intro,'背景、操作與版本限制都保留。');
   assert.deepEqual(article.citations,[(await evidence(env,id))[0].id]);assert.equal(article.metrics.output_tokens,400);
   assert.equal(net.calls.filter(c=>c.url.includes('generativelanguage')).length,0);
   assert.equal(net.calls.filter(c=>c.url.includes('api.telegram.org')).length,1);
@@ -148,7 +148,9 @@ test('執行器設定：只連本機 Ollama，雲端需 HTTPS；未結束輸出�
   const job={kind:'article',input:{sources:[{ref:'S1',id:'e1',content:'短文'}],gaps:[]}};
   const cut=await generate(config(),job,{fetcher:ollama(tagged({end:false}),{doneReason:'length'}).fetcher});
   assert.equal(cut.output,null);
-  await assert.rejects(generate(config(),job,{fetcher:ollama(tagged({end:false})).fetcher}),/未完整結束/);
+  // 自然停止但漏了 END 標記：正文完整時接受；連正文都沒有時拒絕。
+  assert.equal((await generate(config(),job,{fetcher:ollama(tagged({end:false})).fetcher})).output.title,'完整技術教材');
+  await assert.rejects(generate(config(),job,{fetcher:ollama('<<<TITLE>>>\n只有標題').fetcher}),/未完整結束/);
 });
 
 test('本機輸出解析容許標記同行或粗體，缺少結束標記則拒絕',async()=>{
