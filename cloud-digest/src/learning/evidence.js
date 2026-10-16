@@ -1,6 +1,21 @@
 import {rows,query,saveEvidence,evidence,setting,setSetting} from './store.js';
 import {webEvidence,canonicalUrl} from './network.js';
 import {postEvidence,xRead,postParameters,normalizePost,registerMedia} from './x.js';
+import {loadArticle,getSources} from '../sources.js';
+import {effectiveEnvironment} from '../settings.js';
+
+// 官方來源沿用既有官方擷取（含 Markdown 與瀏覽器備援），第一版只取全文文字，不抓媒體。
+async function officialSourceFor(env,item){
+  const intake=await query(env,"SELECT metadata_json FROM learning_intakes WHERE item_id=? AND origin='official' ORDER BY created_at LIMIT 1",item.id).first();
+  if(!intake)return null;
+  const metadata=JSON.parse(intake.metadata_json || '{}');
+  const source=getSources(await effectiveEnvironment(env)).find(s=>s.id===metadata.source_id);
+  return source?{source,metadata}:null;
+}
+async function officialEvidence(env,{source,metadata},item,deps,fetcher){
+  const article=await (deps.loadArticle || loadArticle)(source,{url:item.url,title:metadata.title || item.title || '',publishedAt:metadata.published_at || null,content:null},fetcher,env);
+  return {url:item.url,relation:'primary',content:article.content,published_at:article.publishedAt,metadata:{title:article.title,content_method:article.contentMethod,official_source:source.id},media:[]};
+}
 
 export async function acquireEvidence(env,item,deps={}) {
   const fetcher=deps.fetcher || fetch;
@@ -8,7 +23,9 @@ export async function acquireEvidence(env,item,deps={}) {
   let sources=await evidence(env,item.id);
   let primary=sources.find(s=>s.relation==='primary'&&s.status==='available'&&s.content);
   if(!primary){
-    const source=item.kind==='x'?await (deps.postEvidence || postEvidence)(env,item.url.split('/').at(-1),fetcher):await loadWeb(item.url,fetcher);
+    const official=item.kind==='x'?null:await officialSourceFor(env,item);
+    const source=item.kind==='x'?await (deps.postEvidence || postEvidence)(env,item.url.split('/').at(-1),fetcher)
+      :official?await officialEvidence(env,official,item,deps,fetcher):await loadWeb(item.url,fetcher);
     if(!source.content?.trim()){
       if(source.media?.length || source.metadata?.references?.length){source.content='[主貼文沒有文字；附件與引用需另外取得，不可推測補齊。]';source.metadata={...source.metadata,no_text:true};}
       else throw new Error('來源沒有可取得的主文');

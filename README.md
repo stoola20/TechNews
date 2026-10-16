@@ -24,7 +24,7 @@ API 金鑰由 Worker Secrets 保存；付費 API 不會在免費模型失敗時�
 
 將 X 貼文或外部文章連結傳到允許收件的 Telegram 私聊／頻道，或在 Worker 的 `/learning` 頁面加入連結。文章完成後會收到導讀與私人文章庫連結；完整教材、來源、媒體時間點、筆記與追問保存在文章庫。
 
-文章庫使用 RUN_TOKEN 登入。每天台灣時間 09:00 同步 X 書籤；首次取得的舊收藏先等待確認，按「整理已取得的既有書籤」才會啟動整批回補。先以少量素材測試品質與費用，再決定是否回補。
+文章庫使用 RUN_TOKEN 登入。每天台灣時間 08:00 開始同步 X 書籤；首次取得的舊收藏先等待確認，按「整理已取得的既有書籤」才會啟動整批回補。先以少量素材測試品質與費用，再決定是否回補。
 
 Cloudflare Free 已完成這次試跑，X 與 Gemini 仍分別計費；系統月預算預設 US$30。Free 的執行限制、設定步驟與故障處理見 [設定與使用](docs/learning-setup.md)。
 
@@ -32,7 +32,7 @@ Cloudflare Free 已完成這次試跑，X 與 Gemini 仍分別計費；系統月
 
 | 目錄 | 用途 | 需要什麼 |
 | --- | --- | --- |
-| [`cloud-digest/`](cloud-digest/) | **建議使用。** Cloudflare Worker，每天台北時間 09:00 由 Cron 觸發，讀取全文、呼叫可切換的模型並推送 Telegram | Cloudflare 帳號、Node.js 22.13+；付費模型另需 API 金鑰 |
+| [`cloud-digest/`](cloud-digest/) | **建議使用。** Cloudflare Worker，每天台北時間 08:00 由 Cron 開始整理，讀取全文、呼叫可切換的模型並推送 Telegram | Cloudflare 帳號、Node.js 22.13+；付費模型另需 API 金鑰 |
 | [`app/`](app/) | 選用：FastAPI + pgvector 的 RAG 問答 | Python 3.12+、`uv`、PostgreSQL + pgvector、OpenAI API 金鑰 |
 
 使用 Workers AI 收 Telegram 通知，只需要 Worker 與 D1，不需要自行架設 PostgreSQL 或提供 OpenAI 金鑰。
@@ -117,7 +117,7 @@ npx wrangler secret put RUN_TOKEN
 npx wrangler deploy
 ```
 
-部署完成後會顯示 Worker 網址（`https://developer-digest-cloud.<你的子網域>.workers.dev`）。Cron 已設定為每天 `01:00 UTC`（台北時間 09:00）自動執行。
+部署完成後會顯示 Worker 網址（`https://developer-digest-cloud.<你的子網域>.workers.dev`）。Cron 已設定為每天 `00:00 UTC`（台北時間 08:00）開始整理；08:00 是開始時間，完成時間取決於文章數量與模型速度。各 Cron 對應的任務見 `cloud-digest/src/schedule.js`。
 
 ### 7. 手動執行一次，確認 Telegram 有收到
 

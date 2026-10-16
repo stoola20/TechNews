@@ -1,4 +1,7 @@
-import { getSources, discoverSource, loadArticle, canonicalArticleUrl, readBoundedText } from "./sources.js";
+import { getSources, discoverSource, loadArticle, canonicalArticleUrl, readBoundedText, initialSeenUrls } from "./sources.js";
+import { tasksFor } from "./schedule.js";
+import { textProvider } from "./learning/local.js";
+export { initialSeenUrls };
 import { formatFullDigest } from "./format.js";
 import { summarize, modelConfiguration } from "./models.js";
 import { MODEL_PROFILES, readSettings, saveSettings, effectiveEnvironment, applySettings } from "./settings.js";
@@ -79,14 +82,6 @@ export async function processEntry(env, source, discovered, dependencies = {}) {
   } finally {
     await env.DB.prepare("UPDATE articles SET lease_until = NULL WHERE source_url = ?").bind(discovered.url).run();
   }
-}
-
-export function initialSeenUrls(entries, now, lookbackDays = 14) {
-  const cutoff = now - lookbackDays * 86400000;
-  return entries.filter((entry, index) => {
-    const published = Date.parse(entry.publishedAt);
-    return Number.isFinite(published) ? published < cutoff : index > 0;
-  }).map((entry) => entry.url);
 }
 
 export async function runDigest(env, dependencies = {}) {
@@ -175,10 +170,14 @@ export async function runDigest(env, dependencies = {}) {
 
 export default {
   async scheduled(controller, env, _ctx) {
-    const daily = !controller?.cron || controller.cron === "0 1 * * *";
+    const tasks = tasksFor(controller?.cron);
+    if (!tasks.length) { log("schedule_ignored", { cron: controller?.cron || null }); return; }
+    const learningEnabled = env.LEARNING_ENABLED === "true";
+    // 正式切換到本機文字模型後，官方文章進入共同文章庫詳細整理；切換前沿用舊的 Telegram 導讀流程。
+    const officialInLibrary = tasks.includes("official") && learningEnabled && (await textProvider(env)) === "local";
     const results = await Promise.allSettled([
-      ...(daily ? [runDigest(env)] : []),
-      ...(env.LEARNING_ENABLED === "true" ? [learning.scheduled(env, daily)] : []),
+      ...(tasks.includes("official") && !officialInLibrary ? [runDigest(env)] : []),
+      ...(learningEnabled ? [learning.scheduled(env, { tasks: officialInLibrary ? tasks : tasks.filter((task) => task !== "official") })] : []),
     ]);
     for (const result of results) if (result.status === "rejected") throw result.reason;
   },

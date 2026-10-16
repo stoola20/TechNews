@@ -7,7 +7,7 @@
 ```mermaid
 flowchart TD
   PHONE["手機瀏覽器 /settings<br/>切換模型、來源與主題"] -->|"RUN_TOKEN 驗證"| SETTINGS["D1 settings<br/>一份執行時 JSON 設定"]
-  CRON["Cron：台北每天 09:00<br/>或手動 POST /run"] --> WORKER["Cloudflare Worker"]
+  CRON["Cron：台北每天 08:00 開始<br/>或手動 POST /run"] --> WORKER["Cloudflare Worker"]
   SETTINGS --> WORKER
   SOURCES["7 個官方來源<br/>列表 HTML 或 RSS"] --> DISCOVER["找文章網址<br/>存入 D1 待處理清單"]
   WORKER --> DISCOVER

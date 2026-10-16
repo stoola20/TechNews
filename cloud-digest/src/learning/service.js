@@ -8,6 +8,9 @@ import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
 import {askQuestion,completeQuestion} from './questions.js';
+import {discoverOfficial,officialIntake} from './official.js';
+import {effectiveEnvironment} from '../settings.js';
+import {getSources} from '../sources.js';
 
 export function createLearningService(deps={}) {
   const fetcher=deps.fetcher || fetch;
@@ -16,8 +19,10 @@ export function createLearningService(deps={}) {
     const url=await libraryUrl(env,value),id=await itemIdForUrl(env,url),time=nowIso();
     await query(env,`INSERT OR IGNORE INTO learning_items(id,url,kind,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`,id,url,new URL(url).hostname==='x.com'?'x':'web',options.defer?'awaiting_backfill':'queued',time,time).run();
     if((await item(env,id)).status==='dismissed'&&!['share','web'].includes(origin))return id;
-    await query(env,'INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,created_at) VALUES(?,?,?,?)',receipt || crypto.randomUUID(),id,origin,time).run();
-    if(['share','web'].includes(origin))await query(env,"UPDATE learning_items SET status='queued' WHERE id=? AND status IN ('awaiting_backfill','dismissed')",id).run();
+    await query(env,'INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,metadata_json,created_at) VALUES(?,?,?,?,?)',receipt || crypto.randomUUID(),id,origin,JSON.stringify(options.metadata || {}),time).run();
+    // 主動分享不受官方主題篩選：先前被官方篩掉的同一篇也要完整整理。
+    if(['share','web'].includes(origin))await query(env,"UPDATE learning_items SET status='queued',updated_at=? WHERE id=? AND status IN ('awaiting_backfill','dismissed','filtered')",time,id).run();
+    if(options.metadata?.title)await query(env,"UPDATE learning_items SET title=? WHERE id=? AND title=''",options.metadata.title,id).run();
     if(options.source){const key=await saveEvidence(env,id,options.source);await registerMedia(env,id,key,options.source.media);}
     const current=await item(env,id);
     if(!options.defer && ['queued','error'].includes(current.status))await enqueue(env,id);
@@ -73,7 +78,14 @@ export function createLearningService(deps={}) {
     const evidence=media.evidence.map((m,i)=>({ref:`M${i+1}`,id:m.analysis_id,media_id:m.media_id,source_ref:refs.get(m.source_id) || null,type:m.type,duration_seconds:m.duration_seconds,expired:m.expired,
       ocr:m.ocr,speech:m.speech,visual:m.visual,unrecognized:m.unrecognized,coverage:m.coverage}));
     const observations=media.evidence.flatMap(m=>m.visual.map(v=>({source_id:m.source_id,media_id:m.media_id,timestamp:v.timestamp,description:v.observation,kind:v.kind})));
-    const {input,fingerprint}=await articleInput(env,row,sources,gaps,{media:evidence,observations});
+    const intake=await officialIntake(env,row.id);
+    let official=null;
+    if(intake.onlyOfficial){
+      const settings=await effectiveEnvironment(env);
+      const source=getSources(settings).find(s=>s.id===intake.official.source_id);
+      official={source_id:intake.official.source_id,source_name:source?.name || intake.official.source_id,interests:settings.DIGEST_INTERESTS};
+    }
+    const {input,fingerprint}=await articleInput(env,row,sources,gaps,{media:evidence,observations,...(official?{official}:{})});
     const old=row.article_json?JSON.parse(row.article_json):null;
     if(old?.input_fingerprint===fingerprint){
       await query(env,"UPDATE learning_items SET status=?,stage=NULL,attempts=0,last_error=NULL,updated_at=? WHERE id=?",gaps.length?'partial':'ready',nowIso(),row.id).run();
@@ -124,7 +136,7 @@ export function createLearningService(deps={}) {
     if(base.protocol!=='https:' || base.username || base.password)throw new Error('PUBLIC_BASE_URL 需為 HTTPS');
     const existing=await rows(env,"SELECT * FROM learning_deliveries WHERE status='pending' AND origin=? ORDER BY created_at",origin);
     const occupied=new Set(existing.flatMap(d=>JSON.parse(d.item_ids_json).map(i=>i.id)));
-    const items=await rows(env,`SELECT DISTINCT a.* FROM learning_items a JOIN learning_intakes i ON a.id=i.item_id WHERE a.status IN ('ready','partial') AND i.notify_revision<a.revision AND ${origin==='share'?"i.origin IN ('share','web')":"i.origin IN ('bookmark','backfill')"} ORDER BY a.created_at`);
+    const items=await rows(env,`SELECT DISTINCT a.* FROM learning_items a JOIN learning_intakes i ON a.id=i.item_id WHERE a.status IN ('ready','partial') AND i.notify_revision<a.revision AND ${origin==='share'?"i.origin IN ('share','web','official')":"i.origin IN ('bookmark','backfill')"} ORDER BY a.created_at`);
     let group=[],body='';
     async function store(){
       if(!group.length)return;
@@ -146,20 +158,26 @@ export function createLearningService(deps={}) {
         const messageId=await send(env,delivery.body);
         await env.DB.batch([
           query(env,"UPDATE learning_deliveries SET status='sent',message_id=?,last_error=NULL WHERE id=?",messageId,delivery.id),
-          ...JSON.parse(delivery.item_ids_json).map(i=>query(env,`UPDATE learning_intakes SET notify_revision=MAX(notify_revision,?) WHERE item_id=? AND ${origin==='share'?"origin IN ('share','web')":"origin IN ('bookmark','backfill')"}`,i.revision,i.id)),
+          ...JSON.parse(delivery.item_ids_json).map(i=>query(env,`UPDATE learning_intakes SET notify_revision=MAX(notify_revision,?) WHERE item_id=? AND ${origin==='share'?"origin IN ('share','web','official')":"origin IN ('bookmark','backfill')"}`,i.revision,i.id)),
         ]);
       }catch(error){await query(env,'UPDATE learning_deliveries SET last_error=? WHERE id=?',error.message,delivery.id).run();throw error;}
       finally {await query(env,'UPDATE learning_deliveries SET lease_until=NULL WHERE id=? AND lease_until=?',delivery.id,lease).run();}
     }
   }
   async function ask(env,question,articleId=null){return askQuestion(env,question,articleId,{...deps,fetcher});}
-  async function scheduled(env,daily=false){
+  async function official(env){return discoverOfficial(env,collect,deps);}
+  // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
+  async function scheduled(env,options=false){
+    const tasks=Array.isArray(options?.tasks)?options.tasks:options===true?['bookmark_daily','author_recheck']:[];
+    const daily=tasks.includes('bookmark_daily');
+    if(tasks.includes('official'))try{await official(env);}catch(error){console.log(JSON.stringify({event:'official_discovery_failed',error:error.message}));}
     if(daily){
       await setSetting(env,'notifications',{bookmark_batch_open:true});
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action)await env.LEARNING_JOBS.send({kind:'sync'});
-      for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
-        await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
-      }
+    }
+    // 作者補充二十四小時後重查一次；來源沒變時沿用既有結果，不重新生成。
+    if(tasks.includes('author_recheck'))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
+      await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
     }
     try{await migrateLibrary(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
     await recover(env);
@@ -185,5 +203,5 @@ export function createLearningService(deps={}) {
       }
     }
   }
-  return {collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,migrate:migrateLibrary,localHooks:{completeQuestion}};
+  return {collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,official,migrate:migrateLibrary,localHooks:{completeQuestion}};
 }

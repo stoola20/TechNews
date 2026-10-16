@@ -1,0 +1,93 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import worker from '../src/index.js';
+import {tasksFor} from '../src/schedule.js';
+import {createLearningHandler} from '../src/learning/http.js';
+import {setTextProvider,claim} from '../src/learning/local.js';
+import {item,rows,query} from '../src/learning/store.js';
+import {SOURCES} from '../src/sources.js';
+import {environment,recorder,request,message} from './helpers.js';
+
+const TAIL='限制：此功能僅在 v2.4 以上可用，且每分鐘最多 60 次請求。';
+const longContent='背景、機制、例子與操作步驟。'.repeat(500)+TAIL;
+const entries=Array.from({length:8},(_,i)=>({url:`https://developers.openai.com/blog/post-${i}`,title:'Post '+i,publishedAt:new Date().toUTCString(),content:null}));
+function setup(){
+  const env={...environment(),LEARNING_RUNNER_TOKEN:'runner-test-token'},net=recorder(),loads=[];
+  const handler=createLearningHandler({...net,discoverSource:async source=>source.id==='openai_developer_blog'?entries:[],
+    loadArticle:async(source,entry)=>{loads.push(entry.url);return {...entry,title:'Official '+entry.url.split('-').at(-1),content:longContent,contentMethod:'article_html'};}});
+  return {env,net,handler,loads};
+}
+async function settings(env){await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('digest',?,?)",JSON.stringify({model_profile:'gemma4',interests:'AI agents 與開發者工具',sources:[SOURCES[0]]}),new Date().toISOString()).run();}
+async function complete(s,job,output){
+  const r=await s.handler.fetch(new Request('https://learning.example.org/learning/runner/complete',{method:'POST',headers:{authorization:'Bearer runner-test-token','content-type':'application/json'},
+    body:JSON.stringify({runner_id:'mac',job_id:job.id,attempt_token:job.attempt_token,input_version:job.input_version,model:{name:'gemma4:26b',done_reason:'stop'},output})}),s.env);
+  return r.json();
+}
+async function drain(s){for(const row of await rows(s.env,"SELECT id FROM learning_items WHERE status='queued'"))await s.handler.queue({messages:[message({kind:'article',id:row.id})]},s.env);}
+
+test('排程任務明確分流：08:00 開始官方整理，五分鐘維護與舊 Cron 字串都不觸發官方流程',async()=>{
+  assert.deepEqual(tasksFor('0 0 * * *'),['official','bookmark_daily','author_recheck']);
+  assert.deepEqual(tasksFor('*/5 * * * *'),['maintenance']);
+  assert.deepEqual(tasksFor('0 1 * * *'),[]);
+  const env={...environment(),TELEGRAM_BOT_TOKEN:undefined,LEARNING_ENABLED:'false'};
+  await worker.scheduled({cron:'0 1 * * *'},env);
+  await worker.scheduled({cron:'*/5 * * * *'},env);
+  // 切換前：08:00 仍走舊官方導讀（此處沒有 Telegram 設定，因此可觀察到它被啟動）。
+  await assert.rejects(worker.scheduled({cron:'0 0 * * *'},env),/Telegram secrets missing/);
+});
+
+test('官方文章全部排入共同文章庫，由 Mac 詳細整理；積壓不受單次上限，重複日次事件不重複生成',async()=>{
+  const s=setup();await settings(s.env);await setTextProvider(s.env,'local');
+  const first=await s.handler.service.official(s.env);
+  assert.equal(first.queued,8);
+  await drain(s);
+  const jobs=await rows(s.env,"SELECT input_json FROM learning_jobs WHERE status='waiting_local'");
+  assert.equal(jobs.length,8);
+  const input=JSON.parse(jobs[0].input_json);
+  assert.equal(input.official.source_name,'OpenAI Developer Blog');assert.equal(input.official.interests,'AI agents 與開發者工具');
+  assert.ok(input.sources[0].content.endsWith(TAIL));assert.equal(input.sources[0].relation,'primary');
+  // 同一天再觸發一次：沒有新收件、沒有新工作、不重抓原文。
+  assert.equal((await s.handler.service.official(s.env)).queued,0);await drain(s);
+  assert.equal((await rows(s.env,'SELECT id FROM learning_jobs')).length,8);assert.equal(s.loads.length,8);
+  assert.equal((await rows(s.env,"SELECT receipt FROM learning_intakes WHERE origin='official'")).length,8);
+
+  const relevant=await claim(s.env,'mac');
+  const body='## 背景\n'+'這篇說明新 API 的機制與操作步驟。[S1]\n\n'.repeat(220)+'## 限制\n'+TAIL+' [S1]';
+  assert.equal((await complete(s,relevant,{publish:true,reason:'AI 開發工具更新',title:'官方詳細教材',intro:'新 API 的用途與限制。',body,citations:['S1']})).revision,1);
+  const ready=await item(s.env,(await query(s.env,'SELECT item_id FROM learning_jobs WHERE id=?',relevant.id).first()).item_id);
+  assert.equal(ready.status,'ready');assert.equal(ready.edition,'detailed');assert.ok(ready.body.length>4096);assert.ok(ready.body.includes(TAIL));
+  const sent=s.net.calls.filter(c=>c.url.includes('api.telegram.org')).map(c=>JSON.parse(c.options.body).text);
+  assert.equal(sent.length,1);assert.match(sent[0],/新 API 的用途與限制/);assert.match(sent[0],new RegExp('/learning\\?article='+ready.id));assert.ok(!sent[0].includes(TAIL));
+
+  const irrelevant=await claim(s.env,'mac');
+  assert.equal((await complete(s,irrelevant,{publish:false,reason:'只有人事消息',title:'人事公告',intro:'略過',body:'略過',citations:[]})).filtered,true);
+  const filteredId=(await query(s.env,'SELECT item_id FROM learning_jobs WHERE id=?',irrelevant.id).first()).item_id;
+  assert.equal((await item(s.env,filteredId)).status,'filtered');
+  const list=await (await s.handler.fetch(request('api/items'),s.env)).json();
+  assert.ok(!list.some(i=>i.id===filteredId));
+  assert.equal((await (await s.handler.fetch(request('api/items?status=filtered'),s.env)).json())[0].id,filteredId);
+  await s.handler.scheduled(s.env,false);
+  assert.equal(s.net.calls.filter(c=>c.url.includes('api.telegram.org')).length,1);
+
+  // 主動分享被官方篩掉的同一篇：重用同一篇，但不再套用主題篩選。
+  const shared=await (await s.handler.fetch(request('api/collect','POST',{url:(await item(s.env,filteredId)).url+'/'}),s.env)).json();
+  assert.equal(shared.id,filteredId);
+  await drain(s);
+  const reshare=await rows(s.env,"SELECT input_json FROM learning_jobs WHERE item_id=? AND status='waiting_local'",filteredId);
+  assert.equal(reshare.length,1);assert.equal(JSON.parse(reshare[0].input_json).official,undefined);
+  // 已完成的官方文章被分享：直接回到既有文章，不建立新工作。
+  const again=await (await s.handler.fetch(request('api/collect','POST',{url:ready.url}),s.env)).json();
+  assert.equal(again.id,ready.id);await drain(s);
+  assert.equal((await rows(s.env,'SELECT id FROM learning_jobs WHERE item_id=?',ready.id)).length,1);
+});
+
+test('切換前不把官方文章送進文章庫；08:00 排程在本機模式只做發現，不呼叫 Workers AI 或 Gemini',async()=>{
+  const s=setup();await settings(s.env);
+  await s.handler.scheduled(s.env,{tasks:['maintenance']});
+  assert.equal((await rows(s.env,'SELECT id FROM learning_items')).length,0);
+  await setTextProvider(s.env,'local');
+  await s.handler.scheduled(s.env,{tasks:['official']});
+  await drain(s);
+  assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE status='waiting_local'")).length,8);
+  assert.equal(s.net.calls.filter(c=>c.url.includes('generativelanguage')).length,0);
+});

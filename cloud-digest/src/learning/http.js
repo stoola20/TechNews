@@ -97,12 +97,12 @@ export function createLearningHandler(deps={}) {
         const offset=Number(url.searchParams.get('offset') || 0);
         if(term.length>200||!Number.isInteger(offset)||offset<0||offset>1000000)throw new Error('搜尋參數無效');
         const filter=url.searchParams.get('status')||'';
-        if(filter&&!['awaiting_backfill','ready','partial','needs_attention'].includes(filter))throw new Error('文章篩選無效');
+        if(filter&&!['awaiting_backfill','ready','partial','needs_attention','filtered'].includes(filter))throw new Error('文章篩選無效');
         const pattern=`%${term.replace(/[\\%_]/g,s=>'\\'+s)}%`;
         return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,created_at,updated_at,
           (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
           (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins
-          FROM learning_items WHERE status NOT IN ('dismissed','merged') ${filter?'AND status=?':''} AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\')) ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...(filter?[filter]:[]),pattern,pattern,pattern,pattern,offset));
+          FROM learning_items WHERE status NOT IN ('dismissed','merged') ${filter?'AND status=?':"AND status!='filtered'"} AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\')) ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...(filter?[filter]:[]),pattern,pattern,pattern,pattern,offset));
       }
       const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill))?$/);
       if(match){
