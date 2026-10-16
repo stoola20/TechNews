@@ -64,7 +64,7 @@ export function createLearningHandler(deps={}) {
           if(action==='fail')return json(await fail(env,data.job_id,data.attempt_token,data.error,data.retryable!==false));
           if(action==='release')return json(await release(env,data.job_id,data.attempt_token,data.error));
           if(action==='complete'){
-            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env,'share').catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},...service.localHooks});
+            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},...service.localHooks});
             return json(result);
           }
         }catch(error){

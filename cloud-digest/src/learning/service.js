@@ -9,6 +9,7 @@ import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
 import {askQuestion,completeQuestion} from './questions.js';
 import {discoverOfficial,officialIntake} from './official.js';
+import {queueArticleNotifications,sendPending,receiptMessage,contentFingerprint} from './notifications.js';
 import {effectiveEnvironment} from '../settings.js';
 import {getSources} from '../sources.js';
 
@@ -57,6 +58,7 @@ export function createLearningService(deps={}) {
       const article=old?.input_fingerprint===fingerprint?old:await (deps.generate || generate)(env,sources,media.media,gaps,null,fetcher);
       const revision=old?.input_fingerprint===fingerprint?row.revision:row.revision+1;
       article.input_fingerprint=fingerprint;
+      article.content_fingerprint=await contentFingerprint(sources,gaps,media.media.map(m=>m.id));
       article.provider=env.LEARNING_DEMO==='true'?'demo':'gemini';
       article.model=env.LEARNING_MODEL || 'gemini-3.8-flash';
       article.prompt_version='learning-v2';
@@ -117,7 +119,7 @@ export function createLearningService(deps={}) {
   async function receipt(env,chatId,ids,key){
     if(!ids.length)return;
     const id=await hash(`receipt:${key}`);
-    await query(env,"INSERT OR IGNORE INTO learning_deliveries(id,item_ids_json,origin,body,chat_id,created_at) VALUES(?,?,'receipt',?,?,?)",id,JSON.stringify(ids),`已收到 ${ids.length} 個連結並保存。完成後會通知你；預算暫停時，工作仍會保留。`,String(chatId),nowIso()).run();
+    await query(env,"INSERT OR IGNORE INTO learning_deliveries(id,item_ids_json,origin,body,chat_id,created_at) VALUES(?,?,'receipt',?,?,?)",id,JSON.stringify(ids),await receiptMessage(env,ids),String(chatId),nowIso()).run();
     await flushReceipts(env);
   }
   async function flushReceipts(env){
@@ -131,39 +133,10 @@ export function createLearningService(deps={}) {
       }finally{await query(env,'UPDATE learning_deliveries SET lease_until=NULL WHERE id=? AND lease_until=?',d.id,lease).run();}
     }
   }
-  async function flush(env,origin='share') {
-    if(!env.PUBLIC_BASE_URL)throw new Error('PUBLIC_BASE_URL 未設定，無法建立私人文章連結');
-    const base=new URL(env.PUBLIC_BASE_URL);
-    if(base.protocol!=='https:' || base.username || base.password)throw new Error('PUBLIC_BASE_URL 需為 HTTPS');
-    const existing=await rows(env,"SELECT * FROM learning_deliveries WHERE status='pending' AND origin=? ORDER BY created_at",origin);
-    const occupied=new Set(existing.flatMap(d=>JSON.parse(d.item_ids_json).map(i=>i.id)));
-    const items=await rows(env,`SELECT DISTINCT a.* FROM learning_items a JOIN learning_intakes i ON a.id=i.item_id WHERE a.status IN ('ready','partial') AND i.notify_revision<a.revision AND ${origin==='share'?"i.origin IN ('share','web','official')":"i.origin IN ('bookmark','backfill')"} ORDER BY a.created_at`);
-    let group=[],body='';
-    async function store(){
-      if(!group.length)return;
-      const id=await hash(`${origin}:${JSON.stringify(group)}`);
-      await query(env,'INSERT OR IGNORE INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,?,?,?,?)',id,JSON.stringify(group),origin,body,nowIso()).run();group=[];body='';
-    }
-    for(const row of items.filter(i=>!occupied.has(i.id))){
-      const article=JSON.parse(row.article_json);
-      const line=`${row.title.slice(0,100)}${row.status==='partial'?'（來源有缺漏）':''}\n${article.intro.slice(0,500)}\n${base.origin}/learning?article=${row.id}\n\n`;
-      if(body.length+line.length>3900 || origin==='share')await store();
-      body+=line;group.push({id:row.id,revision:row.revision});
-    }
-    await store();
-    for(const delivery of await rows(env,"SELECT * FROM learning_deliveries WHERE status='pending' AND origin=? ORDER BY created_at",origin)){
-      const lease=new Date(Date.now()+60000).toISOString();
-      const acquired=await query(env,"UPDATE learning_deliveries SET lease_until=? WHERE id=? AND (lease_until IS NULL OR lease_until<?)",lease,delivery.id,nowIso()).run();
-      if(!acquired.meta.changes)continue;
-      try{
-        const messageId=await send(env,delivery.body);
-        await env.DB.batch([
-          query(env,"UPDATE learning_deliveries SET status='sent',message_id=?,last_error=NULL WHERE id=?",messageId,delivery.id),
-          ...JSON.parse(delivery.item_ids_json).map(i=>query(env,`UPDATE learning_intakes SET notify_revision=MAX(notify_revision,?) WHERE item_id=? AND ${origin==='share'?"origin IN ('share','web','official')":"origin IN ('bookmark','backfill')"}`,i.revision,i.id)),
-        ]);
-      }catch(error){await query(env,'UPDATE learning_deliveries SET last_error=? WHERE id=?',error.message,delivery.id).run();throw error;}
-      finally {await query(env,'UPDATE learning_deliveries SET lease_until=NULL WHERE id=? AND lease_until=?',delivery.id,lease).run();}
-    }
+  // 舊參數 origin 只為相容保留；所有入口都在文章完成後逐篇通知。
+  async function flush(env){
+    await queueArticleNotifications(env);
+    await sendPending(env,send);
   }
   async function ask(env,question,articleId=null){return askQuestion(env,question,articleId,{...deps,fetcher});}
   async function official(env){return discoverOfficial(env,collect,deps);}
@@ -173,7 +146,6 @@ export function createLearningService(deps={}) {
     const daily=tasks.includes('bookmark_daily');
     if(tasks.includes('official'))try{await official(env);}catch(error){console.log(JSON.stringify({event:'official_discovery_failed',error:error.message}));}
     if(daily){
-      await setSetting(env,'notifications',{bookmark_batch_open:true});
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action){await startFullScan(env);await env.LEARNING_JOBS.send({kind:'sync',scope:'full'});}
     }
     if(tasks.includes('bookmark_partial')){
@@ -190,15 +162,13 @@ export function createLearningService(deps={}) {
     await expireMedia(env);
     await query(env,'DELETE FROM learning_sessions WHERE expires_at<?',nowIso()).run();
     await flushReceipts(env);
-    await flush(env,'share');
-    if((await setting(env,'notifications')).bookmark_batch_open)await flush(env,'bookmarks');
+    await flush(env);
   }
   async function queue(batch,env){
     for(const message of batch.messages){
       try {
         const result=message.body.kind==='sync'?await sync(env,message.body.scope==='partial'?'partial':'full'):await process(env,message.body.id);
-        await flush(env,'share');
-        if((await setting(env,'notifications')).bookmark_batch_open)await flush(env,'bookmarks');
+        await flush(env);
         if(result.pending || result.running)message.retry({delaySeconds:60});else message.ack();
       }catch(error){
         if(error.name==='BudgetPaused')message.ack();

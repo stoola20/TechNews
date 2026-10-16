@@ -2,6 +2,7 @@ import {query,rows,item,hash,nowIso,setting,setSetting,manuallyPaused} from './s
 import {ARTICLE_PROMPT_VERSION,validateArticle} from './local-prompt.js';
 import {saveVersion} from './library.js';
 import {normalizeMarkdown} from './markdown.js';
+import {contentFingerprint} from './notifications.js';
 
 export const LEASE_MS=120000;
 export const RUNNER_ONLINE_MS=180000;
@@ -31,6 +32,7 @@ export async function articleInput(env,row,sources,gaps,extra={}){
   const input={kind:'article',prompt_version:ARTICLE_PROMPT_VERSION,
     sources:sources.map((s,i)=>{const metadata=JSON.parse(s.metadata_json || '{}');return {ref:`S${i+1}`,id:s.id,relation:s.relation,url:s.url,author:metadata.author_username || s.author_id || null,published_at:s.published_at,title:metadata.title || null,content:s.content};}),
     gaps:gaps.map(g=>({url:g.url,error:g.error})),...extra};
+  input.content_fingerprint=await contentFingerprint(input.sources,input.gaps,(input.media || []).map(m=>m.media_id));
   const fingerprint=await hash(JSON.stringify({input,provider:'ollama',model:localModel(env)}));
   return {input,fingerprint};
 }
@@ -161,7 +163,7 @@ async function completeArticle(env,job,input,data,hooks){
     ]);
     return {ok:true,filtered:true};
   }
-  const article={title:validated.title,body:normalizeMarkdown(validated.body),intro:validated.intro,citations:validated.citations,observations:input.observations || [],...(input.official?{publish:true,reason:validated.reason}:{}),...provenance};
+  const article={title:validated.title,body:normalizeMarkdown(validated.body),intro:validated.intro,citations:validated.citations,observations:input.observations || [],content_fingerprint:input.content_fingerprint || null,...(input.official?{publish:true,reason:validated.reason}:{}),...provenance};
   const gaps=input.gaps || [];
   if(row.body)await saveVersion(env,row,'superseded');
   const result=await env.DB.batch([

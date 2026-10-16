@@ -93,6 +93,8 @@ async function importOfficial(env,sources){
     const version={id,revision:existing?.revision ?? 1,edition:'legacy_digest',title:article.title,body:article.body,article_json:JSON.stringify(article),gaps_json:JSON.stringify(gaps),updated_at:row.updated_at || time};
     await saveVersion(env,version,'official',await hash(`legacy-official:${url}`));
     if(!existing){
+      // 舊導讀已經發過 Telegram，搬移後不能再成為待通知。
+      await query(env,'UPDATE learning_items SET notified_revision=revision WHERE id=?',id).run();
       await query(env,'UPDATE learning_items SET body=?,article_json=?,gaps_json=?,status=? WHERE id=? AND edition=\'legacy_digest\' AND body IS NULL',
         article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.some(g=>/原文/.test(g.error))?'partial':'ready',id).run();
       imported++;
