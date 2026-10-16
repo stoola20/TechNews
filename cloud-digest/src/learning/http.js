@@ -7,6 +7,7 @@ import {exchange,xRead} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary} from './library.js';
+import {listQuestions,questionView} from './questions.js';
 import {claim,heartbeat,complete,fail,release,runnerStatus,setTextProvider,JobConflict} from './local.js';
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
@@ -167,8 +168,19 @@ export function createLearningHandler(deps={}) {
       if(route==='ask'&&request.method==='POST'){
         const data=await body(request);
         if(data.item_id&&!await item(env,data.item_id))return json({error:'文章不存在'},404);
-        const result=await service.ask(env,data.question,data.item_id || null);
-        return json({...result,answer_html:renderMarkdown(result.answer)});
+        const itemId=data.item_id?await resolveItemId(env,data.item_id):null;
+        const result=await service.ask(env,data.question,itemId);
+        return json(result,result.status==='done'?200:202);
+      }
+      if(route==='questions'&&request.method==='GET'){
+        const itemId=url.searchParams.get('item_id');
+        if(itemId&&!/^[a-f0-9]{32}$/.test(itemId))throw new Error('文章識別碼無效');
+        return json(await listQuestions(env,itemId?await resolveItemId(env,itemId):null));
+      }
+      const questionMatch=route.match(/^questions\/([0-9a-f-]{36})$/);
+      if(questionMatch&&request.method==='GET'){
+        const row=await query(env,'SELECT * FROM learning_questions WHERE id=?',questionMatch[1]).first();
+        return row?json(questionView(row)):json({error:'問題不存在'},404);
       }
       if(route==='x/connect'&&request.method==='POST'){
         if(!env.X_CLIENT_ID || !env.X_CLIENT_SECRET || !env.PUBLIC_BASE_URL)throw new Error('X 授權設定未完成');

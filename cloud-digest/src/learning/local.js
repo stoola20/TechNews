@@ -83,6 +83,7 @@ export async function claim(env,runnerId,info={}){
     if(!result.meta.changes)continue;
     const job=await query(env,'SELECT * FROM learning_jobs WHERE id=?',candidate.id).first();
     if(job.item_id)await query(env,"UPDATE learning_items SET status='generating',updated_at=? WHERE id=? AND status IN ('waiting_local','generating')",now,job.item_id).run();
+    if(job.question_id)await query(env,"UPDATE learning_questions SET status='generating',updated_at=? WHERE id=? AND status IN ('waiting_local','generating')",now,job.question_id).run();
     return {id:job.id,kind:job.kind,attempt_token:token,input_version:job.input_version,lease_until:lease,lease_ms:LEASE_MS,input:JSON.parse(job.input_json)};
   }
   return null;
@@ -112,6 +113,7 @@ export async function fail(env,jobId,token,error,retryable=true){
   await env.DB.batch([
     query(env,`UPDATE learning_jobs SET status=?,attempts=?,last_error=?,attempt_token=NULL,lease_until=NULL,updated_at=? WHERE id=? AND attempt_token=?`,final?'failed':'waiting_local',attempts,message,time,jobId,token),
     ...(job.item_id?[query(env,'UPDATE learning_items SET status=?,last_error=?,updated_at=? WHERE id=? AND status IN (\'waiting_local\',\'generating\')',final?'needs_attention':'waiting_local',message,time,job.item_id)]:[]),
+    ...(job.question_id?[query(env,"UPDATE learning_questions SET status=?,error=?,updated_at=? WHERE id=? AND status IN ('waiting_local','generating')",final?'failed':'waiting_local',message,time,job.question_id)]:[]),
   ]);
   return {ok:true,final,attempts};
 }
@@ -122,6 +124,7 @@ export async function release(env,jobId,token,error){
   await env.DB.batch([
     query(env,"UPDATE learning_jobs SET status='waiting_local',attempt_token=NULL,lease_until=NULL,last_error=?,updated_at=? WHERE id=? AND attempt_token=?",String(error || '本機暫時無法處理').slice(0,300),time,jobId,token),
     ...(job.item_id?[query(env,"UPDATE learning_items SET status='waiting_local',updated_at=? WHERE id=? AND status='generating'",time,job.item_id)]:[]),
+    ...(job.question_id?[query(env,"UPDATE learning_questions SET status='waiting_local',updated_at=? WHERE id=? AND status='generating'",time,job.question_id)]:[]),
   ]);
   return {ok:true};
 }

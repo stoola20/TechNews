@@ -23,7 +23,7 @@ test('只修復整篇雙重跳脫的段落，不破壞程式碼中的換行字�
 test('內嵌頁面腳本可解析，正文與回答均使用清理後的 HTML',()=>{
   new Script(LEARNING_PAGE.match(/<script>([\s\S]*)<\/script>/)[1]);
   assert.match(LEARNING_PAGE,/content.innerHTML=current.body_html/);
-  assert.match(LEARNING_PAGE,/innerHTML=r.answer_html/);
+  assert.match(LEARNING_PAGE,/innerHTML=q.answer_html/);
   assert.match(LEARNING_PAGE,/開始整理這篇/);
   assert.match(LEARNING_PAGE,/刪除這篇待回補/);
 });

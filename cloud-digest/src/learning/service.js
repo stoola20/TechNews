@@ -7,6 +7,7 @@ import {syncBookmarks,registerMedia} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
+import {askQuestion,completeQuestion} from './questions.js';
 
 export function createLearningService(deps={}) {
   const fetcher=deps.fetcher || fetch;
@@ -151,36 +152,7 @@ export function createLearningService(deps={}) {
       finally {await query(env,'UPDATE learning_deliveries SET lease_until=NULL WHERE id=? AND lease_until=?',delivery.id,lease).run();}
     }
   }
-  async function ask(env,question,articleId=null) {
-    if(typeof question!=='string'||!question.trim()||question.length>2000)throw new Error('問題需為 1–2,000 個字元');
-    const terms=[...new Set([...new Intl.Segmenter('zh-TW',{granularity:'word'}).segment(question)].filter(s=>s.isWordLike&&s.segment.length>=2).map(s=>s.segment.toLowerCase()))].slice(0,12);
-    const rank=terms.length?terms.map(()=>"CASE WHEN instr(lower(e.content),?)>0 THEN 1 ELSE 0 END").join('+'):'0';
-    const selected=await rows(env,`SELECT e.id,e.item_id,e.url,e.relation,e.author_id,e.published_at,(${rank}) AS score FROM learning_evidence e JOIN learning_items a ON a.id=e.item_id WHERE e.status='available' AND a.body IS NOT NULL ${articleId?'AND a.id=?':''} ${!articleId?'AND score>0':''} ORDER BY score DESC,a.updated_at DESC LIMIT 12`,...terms,...(articleId?[articleId]:[]));
-    if(!selected.length)return {answer:'目前沒有找到足夠的已保存來源，無法確認。請提供更具體的關鍵字或選擇文章。',insufficient:true,citations:[],sources:[]};
-    const chunks=[];
-    for(const s of selected){
-      const positions=terms.length?terms.map(()=>"CASE WHEN instr(lower(content),?)>0 THEN instr(lower(content),?) ELSE 2147483647 END").join(','):'';
-      const first=terms.length?(terms.length===1?positions:`min(${positions})`):'1';
-      const positionArgs=terms.flatMap(t=>[t,t]);
-      const match=await query(env,`SELECT ${first} AS position FROM learning_evidence WHERE id=?`,...positionArgs,s.id).first();
-      const start=match.position===2147483647?0:Math.max(0,match.position-1-2000);
-      const excerpt=await query(env,'SELECT substr(content,?,12000) AS content FROM learning_evidence WHERE id=?',start+1,s.id).first();
-      chunks.push({...s,id:`${s.id}:${start}`,content:excerpt.content,range_start:start});
-      const row=await query(env,"SELECT json_extract(article_json,'$.observations') AS observations FROM learning_items WHERE id=?",s.item_id).first();
-      const observations=JSON.parse(row.observations || '[]').filter(o=>o.source_id===s.id);
-      if(observations.length)chunks.push({...s,id:`${s.id}:observations`,relation:'model_media_observation',content:JSON.stringify(observations)});
-    }
-    const gaps=[];
-    for(const id of new Set(selected.map(s=>s.item_id))){
-      const row=await query(env,'SELECT gaps_json FROM learning_items WHERE id=?',id).first();
-      gaps.push(...JSON.parse(row.gaps_json || '[]'));
-    }
-    const answer=await (deps.generate || generate)(env,chunks,[],gaps,question,fetcher);
-    if(answer.citations.some(id=>!chunks.some(s=>s.id===id)))throw new Error('回答引用了未檢索的來源');
-    const result={...answer,sources:chunks.filter(s=>answer.citations.includes(s.id)).map(s=>({id:s.id,url:s.url,relation:s.relation,range_start:s.range_start || 0,excerpt:s.content.slice(0,500)}))};
-    await query(env,'INSERT INTO learning_questions(id,item_id,question,answer_json,created_at) VALUES(?,?,?,?,?)',crypto.randomUUID(),articleId,question,JSON.stringify(result),nowIso()).run();
-    return result;
-  }
+  async function ask(env,question,articleId=null){return askQuestion(env,question,articleId,{...deps,fetcher});}
   async function scheduled(env,daily=false){
     if(daily){
       await setSetting(env,'notifications',{bookmark_batch_open:true});
@@ -213,5 +185,5 @@ export function createLearningService(deps={}) {
       }
     }
   }
-  return {collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,migrate:migrateLibrary};
+  return {collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,migrate:migrateLibrary,localHooks:{completeQuestion}};
 }
