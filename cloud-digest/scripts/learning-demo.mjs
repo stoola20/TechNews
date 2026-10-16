@@ -22,6 +22,7 @@ const handler=createLearningHandler({
 });
 const jobs=[];env.LEARNING_JOBS={async send(job){jobs.push(job);}};
 for(const key of Object.keys(samples)){const id=await handler.service.collect(env,'https://example.org/'+key);await handler.service.process(env,id);}
+for(const suffix of ['keep','remove'])await handler.service.collect(env,'https://example.org/awaiting-'+suffix,'backfill','demo:'+suffix,{defer:true,source:{url:'https://example.org/awaiting-'+suffix,relation:'primary',content:'等待你確認的原始收藏 '+suffix+'。\n\n先讀原文，再決定是否使用模型整理。',metadata:{title:'待回補原文'},media:[]}});
 const server=createServer(async(req,res)=>{
   try{
     const chunks=[];for await(const chunk of req){chunks.push(chunk);if(chunks.reduce((n,c)=>n+c.length,0)>64000)throw Error('Request too large');}

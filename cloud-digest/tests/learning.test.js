@@ -120,6 +120,54 @@ test('模型契約：原生影片、完整輸出、已知用量與無效引用',
   assert.ok((await rows(env,"SELECT * FROM learning_costs WHERE status='uncertain'")).length);
 });
 
+test('圖片觀察可保存，未知媒體與影片時間點仍拒絕',async()=>{
+  const env=environment(),sources=[{id:'photo',url:'https://example.org',content:'原文'},{id:'video',url:'https://example.org/video',content:'影片'}];
+  const file_json=JSON.stringify({uri:'https://generativelanguage.googleapis.com/v1beta/files/test'});
+  const photo={type:'photo',evidence_id:'photo',mime:'image/png',file_json};
+  const video={type:'video',evidence_id:'video',mime:'video/mp4',duration_ms:30000,file_json};
+  const response=observations=>async()=>Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({title:'教材',body:'### 正文\\n\\n解說',intro:'導讀',citations:['photo'],observations})}]}}],usageMetadata:{promptTokenCount:100,candidatesTokenCount:100}});
+  const picture={source_id:'photo',timestamp:'00:00',description:'架構圖'};
+  const result=await generate(env,sources,[photo],[],null,response([picture]));
+  assert.equal(result.observations[0].timestamp,'');assert.equal(result.body,'### 正文\n\n解說');
+  await generate(env,sources,[photo,video],[],null,response([picture,{source_id:'video',timestamp:'00:10',description:'操作畫面'}]));
+  await assert.rejects(generate(env,sources,[photo],[],null,response([{...picture,source_id:'unknown'}])),/媒體觀察缺少有效來源/);
+  await assert.rejects(generate(env,sources,[video],[],null,response([{source_id:'video',timestamp:'00:60',description:'操作'}])),/影片時間點超出/);
+  await assert.rejects(generate(env,sources,[video],[],null,response([{source_id:'video',timestamp:'later',description:'操作'}])),/影片缺少可查核/);
+  const mixed=[photo,{...video,evidence_id:'photo'}];
+  await generate(env,sources,mixed,[],null,response([{...picture,timestamp:''},{...picture,timestamp:'00:10'}]));
+  await assert.rejects(generate(env,sources,mixed,[],null,response([{...picture,timestamp:''}])),/影片缺少可查核/);
+  await assert.rejects(generate(env,sources,mixed,[],null,response([{...picture,timestamp:'00:31'}])),/影片時間點超出/);
+});
+
+test('待回補先免費讀原文、單篇啟動、刪除後同步不重加，重新分享可恢復',async()=>{
+  const env=environment(),net=network(),handler=createLearningHandler(net);
+  const source=id=>({url:'https://x.com/i/status/'+id,relation:'primary',content:'原文內容 '+id,metadata:{title:'標題'},media:[]});
+  const first=await handler.service.collect(env,'https://x.com/author/status/100','backfill','bookmark:100',{defer:true,source:source('100')});
+  const second=await handler.service.collect(env,'https://x.com/author/status/200','backfill','bookmark:200',{defer:true,source:source('200')});
+  const preview=await (await handler.fetch(request('api/items/'+first),env)).json();
+  assert.equal(preview.item.status,'awaiting_backfill');assert.equal(preview.sources[0].content,'原文內容 100');
+  assert.equal(net.calls.length,0);assert.equal(env.LEARNING_JOBS.jobs.length,0);
+  const list=await (await handler.fetch(request('api/items?status=awaiting_backfill'),env)).json();
+  assert.equal(list.length,2);assert.ok(list[0].preview.startsWith('原文內容'));
+  assert.equal((await handler.fetch(new Request('https://learning.example.org/learning/api/items/'+second,{method:'DELETE'}),env)).status,401);
+  assert.equal((await handler.fetch(request('api/items/'+first+'/backfill','POST',{}),env)).status,202);
+  assert.equal((await item(env,first)).status,'queued');assert.equal((await item(env,second)).status,'awaiting_backfill');
+  assert.equal(env.LEARNING_JOBS.jobs.length,1);assert.equal((await setting(env,'sync')).backfill_approved,undefined);
+  assert.equal((await handler.fetch(request('api/items/'+first+'/backfill','POST',{}),env)).status,409);
+  assert.equal((await handler.fetch(request('api/items/'+first,'DELETE'),env)).status,409);
+  assert.equal((await handler.fetch(request('api/items/'+second,'DELETE'),env)).status,200);
+  assert.equal((await handler.fetch(request('api/items/'+second),env)).status,404);
+  assert.equal((await rows(env,'SELECT * FROM learning_evidence WHERE item_id=?',second)).length,0);
+  assert.equal((await rows(env,'SELECT * FROM learning_intakes WHERE item_id=?',second)).length,0);
+  await handler.service.collect(env,source('200').url,'bookmark','bookmark:200',{source:source('200')});
+  await handler.service.process(env,second);
+  assert.equal((await item(env,second)).status,'dismissed');assert.equal(env.LEARNING_JOBS.jobs.length,1);
+  assert.equal((await (await handler.fetch(request('api/items'),env)).json()).length,1);
+  assert.equal((await (await handler.fetch(request('api/items?status=awaiting_backfill'),env)).json()).length,0);
+  await handler.service.collect(env,source('200').url,'share');
+  assert.equal((await item(env,second)).status,'queued');assert.equal(env.LEARNING_JOBS.jobs.length,2);
+});
+
 test('Telegram 收件限制、重複 webhook 與收件回覆',async()=>{
   const env=environment(),net=network(),handler=createLearningHandler(net);
   const update={update_id:100,message:{chat:{id:42},text:'https://example.org/article'}};

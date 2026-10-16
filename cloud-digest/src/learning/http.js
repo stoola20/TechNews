@@ -5,6 +5,7 @@ import {equalSecret,authorized,createSession,cookie,mutationAllowed} from './aut
 import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connection,saveConnection,nowIso} from './store.js';
 import {exchange,xRead} from './x.js';
 import {resetIncomplete} from './evidence.js';
+import {renderMarkdown} from './markdown.js';
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
 const json=(value,status=200,headers={})=>Response.json(value,{status,headers:{...JSON_HEADERS,...headers}});
@@ -71,20 +72,45 @@ export function createLearningHandler(deps={}) {
         const term=(url.searchParams.get('q') || '').trim();
         const offset=Number(url.searchParams.get('offset') || 0);
         if(term.length>200||!Number.isInteger(offset)||offset<0||offset>1000000)throw new Error('搜尋參數無效');
+        const filter=url.searchParams.get('status')||'';
+        if(filter&&!['awaiting_backfill','ready','partial','needs_attention'].includes(filter))throw new Error('文章篩選無效');
         const pattern=`%${term.replace(/[\\%_]/g,s=>'\\'+s)}%`;
-        return json(await rows(env,`SELECT id,url,title,status,read_at,last_error,gaps_json,created_at,updated_at FROM learning_items WHERE title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\') ORDER BY created_at DESC LIMIT 50 OFFSET ?`,pattern,pattern,pattern,pattern,offset));
+        return json(await rows(env,`SELECT id,url,title,status,read_at,last_error,gaps_json,created_at,updated_at,
+          (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview
+          FROM learning_items WHERE status!='dismissed' ${filter?'AND status=?':''} AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\')) ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...(filter?[filter]:[]),pattern,pattern,pattern,pattern,offset));
       }
-      const match=route.match(/^items\/([a-f0-9]{32})(\/retry)?$/);
+      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill))?$/);
       if(match){
         const id=match[1],current=await item(env,id);
-        if(!current)return json({error:'文章不存在'},404);
-        if(match[2]&&request.method==='POST'){
+        if(!current||current.status==='dismissed')return json({error:'文章不存在'},404);
+        if(match[2]==='/backfill'&&request.method==='POST'){
+          const changed=await query(env,"UPDATE learning_items SET status='queued',updated_at=? WHERE id=? AND status='awaiting_backfill'",nowIso(),id).run();
+          if(!changed.meta.changes)return json({error:'這篇已離開待回補清單，請重新整理。'},409);
+          await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/retry'&&request.method==='POST'){
           if(current.status==='awaiting_backfill')throw new Error('請先確認既有書籤回補');
           await resetIncomplete(env,id);
           await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL WHERE id=?",id).run();
           await service.enqueue(env,id);return json({ok:true},202);
         }
-        if(!match[2]&&request.method==='GET')return json({item:current,sources:await evidence(env,id),media:await rows(env,'SELECT id,type,duration_ms,status,error,object_key FROM learning_media WHERE item_id=?',id)});
+        if(!match[2]&&request.method==='DELETE'){
+          if(current.status!=='awaiting_backfill')return json({error:'只能刪除等待確認回補的文章。'},409);
+          const assets=await rows(env,'SELECT object_key FROM learning_media WHERE item_id=? AND object_key IS NOT NULL',id);
+          const guard="AND EXISTS(SELECT 1 FROM learning_items WHERE id=? AND status='dismissed')";
+          const result=await env.DB.batch([
+            query(env,"UPDATE learning_items SET status='dismissed',title='',body=NULL,article_json=NULL,gaps_json='[]',note='',last_error=NULL,updated_at=? WHERE id=? AND status='awaiting_backfill'",nowIso(),id),
+            query(env,`DELETE FROM learning_questions WHERE item_id=? ${guard}`,id,id),
+            query(env,`DELETE FROM learning_media WHERE item_id=? ${guard}`,id,id),
+            query(env,`DELETE FROM learning_evidence WHERE item_id=? ${guard}`,id,id),
+            query(env,`DELETE FROM learning_intakes WHERE item_id=? ${guard}`,id,id),
+            query(env,`DELETE FROM settings WHERE key=? ${guard}`,`learning:context:${id}`,id),
+          ]);
+          if(!result[0].meta.changes)return json({error:'文章狀態已改變，請重新整理。'},409);
+          for(const asset of assets)if(env.MEDIA)await env.MEDIA.delete(asset.object_key);
+          return json({ok:true});
+        }
+        if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},sources:await evidence(env,id),media:await rows(env,'SELECT id,type,duration_ms,status,error,object_key FROM learning_media WHERE item_id=?',id)});
         if(!match[2]&&request.method==='PATCH'){
           const data=await body(request);
           if('note' in data){if(typeof data.note!=='string'||data.note.length>20000)throw new Error('筆記超過 20,000 字元');await query(env,'UPDATE learning_items SET note=? WHERE id=?',data.note,id).run();}
@@ -113,7 +139,8 @@ export function createLearningHandler(deps={}) {
       if(route==='ask'&&request.method==='POST'){
         const data=await body(request);
         if(data.item_id&&!await item(env,data.item_id))return json({error:'文章不存在'},404);
-        return json(await service.ask(env,data.question,data.item_id || null));
+        const result=await service.ask(env,data.question,data.item_id || null);
+        return json({...result,answer_html:renderMarkdown(result.answer)});
       }
       if(route==='x/connect'&&request.method==='POST'){
         if(!env.X_CLIENT_ID || !env.X_CLIENT_SECRET || !env.PUBLIC_BASE_URL)throw new Error('X 授權設定未完成');

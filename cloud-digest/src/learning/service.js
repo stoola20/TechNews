@@ -11,8 +11,9 @@ export function createLearningService(deps={}) {
   async function collect(env,value,origin='share',receipt=null,options={}) {
     const url=canonicalUrl(value),id=(await hash(url)).slice(0,32),time=nowIso();
     await query(env,`INSERT OR IGNORE INTO learning_items(id,url,kind,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`,id,url,new URL(url).hostname==='x.com'?'x':'web',options.defer?'awaiting_backfill':'queued',time,time).run();
+    if((await item(env,id)).status==='dismissed'&&origin!=='share')return id;
     await query(env,'INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,created_at) VALUES(?,?,?,?)',receipt || crypto.randomUUID(),id,origin,time).run();
-    if(origin==='share')await query(env,"UPDATE learning_items SET status='queued' WHERE id=? AND status='awaiting_backfill'",id).run();
+    if(origin==='share')await query(env,"UPDATE learning_items SET status='queued' WHERE id=? AND status IN ('awaiting_backfill','dismissed')",id).run();
     if(options.source){const key=await saveEvidence(env,id,options.source);await registerMedia(env,id,key,options.source.media);}
     const current=await item(env,id);
     if(!options.defer && ['queued','error'].includes(current.status))await enqueue(env,id);
@@ -20,7 +21,7 @@ export function createLearningService(deps={}) {
   }
   async function process(env,id) {
     const row=await item(env,id);
-    if(!row || ['awaiting_backfill','needs_attention','budget_paused'].includes(row.status))return {waiting:true};
+    if(!row || ['awaiting_backfill','needs_attention','budget_paused','dismissed'].includes(row.status))return {waiting:true};
     if(['ready','partial'].includes(row.status))return {done:true};
     const lease=await lock(env,id);
     if(!lease)return {pending:true};
@@ -33,14 +34,14 @@ export function createLearningService(deps={}) {
       if(media.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
       const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
       const gaps=[...acquisition.sources.filter(s=>s.status!=='available').map(s=>({url:s.url,error:JSON.parse(s.metadata_json).error || '來源不可取得'})),...media.gaps];
-      const fingerprint=await hash(JSON.stringify({sources:sources.map(s=>({id:s.id,content:s.content,relation:s.relation,author_id:s.author_id,published_at:s.published_at,metadata_json:s.metadata_json})),media:media.media.map(m=>m.id),gaps,model:env.LEARNING_MODEL || 'gemini-3.8-flash',prompt_version:'learning-v1'}));
+      const fingerprint=await hash(JSON.stringify({sources:sources.map(s=>({id:s.id,content:s.content,relation:s.relation,author_id:s.author_id,published_at:s.published_at,metadata_json:s.metadata_json})),media:media.media.map(m=>m.id),gaps,model:env.LEARNING_MODEL || 'gemini-3.8-flash',prompt_version:'learning-v2'}));
       const old=row.article_json?JSON.parse(row.article_json):null;
       const article=old?.input_fingerprint===fingerprint?old:await (deps.generate || generate)(env,sources,media.media,gaps,null,fetcher);
       const revision=old?.input_fingerprint===fingerprint?row.revision:row.revision+1;
       article.input_fingerprint=fingerprint;
       article.provider=env.LEARNING_DEMO==='true'?'demo':'gemini';
       article.model=env.LEARNING_MODEL || 'gemini-3.8-flash';
-      article.prompt_version='learning-v1';
+      article.prompt_version='learning-v2';
       if(!article.generated_at)article.generated_at=nowIso();
       await query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=?,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,recheck_at=COALESCE(recheck_at,?) WHERE id=?`,
         article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',revision,nowIso(),row.kind==='x'?new Date(Date.now()+86400000).toISOString():null,id).run();

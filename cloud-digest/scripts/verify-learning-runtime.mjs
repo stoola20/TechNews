@@ -18,9 +18,19 @@ try{
   const id='a'.repeat(32),time=new Date().toISOString();
   await db.prepare('INSERT INTO learning_items(id,url,kind,created_at,updated_at) VALUES(?,?,?,?,?)').bind(id,'https://example.org/runtime','web',time,time).run();
   await db.prepare('INSERT INTO learning_evidence(id,item_id,url,relation,fetched_at) VALUES(?,?,?,?,?)').bind('source',id,'https://example.org/runtime','primary',time).run();
+  await db.prepare('UPDATE learning_items SET body=? WHERE id=?').bind('### 已渲染\n\n**內容**<script>alert(1)</script>',id).run();
+  const article=await runtime.dispatchFetch(origin+'api/items/'+id,{headers:{cookie}});
+  const rendered=(await article.json()).item.body_html;assert.match(rendered,/<h3>已渲染<\/h3>/);assert.ok(!rendered.includes('<script>'));
+  const awaiting='b'.repeat(32);
+  await db.prepare("INSERT INTO learning_items(id,url,kind,status,created_at,updated_at) VALUES(?,?,?,'awaiting_backfill',?,?)").bind(awaiting,'https://example.org/awaiting','web',time,time).run();
+  await db.prepare('INSERT INTO learning_evidence(id,item_id,url,relation,content,fetched_at) VALUES(?,?,?,?,?,?)').bind('preview-source',awaiting,'https://example.org/awaiting','primary','已保存原文',time).run();
+  const preview=await runtime.dispatchFetch(origin+'api/items?status=awaiting_backfill',{headers:{cookie}});assert.equal((await preview.json())[0].preview,'已保存原文');
+  const removed=await runtime.dispatchFetch(origin+'api/items/'+awaiting,{method:'DELETE',headers:{cookie,'x-learning-request':'1'}});assert.equal(removed.status,200);
+  assert.equal((await db.prepare('SELECT status FROM learning_items WHERE id=?').bind(awaiting).first()).status,'dismissed');
+  assert.equal((await db.prepare('SELECT count(*) AS count FROM learning_evidence WHERE item_id=?').bind(awaiting).first()).count,0);
   await db.prepare('INSERT INTO learning_media(id,item_id,evidence_id,url,type,mime,bytes,object_key,status,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind('asset',id,'source','https://example.org/photo','photo','image/png',3,'learning/runtime','ready',time).run();
   const bucket=await runtime.getR2Bucket('MEDIA');await bucket.put('learning/runtime',new Uint8Array([1,2,3]));
   const media=await runtime.dispatchFetch(origin+'api/media/asset',{headers:{cookie,range:'bytes=1-2'}});assert.equal(media.status,206);assert.equal(media.headers.get('content-range'),'bytes 1-2/3');assert.deepEqual([...new Uint8Array(await media.arrayBuffer())],[2,3]);
   const privateMedia=await runtime.dispatchFetch(origin+'api/media/asset');assert.equal(privateMedia.status,401);
-  console.log('Workers 本機執行驗證通過：migration、登入、預算暫停、來源限制、R2 Range 與私人媒體授權。');
+  console.log('Workers 本機執行驗證通過：migration、登入、預算暫停、Markdown 清理、原文預覽與刪除、來源限制、R2 Range 與私人媒體授權。');
 }finally{await runtime.dispose();}
