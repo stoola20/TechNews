@@ -29,17 +29,19 @@ export function createLearningService(deps={}) {
     if(!lease)return {pending:true};
     try {
       if((await budget(env)).paused)throw new BudgetPaused();
-      await query(env,"UPDATE learning_items SET status='processing' WHERE id=?",id).run();
+      await query(env,"UPDATE learning_items SET status='processing',stage='source',updated_at=? WHERE id=?",nowIso(),id).run();
       const acquisition=await acquireEvidence(env,row,deps);
       if(acquisition.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
       // 本機文字路徑：純文字來源不呼叫 Flash；含媒體的內容在媒體接力完成前仍走既有路徑。
       const local=(await textProvider(env))==='local'&&!(await query(env,'SELECT id FROM learning_media WHERE item_id=? LIMIT 1',id).first());
       if(local)return await queueLocal(env,row,acquisition);
+      await query(env,"UPDATE learning_items SET stage='media' WHERE id=?",id).run();
       const media=await (deps.prepareMedia || prepareMedia)(env,id,fetcher);
       if(media.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
       const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
       const gaps=[...acquisition.sources.filter(s=>s.status!=='available').map(s=>({url:s.url,error:JSON.parse(s.metadata_json).error || '來源不可取得'})),...media.gaps];
       const fingerprint=await hash(JSON.stringify({sources:sources.map(s=>({id:s.id,content:s.content,relation:s.relation,author_id:s.author_id,published_at:s.published_at,metadata_json:s.metadata_json})),media:media.media.map(m=>m.id),gaps,model:env.LEARNING_MODEL || 'gemini-3.8-flash',prompt_version:'learning-v2'}));
+      await query(env,"UPDATE learning_items SET stage='text' WHERE id=?",id).run();
       const old=row.article_json?JSON.parse(row.article_json):null;
       const article=old?.input_fingerprint===fingerprint?old:await (deps.generate || generate)(env,sources,media.media,gaps,null,fetcher);
       const revision=old?.input_fingerprint===fingerprint?row.revision:row.revision+1;
@@ -49,7 +51,7 @@ export function createLearningService(deps={}) {
       article.prompt_version='learning-v2';
       if(!article.generated_at)article.generated_at=nowIso();
       if(revision!==row.revision)await saveVersion(env,row,'superseded');
-      await query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=?,edition='detailed',attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,recheck_at=COALESCE(recheck_at,?) WHERE id=?`,
+      await query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=?,edition='detailed',stage=NULL,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,recheck_at=COALESCE(recheck_at,?) WHERE id=?`,
         article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',revision,nowIso(),row.kind==='x'?new Date(Date.now()+86400000).toISOString():null,id).run();
       return {done:true};
     }catch(error){
@@ -65,11 +67,11 @@ export function createLearningService(deps={}) {
     const {input,fingerprint}=await articleInput(env,row,sources,gaps);
     const old=row.article_json?JSON.parse(row.article_json):null;
     if(old?.input_fingerprint===fingerprint){
-      await query(env,"UPDATE learning_items SET status=?,attempts=0,last_error=NULL,updated_at=? WHERE id=?",gaps.length?'partial':'ready',nowIso(),row.id).run();
+      await query(env,"UPDATE learning_items SET status=?,stage=NULL,attempts=0,last_error=NULL,updated_at=? WHERE id=?",gaps.length?'partial':'ready',nowIso(),row.id).run();
       return {done:true};
     }
     await ensureJob(env,{kind:'article',itemId:row.id,priority:await itemPriority(env,row.id),input,fingerprint});
-    await query(env,"UPDATE learning_items SET status='waiting_local',attempts=0,next_attempt_at=NULL,updated_at=? WHERE id=?",nowIso(),row.id).run();
+    await query(env,"UPDATE learning_items SET status='waiting_local',stage='text',attempts=0,next_attempt_at=NULL,updated_at=? WHERE id=?",nowIso(),row.id).run();
     return {waiting:true};
   }
   async function sync(env){return syncBookmarks(env,{...deps,collect});}

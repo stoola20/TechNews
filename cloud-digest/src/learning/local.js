@@ -52,22 +52,32 @@ export async function touchRunner(env,runnerId,info={}){
   await query(env,'INSERT INTO learning_runners(id,last_seen_at,info_json) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at,info_json=excluded.info_json',runnerId,nowIso(),JSON.stringify(safe)).run();
 }
 
-async function nextJob(env,now){
-  return rows(env,`SELECT id,status,attempt_token,priority,created_at FROM learning_jobs
-    WHERE status='waiting_local' OR (status='leased' AND lease_until<=?) ORDER BY priority,created_at LIMIT 20`,now);
+// 公平排隊：每等待 LOCAL_AGING_MINUTES 分鐘，有效優先順序提前一級，背景回補不會永久排不到。
+export const agingMinutes=env=>Math.max(1,Number(env.LOCAL_AGING_MINUTES || 30));
+export function effectivePriority(job,env,now=Date.now()){
+  const waited=Math.max(0,now-Date.parse(job.created_at))/60000;
+  return job.priority-Math.floor(waited/agingMinutes(env));
+}
+export async function queueOrder(env,now=nowIso()){
+  const candidates=await rows(env,`SELECT id,kind,item_id,question_id,status,attempt_token,runner_id,lease_until,priority,created_at FROM learning_jobs
+    WHERE status='waiting_local' OR (status='leased' AND lease_until<=?) ORDER BY priority,created_at LIMIT 500`,now);
+  const time=Date.parse(now);
+  return candidates.map(c=>({...c,effective_priority:effectivePriority(c,env,time)})).sort((a,b)=>a.effective_priority-b.effective_priority || a.created_at.localeCompare(b.created_at));
 }
 
 // 全域單工：仍有有效 lease 時不發出第二份工作。
 export async function claim(env,runnerId,info={}){
   await touchRunner(env,runnerId,info);
   const now=nowIso();
-  if(await query(env,"SELECT id FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",now).first())return null;
-  for(const candidate of await nextJob(env,now)){
+  const held=await query(env,"SELECT id,status,attempt_token,priority,created_at,runner_id FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",now).first();
+  // 同一執行器重新啟動後，原本的領取已不在記憶體中：改發新 attempt token，舊 token 的回報會被拒絕。
+  if(held && held.runner_id!==runnerId)return null;
+  for(const candidate of held?[held]:(await queueOrder(env,now)).slice(0,20)){
     const token=crypto.randomUUID(),lease=new Date(Date.now()+LEASE_MS).toISOString();
     const expired=candidate.status==='leased';
     const result=await query(env,`UPDATE learning_jobs SET status='leased',attempt_token=?,runner_id=?,lease_until=?,leased_at=?,updated_at=?,lease_expirations=lease_expirations+?
       WHERE id=? AND status=? AND COALESCE(attempt_token,'')=? AND NOT EXISTS(SELECT 1 FROM learning_jobs WHERE status='leased' AND lease_until>? AND id!=?)`,
-      token,runnerId,lease,now,now,expired?1:0,candidate.id,candidate.status,candidate.attempt_token || '',now,candidate.id).run();
+      token,runnerId,lease,now,now,expired&&!held?1:0,candidate.id,candidate.status,candidate.attempt_token || '',now,candidate.id).run();
     if(!result.meta.changes)continue;
     const job=await query(env,'SELECT * FROM learning_jobs WHERE id=?',candidate.id).first();
     if(job.item_id)await query(env,"UPDATE learning_items SET status='generating',updated_at=? WHERE id=? AND status IN ('waiting_local','generating')",now,job.item_id).run();
@@ -141,7 +151,7 @@ async function completeArticle(env,job,input,data,hooks){
   if(validated.publish===false){
     await env.DB.batch([
       query(env,"UPDATE learning_jobs SET status='done',result_json=?,completed_at=?,updated_at=?,lease_until=NULL WHERE id=? AND status='leased' AND attempt_token=?",JSON.stringify({publish:false,reason:validated.reason}),time,time,job.id,job.attempt_token),
-      query(env,"UPDATE learning_items SET status='filtered',title=?,article_json=?,last_error=NULL,updated_at=? WHERE id=? AND revision=?",validated.title || row.title,JSON.stringify({...provenance,publish:false,reason:validated.reason}),time,row.id,row.revision),
+      query(env,"UPDATE learning_items SET status='filtered',stage=NULL,title=?,article_json=?,last_error=NULL,updated_at=? WHERE id=? AND revision=?",validated.title || row.title,JSON.stringify({...provenance,publish:false,reason:validated.reason}),time,row.id,row.revision),
     ]);
     return {ok:true,filtered:true};
   }
@@ -150,7 +160,7 @@ async function completeArticle(env,job,input,data,hooks){
   if(row.body)await saveVersion(env,row,'superseded');
   const result=await env.DB.batch([
     query(env,"UPDATE learning_jobs SET status='done',result_json=?,completed_at=?,updated_at=?,lease_until=NULL,last_error=NULL WHERE id=? AND status='leased' AND attempt_token=?",JSON.stringify({revision:row.revision+1}),time,time,job.id,job.attempt_token),
-    query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=revision+1,edition='detailed',attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,
+    query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=revision+1,edition='detailed',stage=NULL,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,
       recheck_at=COALESCE(recheck_at,?) WHERE id=? AND revision=? AND EXISTS(SELECT 1 FROM learning_jobs WHERE id=? AND status='done' AND attempt_token=?)`,
       article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',time,row.kind==='x'?new Date(Date.now()+86400000).toISOString():null,row.id,row.revision,job.id,job.attempt_token),
   ]);
@@ -172,5 +182,6 @@ export async function runnerStatus(env){
   const current=await query(env,"SELECT id,kind,item_id,question_id,leased_at,lease_until FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",nowIso()).first();
   const lastSeen=runner?.last_seen_at || null;
   return {provider:await textProvider(env),model:localModel(env),last_seen_at:lastSeen,online:!!lastSeen && Date.now()-Date.parse(lastSeen)<RUNNER_ONLINE_MS,
-    info:runner?JSON.parse(runner.info_json):null,jobs:Object.fromEntries(counts.map(c=>[c.status,c.count])),current};
+    info:runner?JSON.parse(runner.info_json):null,jobs:Object.fromEntries(counts.map(c=>[c.status,c.count])),current,
+    queue:(await queueOrder(env)).slice(0,20).map((j,i)=>({position:i+1,kind:j.kind,item_id:j.item_id,question_id:j.question_id,priority:j.priority,effective_priority:j.effective_priority,created_at:j.created_at}))};
 }
