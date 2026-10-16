@@ -5,6 +5,7 @@ import {prepareMedia,expireMedia} from './media.js';
 import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
+import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 
 export function createLearningService(deps={}) {
   const fetcher=deps.fetcher || fetch;
@@ -22,8 +23,8 @@ export function createLearningService(deps={}) {
   }
   async function process(env,id) {
     const row=await item(env,id);
-    if(!row || ['awaiting_backfill','needs_attention','budget_paused','dismissed'].includes(row.status))return {waiting:true};
-    if(['ready','partial'].includes(row.status))return {done:true};
+    if(!row || ['awaiting_backfill','needs_attention','budget_paused','dismissed','merged','waiting_local','generating'].includes(row.status))return {waiting:true};
+    if(['ready','partial','filtered'].includes(row.status))return {done:true};
     const lease=await lock(env,id);
     if(!lease)return {pending:true};
     try {
@@ -31,6 +32,9 @@ export function createLearningService(deps={}) {
       await query(env,"UPDATE learning_items SET status='processing' WHERE id=?",id).run();
       const acquisition=await acquireEvidence(env,row,deps);
       if(acquisition.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
+      // 本機文字路徑：純文字來源不呼叫 Flash；含媒體的內容在媒體接力完成前仍走既有路徑。
+      const local=(await textProvider(env))==='local'&&!(await query(env,'SELECT id FROM learning_media WHERE item_id=? LIMIT 1',id).first());
+      if(local)return await queueLocal(env,row,acquisition);
       const media=await (deps.prepareMedia || prepareMedia)(env,id,fetcher);
       if(media.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
       const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
@@ -54,6 +58,19 @@ export function createLearningService(deps={}) {
       if(paused)return {waiting:true};
       throw error;
     }finally{await unlock(env,id,lease);}
+  }
+  async function queueLocal(env,row,acquisition){
+    const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
+    const gaps=acquisition.sources.filter(s=>s.status!=='available').map(s=>({url:s.url,error:JSON.parse(s.metadata_json).error || '來源不可取得'}));
+    const {input,fingerprint}=await articleInput(env,row,sources,gaps);
+    const old=row.article_json?JSON.parse(row.article_json):null;
+    if(old?.input_fingerprint===fingerprint){
+      await query(env,"UPDATE learning_items SET status=?,attempts=0,last_error=NULL,updated_at=? WHERE id=?",gaps.length?'partial':'ready',nowIso(),row.id).run();
+      return {done:true};
+    }
+    await ensureJob(env,{kind:'article',itemId:row.id,priority:await itemPriority(env,row.id),input,fingerprint});
+    await query(env,"UPDATE learning_items SET status='waiting_local',attempts=0,next_attempt_at=NULL,updated_at=? WHERE id=?",nowIso(),row.id).run();
+    return {waiting:true};
   }
   async function sync(env){return syncBookmarks(env,{...deps,collect});}
   async function backfill(env){

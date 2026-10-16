@@ -7,6 +7,7 @@ import {exchange,xRead} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary} from './library.js';
+import {claim,heartbeat,complete,fail,release,runnerStatus,setTextProvider,JobConflict} from './local.js';
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
 const json=(value,status=200,headers={})=>Response.json(value,{status,headers:{...JSON_HEADERS,...headers}});
@@ -51,6 +52,25 @@ export function createLearningHandler(deps={}) {
         if(env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});
         return new Response(null,{status:303,headers:{location:'/learning','set-cookie':await createSession(env),...JSON_HEADERS}});
       }
+      if(path.startsWith('/learning/runner/')&&request.method==='POST'){
+        // Mac 執行器使用專用憑證，不能用來登入網站；網站登入憑證也不能領取工作。
+        if(!env.LEARNING_RUNNER_TOKEN || !equalSecret(request.headers.get('authorization')?.replace(/^Bearer\s+/i,''),env.LEARNING_RUNNER_TOKEN))return json({error:'Not found'},404);
+        const data=await body(request),action=path.slice('/learning/runner/'.length);
+        try{
+          if(action==='claim')return json({job:await claim(env,data.runner_id,data.info)});
+          if(action==='heartbeat')return json(await heartbeat(env,data.runner_id,data.info,data.job_id,data.attempt_token));
+          if(action==='fail')return json(await fail(env,data.job_id,data.attempt_token,data.error,data.retryable!==false));
+          if(action==='release')return json(await release(env,data.job_id,data.attempt_token,data.error));
+          if(action==='complete'){
+            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env,'share').catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},...service.localHooks});
+            return json(result);
+          }
+        }catch(error){
+          if(error instanceof JobConflict)return json({error:error.message,code:error.code},error.code==='not_found'?404:error.code==='invalid_output'?422:409);
+          throw error;
+        }
+        return json({error:'Not found'},404);
+      }
       if(path==='/learning/session'&&request.method==='POST'){
         if(!mutationAllowed(request,env))return json({error:'登入請求來源不符'},403);
         const data=await body(request);
@@ -66,10 +86,11 @@ export function createLearningHandler(deps={}) {
       const route=path.replace(/^\/learning\/api\//,'');
       if(route==='status'&&request.method==='GET'){
         const count=await query(env,"SELECT COUNT(*) AS count FROM learning_items WHERE status='awaiting_backfill'").first();
-        return json({budget:await budget(env),sync:await setting(env,'sync'),awaiting_backfill:count.count,demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
+        return json({budget:await budget(env),sync:await setting(env,'sync'),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
       if(route==='admin/migrate'&&request.method==='POST')return json(await migrateLibrary(env));
+      if(route==='admin/text-provider'&&request.method==='PUT'){await setTextProvider(env,(await body(request)).provider);return json(await runnerStatus(env));}
       if(route==='items'&&request.method==='GET'){
         const term=(url.searchParams.get('q') || '').trim();
         const offset=Number(url.searchParams.get('offset') || 0);

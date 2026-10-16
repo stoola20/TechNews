@@ -2,6 +2,7 @@ import {createServer} from 'node:http';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import {createLearningHandler} from '../src/learning/http.js';
+import {setTextProvider} from '../src/learning/local.js';
 
 // 此入口僅提供本機操作驗證，不讀取任何真實金鑰或呼叫外部服務。
 const sqlite=new DatabaseSync(':memory:');
@@ -11,7 +12,9 @@ const samples={
   'video-input':{title:'原生影片輸入與自行前處理',content:'原生影片輸入表示 API 可以接收影片檔，不表示模型會連續看完每一幀。服務仍會取樣畫面並處理音訊。\n\n自行前處理則由應用程式取畫面、轉錄音訊並提供時間對應。好處是可以明確保存證據，代價是取樣與音畫對齊需要自己維護。\n\n例如講者說「打開這個選項」，畫面才顯示選項名稱；只讀逐字稿會漏掉操作細節。快速閃過的錯誤訊息可能被兩種取樣方式漏掉。'},
   'background-jobs':{title:'背景工作如何在失敗後繼續處理',content:'收件先持續保存於資料庫，再交給背景佇列處理。佇列負責喚醒，資料庫保存來源、處理階段與已生成文章。\n\n通知失敗時，重送已保存的結果，避免再付一次生成費用。來源取得失敗時則保留工作與缺漏，不把不完整內容寫成完整事實。\n\n預算用完後停止新的付費工作，收藏仍保留；即使跨月，也要等使用者手動恢復。'},
 };
-const env={DB,RUN_TOKEN:'demo-only',LEARNING_ENABLED:'true',LEARNING_DEMO:'true',PUBLIC_BASE_URL:'https://example.org',LEARNING_MONTHLY_USD:'30'};
+const env={DB,RUN_TOKEN:'demo-only',LEARNING_RUNNER_TOKEN:'demo-runner',LEARNING_ENABLED:'true',LEARNING_DEMO:'true',PUBLIC_BASE_URL:'https://example.org',LEARNING_MONTHLY_USD:'30'};
+// DEMO_LOCAL=1：文字工作交給本機執行器（runner/runner.mjs，TECHNEWS_RUNNER_TOKEN=demo-runner）。
+if(process.env.DEMO_LOCAL==='1')await setTextProvider(env,'local');
 const handler=createLearningHandler({
   postEvidence:async(env,id)=>({url:'https://x.com/i/status/'+id,relation:'primary',author_id:'demo',content:'這是本機 X 收件操作示範，未讀取這個網址的真實貼文。正式環境會取得來源與媒體，再交給 Gemini 整理。',metadata:{title:'本機 X 分享示範',author_username:'demo_author',post_id:id,conversation_id:id,references:[],links:[]},media:[]}),
   xRead:async()=>({data:[],meta:{}}),
@@ -20,6 +23,7 @@ const handler=createLearningHandler({
   generate:async(env,sources,media,gaps,question)=>question?{answer:'本機測試回答：\n'+sources[0].content.slice(0,500),citations:[sources[0].id],insufficient:false}:{title:JSON.parse(sources[0].metadata_json || '{}').title || '本機教材',body:sources.map(s=>s.content).join('\n\n'),intro:'本機操作驗證示範，未呼叫外部模型。',citations:sources.map(s=>s.id),observations:[]},
   sendTelegram:async()=>1,
 });
+const port=Number(process.env.DEMO_PORT || 8788);
 const jobs=[];env.LEARNING_JOBS={async send(job){jobs.push(job);}};
 for(const key of Object.keys(samples)){const id=await handler.service.collect(env,'https://example.org/'+key);await handler.service.process(env,id);}
 for(const suffix of ['keep','remove'])await handler.service.collect(env,'https://example.org/awaiting-'+suffix,'backfill','demo:'+suffix,{defer:true,source:{url:'https://example.org/awaiting-'+suffix,relation:'primary',content:'等待你確認的原始收藏 '+suffix+'。\n\n先讀原文，再決定是否使用模型整理。',metadata:{title:'待回補原文'},media:[]}});
@@ -27,10 +31,10 @@ const server=createServer(async(req,res)=>{
   try{
     const chunks=[];for await(const chunk of req){chunks.push(chunk);if(chunks.reduce((n,c)=>n+c.length,0)>64000)throw Error('Request too large');}
     const data=Buffer.concat(chunks);
-    const request=new Request('http://localhost:8788'+req.url,{method:req.method,headers:req.headers,...(!['GET','HEAD'].includes(req.method)?{body:data}:{} )});
+    const request=new Request(`http://localhost:${port}`+req.url,{method:req.method,headers:req.headers,...(!['GET','HEAD'].includes(req.method)?{body:data}:{} )});
     const response=await handler.fetch(request,env);
     res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));
     while(jobs.length){const job=jobs.shift();try{if(job.kind==='article')await handler.service.process(env,job.id);}catch{console.log('本機背景工作已保留，請查看處理狀態。');}}
   }catch(error){if(!res.headersSent){res.writeHead(500,{'content-type':'text/plain'});res.end('本機測試處理失敗');}}
 });
-server.listen(8788,'127.0.0.1',()=>console.log('本機測試：http://localhost:8788/learning；示範登入：demo-only。所有資料與回應為測試素材。'));
+server.listen(port,'127.0.0.1',()=>console.log(`本機測試：http://localhost:${port}/learning；示範登入：demo-only。所有資料與回應為測試素材。`));
