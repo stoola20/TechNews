@@ -6,6 +6,7 @@ import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
+import {mediaEvidence} from './media-analysis.js';
 
 export function createLearningService(deps={}) {
   const fetcher=deps.fetcher || fetch;
@@ -32,10 +33,13 @@ export function createLearningService(deps={}) {
       await query(env,"UPDATE learning_items SET status='processing',stage='source',updated_at=? WHERE id=?",nowIso(),id).run();
       const acquisition=await acquireEvidence(env,row,deps);
       if(acquisition.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
-      // 本機文字路徑：純文字來源不呼叫 Flash；含媒體的內容在媒體接力完成前仍走既有路徑。
-      const local=(await textProvider(env))==='local'&&!(await query(env,'SELECT id FROM learning_media WHERE item_id=? LIMIT 1',id).first());
-      if(local)return await queueLocal(env,row,acquisition);
       await query(env,"UPDATE learning_items SET stage='media' WHERE id=?",id).run();
+      // 本機文字路徑：Flash 只解析媒體並保存證據，寫作交給 Mac；純文字來源完全不呼叫 Flash。
+      if((await textProvider(env))==='local'){
+        const evidence=await mediaEvidence(env,id,{...deps,fetcher});
+        if(evidence.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
+        return await queueLocal(env,row,acquisition,evidence);
+      }
       const media=await (deps.prepareMedia || prepareMedia)(env,id,fetcher);
       if(media.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
       const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
@@ -61,10 +65,14 @@ export function createLearningService(deps={}) {
       throw error;
     }finally{await unlock(env,id,lease);}
   }
-  async function queueLocal(env,row,acquisition){
+  async function queueLocal(env,row,acquisition,media={evidence:[],gaps:[]}){
     const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
-    const gaps=acquisition.sources.filter(s=>s.status!=='available').map(s=>({url:s.url,error:JSON.parse(s.metadata_json).error || '來源不可取得'}));
-    const {input,fingerprint}=await articleInput(env,row,sources,gaps);
+    const gaps=[...acquisition.sources.filter(s=>s.status!=='available').map(s=>({url:s.url,error:JSON.parse(s.metadata_json).error || '來源不可取得'})),...media.gaps];
+    const refs=new Map(sources.map((s,i)=>[s.id,`S${i+1}`]));
+    const evidence=media.evidence.map((m,i)=>({ref:`M${i+1}`,id:m.analysis_id,media_id:m.media_id,source_ref:refs.get(m.source_id) || null,type:m.type,duration_seconds:m.duration_seconds,expired:m.expired,
+      ocr:m.ocr,speech:m.speech,visual:m.visual,unrecognized:m.unrecognized,coverage:m.coverage}));
+    const observations=media.evidence.flatMap(m=>m.visual.map(v=>({source_id:m.source_id,media_id:m.media_id,timestamp:v.timestamp,description:v.observation,kind:v.kind})));
+    const {input,fingerprint}=await articleInput(env,row,sources,gaps,{media:evidence,observations});
     const old=row.article_json?JSON.parse(row.article_json):null;
     if(old?.input_fingerprint===fingerprint){
       await query(env,"UPDATE learning_items SET status=?,stage=NULL,attempts=0,last_error=NULL,updated_at=? WHERE id=?",gaps.length?'partial':'ready',nowIso(),row.id).run();

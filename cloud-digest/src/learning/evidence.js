@@ -92,6 +92,6 @@ export async function acquireEvidence(env,item,deps={}) {
 export async function resetIncomplete(env,id,recheck=false){
   await query(env,"DELETE FROM settings WHERE key=?",`learning:context:${id}`).run();
   await query(env,"DELETE FROM learning_evidence WHERE item_id=? AND status='missing'",id).run();
-  await query(env,"UPDATE learning_media SET status=CASE WHEN object_key IS NULL THEN 'pending' ELSE 'stored' END,error=NULL,attempts=0,file_json=CASE WHEN object_key IS NULL THEN NULL ELSE file_json END WHERE item_id=? AND status IN ('error','needs_attention','expired')",id).run();
+  await query(env,"UPDATE learning_media SET status=CASE WHEN object_key IS NULL THEN 'pending' ELSE 'stored' END,error=NULL,attempts=0,analysis_attempts=0,file_json=CASE WHEN object_key IS NULL THEN NULL ELSE file_json END WHERE item_id=? AND status IN ('error','needs_attention','expired')",id).run();
   if(recheck)await query(env,"UPDATE learning_items SET rechecked=1 WHERE id=?",id).run();
 }

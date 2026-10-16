@@ -135,7 +135,8 @@ export function createLearningHandler(deps={}) {
           return json({ok:true});
         }
         if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},requested_id:match[1],sources:await evidence(env,id),
-          media:await rows(env,'SELECT id,type,duration_ms,status,error,object_key FROM learning_media WHERE item_id=?',id),
+          media:await rows(env,'SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=?',id),
+          analyses:(await rows(env,'SELECT media_id,model,prompt_version,analysis_json,created_at FROM learning_media_analyses WHERE item_id=? ORDER BY created_at',id)).map(a=>({...a,analysis:JSON.parse(a.analysis_json),analysis_json:undefined})),
           intakes:await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id),
           versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
         if(!match[2]&&request.method==='PATCH'){

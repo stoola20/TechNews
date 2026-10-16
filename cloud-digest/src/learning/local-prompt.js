@@ -11,7 +11,7 @@ export const ARTICLE_INSTRUCTIONS=[
   '你是寫給開發者的技術教材編輯。',SAFETY,STYLE,
   '先讀完所有來源，再用自己的話完整解說目的、背景、機制、推理、例子、操作步驟、限制與取捨。依原文深度決定篇幅：短公告不硬湊，長文保留所有重要段落，包括文章結尾的限制、版本要求與注意事項。不要套固定摘要模板，不要逐句翻譯。',
   '正文使用 Markdown：自然段落、適量小標題、清單、表格與程式碼區塊。自行補充的教學例子必須以「補充例子：」開頭標示。媒體觀察只能使用「媒體證據」提供的內容；標示為無法辨識的部分要照實說明。',
-  '在正文相關段落後以 [S1] 這類來源代號標註依據。缺漏清單中的內容要在正文中說明尚未取得，不可假裝完整。',
+  '在正文相關段落後以 [S1] 這類來源代號標註依據；使用媒體證據時以 [M1] 這類代號標註，並寫出影片時間點（MM:SS）。媒體證據中 kind 為 inferred 的內容是解析模型的推論，引用時要說明是推論。缺漏清單中的內容要在正文中說明尚未取得，不可假裝完整。',
 ].join('\n');
 
 export const QUESTION_INSTRUCTIONS=[
@@ -24,7 +24,7 @@ const ARTICLE_FORMAT=(official)=>[
   ...(official?['<<<PUBLISH>>>','是 或 否：這篇是否符合「讀者關注」。','<<<REASON>>>','一句判斷理由，只供存檔。']:[]),
   '<<<TITLE>>>','精確的繁體中文標題，60 字以內。',
   '<<<INTRO>>>','給 Telegram 通知的精簡介紹，200 字以內，說明這篇最值得讀的地方，不是全文。',
-  '<<<CITATIONS>>>','實際使用的來源代號，以逗號分隔，例如 S1, S2。',
+  '<<<CITATIONS>>>','實際使用的來源與媒體證據代號，以逗號分隔，例如 S1, S2, M1。',
   '<<<BODY>>>','完整 Markdown 教材，不受通知字數限制。',
   '<<<END>>>',
   ...(official?['若 PUBLISH 為「否」，TITLE 仍要填寫，INTRO 與 BODY 可以只寫「略過」。']:[]),
@@ -34,7 +34,7 @@ const QUESTION_FORMAT=['只輸出以下區段，每個區段標記單獨一行�
 
 export function articleMessages(input){
   const data={sources:input.sources.map(s=>({ref:s.ref,relation:s.relation,url:s.url,author:s.author,published_at:s.published_at,title:s.title,content:s.content})),
-    media_evidence:input.media || [],gaps:input.gaps || []};
+    media_evidence:(input.media || []).map(m=>({ref:m.ref,source_ref:m.source_ref,type:m.type,duration_seconds:m.duration_seconds,ocr:m.ocr,speech:m.speech,visual:m.visual,unrecognized:m.unrecognized,coverage:m.coverage})),gaps:input.gaps || []};
   const user=[
     input.official?`這是官方來源「${input.official.source_name}」的新文章。讀者關注：${input.official.interests}\n先判斷是否符合讀者關注；只有商務合作、人物或政策宣傳而沒有技術或產品變更時為「否」。`:'這是使用者主動收藏或分享的內容，不做相關性篩選，一律完整整理。',
     ARTICLE_FORMAT(!!input.official),
@@ -86,7 +86,7 @@ export function parseAnswer(text){
 // Worker 驗收回報時使用；回傳以來源代號換回的正式證據 ID。
 export function validateArticle(input,article){
   if(!article || typeof article!=='object')throw new Error('教材格式無效');
-  const map=new Map(input.sources.map(s=>[s.ref,s.id]));
+  const map=new Map([...input.sources.map(s=>[s.ref,s.id]),...(input.media || []).map(m=>[m.ref,m.id])]);
   if(input.official){
     if(typeof article.publish!=='boolean')throw new Error('官方文章缺少主題判斷');
     if(!article.publish)return {publish:false,reason:String(article.reason || '').slice(0,500),title:String(article.title || '').slice(0,200)};
@@ -97,7 +97,7 @@ export function validateArticle(input,article){
   if(!Array.isArray(article.citations) || !article.citations.length)throw new Error('教材沒有引用來源');
   const unknown=article.citations.filter(r=>!map.has(r));
   if(unknown.length)throw new Error('教材引用了未提供的來源');
-  const inline=[...article.body.matchAll(/\[(S\d+)\]/g)].map(m=>m[1]).filter(r=>!map.has(r));
+  const inline=[...article.body.matchAll(/\[([SM]\d+)\]/g)].map(m=>m[1]).filter(r=>!map.has(r));
   if(inline.length)throw new Error('正文引用了未提供的來源');
   return {...(input.official?{publish:true,reason:String(article.reason || '')}:{}),title:article.title.trim(),intro:article.intro.trim(),body:article.body.trim(),citations:article.citations.map(r=>map.get(r))};
 }

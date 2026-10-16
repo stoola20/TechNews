@@ -35,13 +35,15 @@ export async function articleInput(env,row,sources,gaps,extra={}){
   return {input,fingerprint};
 }
 
-// 同一輸入版本只建立一次工作；輸入改變時，舊工作標為 superseded，舊回報不能覆寫新文章。
+// 同一輸入版本只保留一份工作；輸入改變時，舊工作標為 superseded，舊回報不能覆寫新文章。
+// 呼叫端只在目前文章不是這個輸入版本時才建立工作，因此已完成的同版本工作會重新排隊。
 export async function ensureJob(env,{kind,itemId=null,questionId=null,priority,input,fingerprint}){
   const id=(await hash(`${kind}:${itemId || questionId}:${fingerprint}`)).slice(0,32),time=nowIso();
   await query(env,`UPDATE learning_jobs SET status='superseded',attempt_token=NULL,lease_until=NULL,updated_at=? WHERE ${itemId?'item_id':'question_id'}=? AND kind=? AND id!=? AND status IN ('waiting_local','leased')`,time,itemId || questionId,kind,id).run();
   await query(env,`INSERT INTO learning_jobs(id,kind,item_id,question_id,status,priority,input_version,input_json,created_at,updated_at) VALUES(?,?,?,?,'waiting_local',?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET status=CASE WHEN learning_jobs.status IN ('failed','superseded') THEN 'waiting_local' ELSE learning_jobs.status END,
-      attempts=CASE WHEN learning_jobs.status IN ('failed','superseded') THEN 0 ELSE learning_jobs.attempts END,priority=MIN(learning_jobs.priority,excluded.priority),updated_at=excluded.updated_at`,
+    ON CONFLICT(id) DO UPDATE SET status=CASE WHEN learning_jobs.status IN ('failed','superseded','done') THEN 'waiting_local' ELSE learning_jobs.status END,
+      attempt_token=CASE WHEN learning_jobs.status IN ('failed','superseded','done') THEN NULL ELSE learning_jobs.attempt_token END,
+      attempts=CASE WHEN learning_jobs.status IN ('failed','superseded','done') THEN 0 ELSE learning_jobs.attempts END,priority=MIN(learning_jobs.priority,excluded.priority),updated_at=excluded.updated_at`,
     id,kind,itemId,questionId,priority,fingerprint,JSON.stringify(input),time,time).run();
   return id;
 }
