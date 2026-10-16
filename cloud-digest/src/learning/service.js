@@ -4,16 +4,17 @@ import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia} from './media.js';
 import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia} from './x.js';
+import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 
 export function createLearningService(deps={}) {
   const fetcher=deps.fetcher || fetch;
   async function enqueue(env,id){if(env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'article',id});}
   async function collect(env,value,origin='share',receipt=null,options={}) {
-    const url=canonicalUrl(value),id=(await hash(url)).slice(0,32),time=nowIso();
+    const url=await libraryUrl(env,value),id=await itemIdForUrl(env,url),time=nowIso();
     await query(env,`INSERT OR IGNORE INTO learning_items(id,url,kind,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`,id,url,new URL(url).hostname==='x.com'?'x':'web',options.defer?'awaiting_backfill':'queued',time,time).run();
-    if((await item(env,id)).status==='dismissed'&&origin!=='share')return id;
+    if((await item(env,id)).status==='dismissed'&&!['share','web'].includes(origin))return id;
     await query(env,'INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,created_at) VALUES(?,?,?,?)',receipt || crypto.randomUUID(),id,origin,time).run();
-    if(origin==='share')await query(env,"UPDATE learning_items SET status='queued' WHERE id=? AND status IN ('awaiting_backfill','dismissed')",id).run();
+    if(['share','web'].includes(origin))await query(env,"UPDATE learning_items SET status='queued' WHERE id=? AND status IN ('awaiting_backfill','dismissed')",id).run();
     if(options.source){const key=await saveEvidence(env,id,options.source);await registerMedia(env,id,key,options.source.media);}
     const current=await item(env,id);
     if(!options.defer && ['queued','error'].includes(current.status))await enqueue(env,id);
@@ -43,7 +44,8 @@ export function createLearningService(deps={}) {
       article.model=env.LEARNING_MODEL || 'gemini-3.8-flash';
       article.prompt_version='learning-v2';
       if(!article.generated_at)article.generated_at=nowIso();
-      await query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=?,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,recheck_at=COALESCE(recheck_at,?) WHERE id=?`,
+      if(revision!==row.revision)await saveVersion(env,row,'superseded');
+      await query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=?,edition='detailed',attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,recheck_at=COALESCE(recheck_at,?) WHERE id=?`,
         article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',revision,nowIso(),row.kind==='x'?new Date(Date.now()+86400000).toISOString():null,id).run();
       return {done:true};
     }catch(error){
@@ -94,7 +96,7 @@ export function createLearningService(deps={}) {
     if(base.protocol!=='https:' || base.username || base.password)throw new Error('PUBLIC_BASE_URL 需為 HTTPS');
     const existing=await rows(env,"SELECT * FROM learning_deliveries WHERE status='pending' AND origin=? ORDER BY created_at",origin);
     const occupied=new Set(existing.flatMap(d=>JSON.parse(d.item_ids_json).map(i=>i.id)));
-    const items=await rows(env,`SELECT DISTINCT a.* FROM learning_items a JOIN learning_intakes i ON a.id=i.item_id WHERE a.status IN ('ready','partial') AND i.notify_revision<a.revision AND ${origin==='share'?"i.origin='share'":"i.origin IN ('bookmark','backfill')"} ORDER BY a.created_at`);
+    const items=await rows(env,`SELECT DISTINCT a.* FROM learning_items a JOIN learning_intakes i ON a.id=i.item_id WHERE a.status IN ('ready','partial') AND i.notify_revision<a.revision AND ${origin==='share'?"i.origin IN ('share','web')":"i.origin IN ('bookmark','backfill')"} ORDER BY a.created_at`);
     let group=[],body='';
     async function store(){
       if(!group.length)return;
@@ -116,7 +118,7 @@ export function createLearningService(deps={}) {
         const messageId=await send(env,delivery.body);
         await env.DB.batch([
           query(env,"UPDATE learning_deliveries SET status='sent',message_id=?,last_error=NULL WHERE id=?",messageId,delivery.id),
-          ...JSON.parse(delivery.item_ids_json).map(i=>query(env,`UPDATE learning_intakes SET notify_revision=MAX(notify_revision,?) WHERE item_id=? AND ${origin==='share'?"origin='share'":"origin IN ('bookmark','backfill')"}`,i.revision,i.id)),
+          ...JSON.parse(delivery.item_ids_json).map(i=>query(env,`UPDATE learning_intakes SET notify_revision=MAX(notify_revision,?) WHERE item_id=? AND ${origin==='share'?"origin IN ('share','web')":"origin IN ('bookmark','backfill')"}`,i.revision,i.id)),
         ]);
       }catch(error){await query(env,'UPDATE learning_deliveries SET last_error=? WHERE id=?',error.message,delivery.id).run();throw error;}
       finally {await query(env,'UPDATE learning_deliveries SET lease_until=NULL WHERE id=? AND lease_until=?',delivery.id,lease).run();}
@@ -160,6 +162,7 @@ export function createLearningService(deps={}) {
         await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
       }
     }
+    try{await migrateLibrary(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
     await recover(env);
     const syncState=await setting(env,'sync');
     if(syncState.running&&env.LEARNING_JOBS&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync'});
@@ -183,5 +186,5 @@ export function createLearningService(deps={}) {
       }
     }
   }
-  return {collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt};
+  return {collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,migrate:migrateLibrary};
 }

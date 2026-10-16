@@ -6,6 +6,7 @@ import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connectio
 import {exchange,xRead} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
+import {resolveItemId,migrateLibrary} from './library.js';
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
 const json=(value,status=200,headers={})=>Response.json(value,{status,headers:{...JSON_HEADERS,...headers}});
@@ -67,7 +68,8 @@ export function createLearningHandler(deps={}) {
         const count=await query(env,"SELECT COUNT(*) AS count FROM learning_items WHERE status='awaiting_backfill'").first();
         return json({budget:await budget(env),sync:await setting(env,'sync'),awaiting_backfill:count.count,demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
-      if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url)},202);
+      if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
+      if(route==='admin/migrate'&&request.method==='POST')return json(await migrateLibrary(env));
       if(route==='items'&&request.method==='GET'){
         const term=(url.searchParams.get('q') || '').trim();
         const offset=Number(url.searchParams.get('offset') || 0);
@@ -75,13 +77,14 @@ export function createLearningHandler(deps={}) {
         const filter=url.searchParams.get('status')||'';
         if(filter&&!['awaiting_backfill','ready','partial','needs_attention'].includes(filter))throw new Error('文章篩選無效');
         const pattern=`%${term.replace(/[\\%_]/g,s=>'\\'+s)}%`;
-        return json(await rows(env,`SELECT id,url,title,status,read_at,last_error,gaps_json,created_at,updated_at,
-          (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview
-          FROM learning_items WHERE status!='dismissed' ${filter?'AND status=?':''} AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\')) ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...(filter?[filter]:[]),pattern,pattern,pattern,pattern,offset));
+        return json(await rows(env,`SELECT id,url,title,status,edition,read_at,last_error,gaps_json,created_at,updated_at,
+          (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
+          (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins
+          FROM learning_items WHERE status NOT IN ('dismissed','merged') ${filter?'AND status=?':''} AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\')) ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...(filter?[filter]:[]),pattern,pattern,pattern,pattern,offset));
       }
       const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill))?$/);
       if(match){
-        const id=match[1],current=await item(env,id);
+        const id=await resolveItemId(env,match[1]),current=id&&await item(env,id);
         if(!current||current.status==='dismissed')return json({error:'文章不存在'},404);
         if(match[2]==='/backfill'&&request.method==='POST'){
           const changed=await query(env,"UPDATE learning_items SET status='queued',updated_at=? WHERE id=? AND status='awaiting_backfill'",nowIso(),id).run();
@@ -110,7 +113,10 @@ export function createLearningHandler(deps={}) {
           for(const asset of assets)if(env.MEDIA)await env.MEDIA.delete(asset.object_key);
           return json({ok:true});
         }
-        if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},sources:await evidence(env,id),media:await rows(env,'SELECT id,type,duration_ms,status,error,object_key FROM learning_media WHERE item_id=?',id)});
+        if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},requested_id:match[1],sources:await evidence(env,id),
+          media:await rows(env,'SELECT id,type,duration_ms,status,error,object_key FROM learning_media WHERE item_id=?',id),
+          intakes:await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id),
+          versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
         if(!match[2]&&request.method==='PATCH'){
           const data=await body(request);
           if('note' in data){if(typeof data.note!=='string'||data.note.length>20000)throw new Error('筆記超過 20,000 字元');await query(env,'UPDATE learning_items SET note=? WHERE id=?',data.note,id).run();}
