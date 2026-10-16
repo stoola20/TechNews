@@ -1,12 +1,17 @@
 import {readBoundedText} from '../sources.js';
 import {LEARNING_PAGE} from './page.js';
+import {ADMIN_PAGE} from './admin-page.js';
 import {createLearningService} from './service.js';
 import {equalSecret,authorized,createSession,cookie,mutationAllowed} from './auth.js';
 import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connection,saveConnection,nowIso} from './store.js';
 import {exchange,xRead} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
-import {resolveItemId,migrateLibrary} from './library.js';
+import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
+import {articleMessage} from './notifications.js';
+
+// 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
+const STATE_GROUPS={ready:['ready','partial'],needs_action:['needs_attention','error','partial'],waiting_local:['waiting_local','generating'],paused:['budget_paused','paused'],processing:['queued','processing'],awaiting_backfill:['awaiting_backfill'],filtered:['filtered'],legacy:['ready','partial']};
 import {listQuestions,questionView} from './questions.js';
 import {budgetSummary,recordCost} from './pricing.js';
 import {claim,heartbeat,complete,fail,release,runnerStatus,setTextProvider,JobConflict} from './local.js';
@@ -19,6 +24,7 @@ export function createLearningHandler(deps={}) {
   async function handle(request,env,ctx={}){
     const url=new URL(request.url),path=url.pathname;
     if(!path.startsWith('/learning'))return null;
+    if(path==='/learning/admin'&&request.method==='GET')return new Response(ADMIN_PAGE,{headers:{'content-type':'text/html; charset=utf-8',...JSON_HEADERS,'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     if(path==='/learning'&&request.method==='GET')return new Response(LEARNING_PAGE,{headers:{'content-type':'text/html; charset=utf-8',...JSON_HEADERS,'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     if(env.LEARNING_ENABLED!=='true')return json({error:'學習流程尚未啟用，請先完成設定。'},503);
     try {
@@ -105,15 +111,35 @@ export function createLearningHandler(deps={}) {
         const term=(url.searchParams.get('q') || '').trim();
         const offset=Number(url.searchParams.get('offset') || 0);
         if(term.length>200||!Number.isInteger(offset)||offset<0||offset>1000000)throw new Error('搜尋參數無效');
-        const filter=url.searchParams.get('status')||'';
-        if(filter&&!['awaiting_backfill','ready','partial','needs_attention','filtered'].includes(filter))throw new Error('文章篩選無效');
-        const pattern=`%${term.replace(/[\\%_]/g,s=>'\\'+s)}%`;
-        return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,created_at,updated_at,
+        // status 為舊參數，等同單一狀態篩選；state 為狀態群組。
+        const legacy=url.searchParams.get('status')||'',group=url.searchParams.get('state')||'',origin=url.searchParams.get('origin')||'',unread=url.searchParams.get('unread')==='1';
+        if(legacy&&!['awaiting_backfill','ready','partial','needs_attention','filtered'].includes(legacy))throw new Error('文章篩選無效');
+        if(group&&!STATE_GROUPS[group])throw new Error('狀態篩選無效');
+        if(origin&&!ORIGINS[origin])throw new Error('收件入口篩選無效');
+        const statuses=legacy?[legacy]:group?STATE_GROUPS[group]:null;
+        const conditions=["status NOT IN ('dismissed','merged')"],args=[];
+        if(statuses){conditions.push(`status IN (${statuses.map(()=>'?').join(',')})`);args.push(...statuses);}else conditions.push("status!='filtered'");
+        if(group==='legacy')conditions.push("edition='legacy_digest'");
+        if(unread)conditions.push('read_at IS NULL');
+        if(origin){conditions.push('EXISTS(SELECT 1 FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin=?)');args.push(origin);}
+        if(term){
+          const pattern=`%${term.replace(/[\\%_]/g,s=>'\\'+s)}%`;
+          conditions.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\'))");
+          args.push(pattern,pattern,pattern,pattern);
+        }
+        return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,revision,created_at,updated_at,
           (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
           (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins
-          FROM learning_items WHERE status NOT IN ('dismissed','merged') ${filter?'AND status=?':"AND status!='filtered'"} AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\')) ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...(filter?[filter]:[]),pattern,pattern,pattern,pattern,offset));
+          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...args,offset));
       }
-      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill))?$/);
+      if(route==='items/states'&&request.method==='GET'){
+        // 輕量狀態刷新：只回狀態，不重建正文或筆記。
+        const ids=(url.searchParams.get('ids') || '').split(',').filter(Boolean);
+        if(ids.length>100 || ids.some(i=>!/^[a-f0-9]{32}$/.test(i)))throw new Error('文章識別碼無效');
+        if(!ids.length)return json([]);
+        return json(await rows(env,`SELECT id,status,stage,revision,read_at,last_error,updated_at FROM learning_items WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids));
+      }
+      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify))?$/);
       if(match){
         const id=await resolveItemId(env,match[1]),current=id&&await item(env,id);
         if(!current||current.status==='dismissed')return json({error:'文章不存在'},404);
@@ -121,6 +147,18 @@ export function createLearningHandler(deps={}) {
           const changed=await query(env,"UPDATE learning_items SET status='queued',updated_at=? WHERE id=? AND status='awaiting_backfill'",nowIso(),id).run();
           if(!changed.meta.changes)return json({error:'這篇已離開待回補清單，請重新整理。'},409);
           await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/rewrite'&&request.method==='POST'){
+          // 只重寫文字：沿用已保存的來源與媒體解析，不重新取得來源，也不重新解析媒體。
+          if(!['ready','partial','needs_attention','error'].includes(current.status))return json({error:'這篇目前不能重寫，請等處理完成。'},409);
+          await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL,article_json=json_set(COALESCE(article_json,'{}'),'$.input_fingerprint','rewrite-requested'),updated_at=? WHERE id=?",nowIso(),id).run();
+          await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/renotify'&&request.method==='POST'){
+          // 重送通知：用目前保存的文章內容再發一次，不重新生成。
+          if(!['ready','partial'].includes(current.status) || current.edition!=='detailed')return json({error:'只有已完成的詳細文章可以重送通知。'},409);
+          await query(env,'INSERT INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,?,?,?,?)',crypto.randomUUID(),JSON.stringify([{id,revision:current.revision}]),'resend',articleMessage(env,current,'complete'),nowIso()).run();
+          await service.flush(env);return json({ok:true});
         }
         if(match[2]==='/retry'&&request.method==='POST'){
           if(current.status==='awaiting_backfill')throw new Error('請先確認既有書籤回補');
