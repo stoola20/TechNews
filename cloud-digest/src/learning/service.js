@@ -1,4 +1,4 @@
-import {query,rows,setting,setSetting,hash,item,evidence,saveEvidence,connection,lock,unlock,nowIso,budget,BudgetPaused} from './store.js';
+import {query,rows,setting,setSetting,hash,item,evidence,saveEvidence,connection,lock,unlock,nowIso,budget,BudgetPaused,manuallyPaused} from './store.js';
 import {canonicalUrl,apiJson} from './network.js';
 import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia} from './media.js';
@@ -30,12 +30,13 @@ export function createLearningService(deps={}) {
   }
   async function process(env,id) {
     const row=await item(env,id);
-    if(!row || ['awaiting_backfill','needs_attention','budget_paused','dismissed','merged','waiting_local','generating'].includes(row.status))return {waiting:true};
+    if(!row || ['awaiting_backfill','needs_attention','budget_paused','paused','dismissed','merged','waiting_local','generating'].includes(row.status))return {waiting:true};
     if(['ready','partial','filtered'].includes(row.status))return {done:true};
     const lease=await lock(env,id);
     if(!lease)return {pending:true};
     try {
-      if((await budget(env)).paused)throw new BudgetPaused();
+      // 手動暫停會停下全部處理；費用暫停只擋付費呼叫，已取得證據的本機工作仍可繼續。
+      if(await manuallyPaused(env)){await query(env,"UPDATE learning_items SET status='paused',updated_at=? WHERE id=?",nowIso(),id).run();return {waiting:true};}
       await query(env,"UPDATE learning_items SET status='processing',stage='source',updated_at=? WHERE id=?",nowIso(),id).run();
       const acquisition=await acquireEvidence(env,row,deps);
       if(acquisition.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
@@ -65,7 +66,7 @@ export function createLearningService(deps={}) {
         article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',revision,nowIso(),row.kind==='x'?new Date(Date.now()+86400000).toISOString():null,id).run();
       return {done:true};
     }catch(error){
-      const paused=error.name==='BudgetPaused',attempts=row.attempts+1;
+      const paused=error.name==='BudgetPaused',attempts=paused?row.attempts:row.attempts+1;
       await query(env,'UPDATE learning_items SET status=?,attempts=?,last_error=?,next_attempt_at=?,updated_at=? WHERE id=?',paused?'budget_paused':attempts>=3?'needs_attention':'error',attempts,error.message,new Date(Date.now()+Math.min(3600,60*2**attempts)*1000).toISOString(),nowIso(),id).run();
       if(paused)return {waiting:true};
       throw error;
@@ -103,7 +104,7 @@ export function createLearningService(deps={}) {
     await recover(env);return state;
   }
   async function recover(env){
-    if((await budget(env)).paused)return;
+    if(await manuallyPaused(env))return;
     for(const row of await rows(env,"SELECT id FROM learning_items WHERE status IN ('queued','error','processing') AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND (lease_until IS NULL OR lease_until<?) LIMIT 100",nowIso(),nowIso()))await enqueue(env,row.id);
   }
   async function send(env,text) {

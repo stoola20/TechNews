@@ -1,5 +1,6 @@
 import {apiJson} from './network.js';
 import {connection,saveConnection,query,setting,setSetting,reserve,settle,uncertain,nowIso,saveEvidence,hash} from './store.js';
+import {xPricing,ownedEligible,firstReads,rereadRisk,recordCost,utcDay} from './pricing.js';
 
 function clientHeaders(env) {
   if(!env.X_CLIENT_ID || !env.X_CLIENT_SECRET)throw new Error('X_CLIENT_ID／X_CLIENT_SECRET 未設定');
@@ -26,18 +27,27 @@ export function postParameters(env) {
 export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fetch,token=null) {
   const auth=token || await accessToken(env,fetcher);
   const account=await connection(env,'x');
-  const rate=owned && env.X_APP_OWNER_ID && env.X_APP_OWNER_ID===account?.user_id?1000:5000;
+  const pricing=xPricing(env);
   const users=/^\/users\/(?:me|\d+)$/.test(path);
-  const bound=maximum*(users?10000:rate);
-  const id=await reserve(env,'x',bound);
+  // owned 只表示呼叫端預期是自身資源；實際費率仍依端點與 app 擁有者條件判斷。
+  const discounted=owned && ownedEligible(path,account,env);
+  const rate=users?pricing.user_micro:discounted?pricing.owned_micro:pricing.post_micro;
+  const id=await reserve(env,'x',maximum*rate);
   try {
     const url=new URL(`https://api.x.com/2${path}`);
     for(const [k,v] of Object.entries(params))if(v!=null)url.searchParams.set(k,String(v));
     const data=await apiJson(await fetcher(url.href,{headers:{authorization:`Bearer ${auth}`},signal:AbortSignal.timeout(30000)}),4000000);
-    const count=Array.isArray(data.data)?data.data.length:data.data?1:0;
-    const includedPosts=(data.includes?.posts || data.includes?.tweets || []).length;
-    const includedUsers=(data.includes?.users || []).length;
-    await settle(env,id,count*(users?10000:rate)+includedPosts*5000+includedUsers*10000,{returned:count,included_posts:includedPosts,included_users:includedUsers,rate_micro:users?10000:rate,errors:(data.errors || []).length});
+    const primary=(Array.isArray(data.data)?data.data:data.data?[data.data]:[]).map(r=>r.id);
+    const includedPosts=(data.includes?.posts || data.includes?.tweets || []).map(r=>r.id);
+    const includedUsers=(data.includes?.users || []).map(r=>r.id);
+    const day=utcDay();
+    const main=await firstReads(env,users?'user':'post',primary,day);
+    const posts=await firstReads(env,'post',includedPosts,day),people=await firstReads(env,'user',includedUsers,day);
+    const amount=main.first*rate+posts.first*pricing.post_micro+people.first*pricing.user_micro;
+    await settle(env,id,amount,{utc_day:day,first_reads:main.first,rereads:main.reread,included_posts:includedPosts.length,included_users:includedUsers.length,
+      rate_micro:rate,owned:discounted,pricing_checked_at:pricing.checked_at,errors:(data.errors || []).length});
+    const risk=await rereadRisk(env,main.reread*rate+posts.reread*pricing.post_micro+people.reread*pricing.user_micro,1,day);
+    if(risk)await recordCost(env,'x-reread-risk',risk,'uncertain',{utc_day:day,rereads:main.reread+posts.reread+people.reread,fraction:pricing.reread_fraction});
     return data;
   }catch(error){await uncertain(env,id);throw error;}
 }

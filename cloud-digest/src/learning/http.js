@@ -8,6 +8,7 @@ import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary} from './library.js';
 import {listQuestions,questionView} from './questions.js';
+import {budgetSummary,recordCost} from './pricing.js';
 import {claim,heartbeat,complete,fail,release,runnerStatus,setTextProvider,JobConflict} from './local.js';
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
@@ -91,6 +92,14 @@ export function createLearningHandler(deps={}) {
       }
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
       if(route==='admin/migrate'&&request.method==='POST')return json(await migrateLibrary(env));
+      if(route==='budget'&&request.method==='GET')return json(await budgetSummary(env,await budget(env)));
+      if(route==='admin/budget-adjust'&&request.method==='POST'){
+        // 與供應商帳單核對後的人工修正；可為負數，保留說明供日後查核。
+        const data=await body(request),amount=Math.round(Number(data.amount_usd)*1e6);
+        if(!/^[a-z][a-z0-9-]{0,31}$/.test(data.category || '') || !Number.isSafeInteger(amount) || amount===0 || typeof data.note!=='string' || !data.note.trim() || data.note.length>500)throw new Error('調整需提供類別、非零金額與說明');
+        await recordCost(env,data.category,amount,'adjustment',{note:data.note.trim()});
+        return json(await budgetSummary(env,await budget(env)));
+      }
       if(route==='admin/text-provider'&&request.method==='PUT'){await setTextProvider(env,(await body(request)).provider);return json(await runnerStatus(env));}
       if(route==='items'&&request.method==='GET'){
         const term=(url.searchParams.get('q') || '').trim();
@@ -160,7 +169,7 @@ export function createLearningHandler(deps={}) {
       }
       if(route==='control'&&request.method==='POST'){
         const data=await body(request);
-        if(data.action==='pause')await setSetting(env,'control',{paused:true,reason:'manual'});
+        if(data.action==='pause')await setSetting(env,'control',{paused:true,reason:'manual',paused_at:nowIso()});
         else if(data.action==='resume'){await resume(env);await service.recover(env);const sync=await setting(env,'sync');if(sync.running&&env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});}
         else throw new Error('未知處理動作');
         return json(await budget(env));

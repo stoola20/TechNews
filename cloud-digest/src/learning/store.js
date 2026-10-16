@@ -51,20 +51,29 @@ export async function reserve(env, category, amount) {
     AND m.base_micro+COALESCE((SELECT SUM(amount_micro) FROM learning_costs WHERE month=m.month),0)+?<=m.limit_micro
     AND COALESCE((SELECT json_extract(value_json,'$.paused') FROM settings WHERE key='learning:control'),0)=0`,
     id,b.month,category,amount,nowIso(),b.month,amount).run();
-  if(!result.meta.changes){await setSetting(env,'control',{paused:true,reason:'budget'});throw new BudgetPaused();}
+  if(!result.meta.changes){await pauseForBudget(env);throw new BudgetPaused();}
   return id;
 }
 export async function settle(env, id, amount, usage = {}) {
   if(!Number.isFinite(amount)||amount<0||!Number.isSafeInteger(Math.ceil(amount)))throw new Error('Invalid measured cost');
   await query(env,"UPDATE learning_costs SET amount_micro=?,status='settled',usage_json=? WHERE id=? AND status IN ('reserved','uncertain')",Math.ceil(amount),JSON.stringify(usage),id).run();
-  if((await budget(env)).remaining_micro===0) await setSetting(env,'control',{paused:true,reason:'budget'});
+  if((await budget(env)).remaining_micro===0) await pauseForBudget(env);
+}
+// 已手動暫停時保留手動原因，避免恢復時誤以為只是費用暫停。
+async function pauseForBudget(env){
+  const control=await setting(env,'control');
+  if(!control.paused)await setSetting(env,'control',{paused:true,reason:'budget',paused_at:nowIso()});
+}
+export async function manuallyPaused(env){
+  const control=await setting(env,'control');
+  return !!control.paused && control.reason==='manual';
 }
 export async function uncertain(env, id) { await query(env,"UPDATE learning_costs SET status='uncertain' WHERE id=? AND status='reserved'",id).run(); }
 export async function resume(env) {
   const b=await budget(env);
   if(b.remaining_micro===0) throw new BudgetPaused();
   await setSetting(env,'control',{paused:false});
-  await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=NULL,attempts=0 WHERE status='budget_paused'").run();
+  await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=NULL,attempts=0 WHERE status IN ('budget_paused','paused')").run();
   return budget(env);
 }
 export async function saveConnection(env, name, value) {

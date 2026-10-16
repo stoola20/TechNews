@@ -1,4 +1,4 @@
-import {query,rows,item,hash,nowIso,setting,setSetting} from './store.js';
+import {query,rows,item,hash,nowIso,setting,setSetting,manuallyPaused} from './store.js';
 import {ARTICLE_PROMPT_VERSION,validateArticle} from './local-prompt.js';
 import {saveVersion} from './library.js';
 import {normalizeMarkdown} from './markdown.js';
@@ -70,6 +70,7 @@ export async function queueOrder(env,now=nowIso()){
 // 全域單工：仍有有效 lease 時不發出第二份工作。
 export async function claim(env,runnerId,info={}){
   await touchRunner(env,runnerId,info);
+  if(await manuallyPaused(env))return null;
   const now=nowIso();
   const held=await query(env,"SELECT id,status,attempt_token,priority,created_at,runner_id FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",now).first();
   // 同一執行器重新啟動後，原本的領取已不在記憶體中：改發新 attempt token，舊 token 的回報會被拒絕。
