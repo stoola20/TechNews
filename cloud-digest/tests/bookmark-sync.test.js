@@ -123,3 +123,16 @@ test('排程任務：每十分鐘排入局部檢查，08:00 開始完整核對�
   const status=await (await s.handler.fetch(request('api/status'),s.env)).json();
   assert.equal(status.sync.last_full_completed_at,'2026-10-15T00:10:00.000Z');assert.ok('sync_partial' in status);
 });
+
+test('停用書籤同步與作者重查：排程、續跑、手動同步都不讀 X，也不重排已完成的推文',async()=>{
+  const s=await setup({X_BOOKMARKS_ENABLED:'false',X_AUTHOR_RECHECK_ENABLED:'false'});
+  await setSetting(s.env,'sync',{baseline_complete:true,running:true,cursor:'p2'});
+  await query(s.env,"INSERT INTO learning_items(id,url,kind,status,revision,recheck_at,rechecked,created_at,updated_at) VALUES('x1','https://x.com/a/status/1','x','ready',1,'2020-01-01',0,?,?)",iso(0),iso(0)).run();
+  await s.handler.scheduled(s.env,{tasks:['bookmark_partial','bookmark_daily','author_recheck','maintenance']});
+  assert.deepEqual(s.env.LEARNING_JOBS.jobs,[]);
+  assert.equal((await item(s.env,'x1')).status,'ready');assert.equal((await item(s.env,'x1')).rechecked,0);
+  assert.deepEqual(await s.handler.service.sync(s.env,'partial'),{disabled:true});
+  assert.deepEqual(await (await s.handler.fetch(request('api/x/sync','POST',{}),s.env)).json(),{disabled:true});
+  assert.equal(s.x.calls.length,0);
+  assert.equal((await (await s.handler.fetch(request('api/status'),s.env)).json()).bookmarks_enabled,false);
+});

@@ -99,7 +99,13 @@ export async function startFullScan(env){
   return sync;
 }
 
+// X 讀取費用高：可只保留手動分享時抓推文，關閉書籤掃描與作者補充重查。未設定時維持開啟。
+export function bookmarksEnabled(env){return env.X_BOOKMARKS_ENABLED!=='false';}
+export function authorRecheckEnabled(env){return env.X_AUTHOR_RECHECK_ENABLED!=='false';}
+
 export async function syncBookmarks(env,deps={},scope='full') {
+  // 所有入口（排程、續跑、手動按鈕、授權回呼、佇列訊息）都經過這裡，停用時不呼叫 X。
+  if(!bookmarksEnabled(env))return {disabled:true};
   const fetcher=deps.fetcher || fetch;
   const account=await connection(env,'x');
   if(!account)throw new Error('尚未連接 X');

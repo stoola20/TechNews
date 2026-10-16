@@ -4,7 +4,7 @@ import {ADMIN_PAGE} from './admin-page.js';
 import {createLearningService} from './service.js';
 import {equalSecret,authorized,createSession,cookie,mutationAllowed} from './auth.js';
 import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connection,saveConnection,nowIso} from './store.js';
-import {exchange,xRead} from './x.js';
+import {exchange,xRead,bookmarksEnabled} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
@@ -57,7 +57,7 @@ export function createLearningHandler(deps={}) {
         const existing=await setting(env,'sync');
         if(existing.user_id!==identity.data.id)await setSetting(env,'sync',{user_id:identity.data.id,baseline_complete:false,running:true,cursor:null,backfill_approved:false});
         else await setSetting(env,'sync',{...existing,requires_action:false,running:true,last_error:null});
-        if(env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});
+        if(env.LEARNING_JOBS&&bookmarksEnabled(env))await env.LEARNING_JOBS.send({kind:'sync'});
         return new Response(null,{status:303,headers:{location:'/learning','set-cookie':await createSession(env),...JSON_HEADERS}});
       }
       if(path.startsWith('/learning/runner/')&&request.method==='POST'){
@@ -94,7 +94,7 @@ export function createLearningHandler(deps={}) {
       const route=path.replace(/^\/learning\/api\//,'');
       if(route==='status'&&request.method==='GET'){
         const count=await query(env,"SELECT COUNT(*) AS count FROM learning_items WHERE status='awaiting_backfill'").first();
-        return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
+        return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),bookmarks_enabled:bookmarksEnabled(env),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
       if(route==='admin/migrate'&&request.method==='POST')return json(await migrateLibrary(env));
@@ -216,7 +216,7 @@ export function createLearningHandler(deps={}) {
       if(route==='control'&&request.method==='POST'){
         const data=await body(request);
         if(data.action==='pause')await setSetting(env,'control',{paused:true,reason:'manual',paused_at:nowIso()});
-        else if(data.action==='resume'){await resume(env);await service.recover(env);const sync=await setting(env,'sync');if(sync.running&&env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});}
+        else if(data.action==='resume'){await resume(env);await service.recover(env);const sync=await setting(env,'sync');if(sync.running&&env.LEARNING_JOBS&&bookmarksEnabled(env))await env.LEARNING_JOBS.send({kind:'sync'});}
         else throw new Error('未知處理動作');
         return json(await budget(env));
       }

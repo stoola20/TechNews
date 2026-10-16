@@ -3,7 +3,7 @@ import {canonicalUrl,apiJson} from './network.js';
 import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia} from './media.js';
 import {generate} from './gemini.js';
-import {syncBookmarks,registerMedia,startFullScan} from './x.js';
+import {syncBookmarks,registerMedia,startFullScan,bookmarksEnabled,authorRecheckEnabled} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
@@ -143,22 +143,22 @@ export function createLearningService(deps={}) {
   // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
   async function scheduled(env,options=false){
     const tasks=Array.isArray(options?.tasks)?options.tasks:options===true?['bookmark_daily','author_recheck']:[];
-    const daily=tasks.includes('bookmark_daily');
+    const bookmarks=bookmarksEnabled(env),daily=bookmarks&&tasks.includes('bookmark_daily');
     if(tasks.includes('official'))try{await official(env);}catch(error){console.log(JSON.stringify({event:'official_discovery_failed',error:error.message}));}
     if(daily){
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action){await startFullScan(env);await env.LEARNING_JOBS.send({kind:'sync',scope:'full'});}
     }
-    if(tasks.includes('bookmark_partial')){
+    if(bookmarks&&tasks.includes('bookmark_partial')){
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync',scope:'partial'});
     }
     // 作者補充二十四小時後重查一次；來源沒變時沿用既有結果，不重新生成。
-    if(tasks.includes('author_recheck'))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
+    if(authorRecheckEnabled(env)&&tasks.includes('author_recheck'))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
       await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
     }
     try{await migrateLibrary(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
     await recover(env);
     const syncState=await setting(env,'sync');
-    if(syncState.running&&env.LEARNING_JOBS&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync'});
+    if(bookmarks&&syncState.running&&env.LEARNING_JOBS&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync'});
     await expireMedia(env);
     await query(env,'DELETE FROM learning_sessions WHERE expires_at<?',nowIso()).run();
     await flushReceipts(env);

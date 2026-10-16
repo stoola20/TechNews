@@ -32,7 +32,9 @@
     "LEARNING_MODEL": "gemini-3.8-flash",
     "LEARNING_MONTHLY_USD": "30",
     "LEARNING_BASE_USD": "0",
-    "X_API_FIELDS_STYLE": "post"
+    "X_API_FIELDS_STYLE": "post",
+    "X_BOOKMARKS_ENABLED": "false",
+    "X_AUTHOR_RECHECK_ENABLED": "false"
   },
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

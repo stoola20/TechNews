@@ -44,7 +44,8 @@ async function load(){
   dl('budget',[['月預算',money(b.limit_micro)],['基本費預留',money(b.base_micro)],['已使用估算',money(b.metered_micro)],['剩餘',money(b.remaining_micro)],['已結算估算',money(b.totals.settled_micro)],['預留中',money(b.totals.reserved_micro)],['未確認',money(b.totals.uncertain_micro)],['人工核對調整',money(b.totals.adjustment_micro)],['X 計價查核日',b.x_pricing.checked_at]]);
   $('categories').replaceChildren(b.categories.length?el('table',{},[el('thead',{},[el('tr',{},['項目','狀態','金額','筆數'].map(t=>el('th',{text:t})))]),el('tbody',{},b.categories.map(c=>el('tr',{},[CATEGORY[c.category]||c.category,COST_STATUS[c.status]||c.status,money(c.amount_micro),c.count].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'本月尚無費用紀錄。'}));
   const p=s.sync_partial||{},f=s.sync||{};
-  $('sync-state').textContent='局部檢查（'+(p.scope||'最前 1 頁')+'）：最後完成 '+when(p.last_completed_at)+(p.added!=null?'，新增 '+p.added+' 篇':'')+(p.skipped?'；'+(SKIPS[p.skipped]||p.skipped):'')+(p.last_error?'；'+p.last_error:'')+'\n完整核對：'+(f.running?'進行中，已保存游標'+(f.pages_scanned?'（已掃 '+f.pages_scanned+' 頁）':''):'最後完整完成 '+when(f.last_full_completed_at||f.completed_at))+(f.baseline_complete?'':'；首次基線尚未完成')+(f.requires_action?'；需要重新授權或檢查設定':'')+(f.last_error?'；'+f.last_error:'')+'\n等待確認回補：'+s.awaiting_backfill+' 篇';
+  if(s.bookmarks_enabled===false)$('sync-state').textContent='書籤同步已停用（X_BOOKMARKS_ENABLED=false）：不做局部檢查與完整核對，只在手動分享時讀取 X。\n等待確認回補：'+s.awaiting_backfill+' 篇';
+  else $('sync-state').textContent='局部檢查（'+(p.scope||'最前 1 頁')+'）：最後完成 '+when(p.last_completed_at)+(p.added!=null?'，新增 '+p.added+' 篇':'')+(p.skipped?'；'+(SKIPS[p.skipped]||p.skipped):'')+(p.last_error?'；'+p.last_error:'')+'\n完整核對：'+(f.running?'進行中，已保存游標'+(f.pages_scanned?'（已掃 '+f.pages_scanned+' 頁）':''):'最後完整完成 '+when(f.last_full_completed_at||f.completed_at))+(f.baseline_complete?'':'；首次基線尚未完成')+(f.requires_action?'；需要重新授權或檢查設定':'')+(f.last_error?'；'+f.last_error:'')+'\n等待確認回補：'+s.awaiting_backfill+' 篇';
   const c=s.configured;$('setup').textContent='Gemini：'+(c.gemini?'已設定':'待設定')+'；X：'+(c.x?'已設定':'待設定')+'；背景佇列：'+(c.queue?'已設定':'待設定')+'；媒體保存：'+(c.media?'已設定':'待設定')+'；Telegram 收件：'+(c.telegram_input?'已設定':'待設定');
 }
 $('use-local').onclick=e=>{if(!confirm('改用本機 Gemma 後，文字整理與追問都交給 Mac；Mac 離線時工作會等待。確定已完成驗收？'))return;run(async()=>{await api('admin/text-provider','PUT',{provider:'local'});await load();message('文字模型已改為本機。');},e.currentTarget,'切換中…');};
@@ -52,7 +53,7 @@ $('use-gemini').onclick=e=>run(async()=>{await api('admin/text-provider','PUT',{
 $('pause').onclick=e=>run(async()=>{await api('control','POST',{action:'pause'});await load();message('已暫停全部處理；正在執行的請求可能仍會完成。');},e.currentTarget,'暫停中…');
 $('resume').onclick=e=>run(async()=>{await api('control','POST',{action:'resume'});await load();message('已恢復處理。');},e.currentTarget,'恢復中…');
 $('connect').onclick=e=>run(async()=>{const r=await api('x/connect','POST',{});location.assign(r.url);},e.currentTarget,'前往 X 授權…');
-$('sync').onclick=e=>run(async()=>{await api('x/sync','POST',{});await load();message('已啟動完整核對，進度會保存。');},e.currentTarget,'同步中…');
+$('sync').onclick=e=>run(async()=>{const r=await api('x/sync','POST',{});await load();message(r.disabled?'書籤同步已停用，沒有讀取 X。':'已啟動完整核對，進度會保存。');},e.currentTarget,'同步中…');
 $('backfill').onclick=e=>{if(!confirm('這會整理全部等待回補的書籤，並產生模型與讀取費用。若想逐篇決定，請到文章庫篩選「等待確認回補」。要繼續嗎？'))return;run(async()=>{await api('x/backfill','POST',{});await load();message('已確認回補，工作會依可用預算處理。');},e.currentTarget,'送出中…');};
 $('migrate').onclick=e=>run(async()=>{const r=await api('admin/migrate','POST',{});$('migrate-result').textContent='新增 '+r.imported+' 篇、合併 '+r.merged+' 篇、更新網址 '+r.renamed+' 篇。';},e.currentTarget,'搬移中…');
 bindLogin(boot);
