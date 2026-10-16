@@ -3,7 +3,7 @@ import {canonicalUrl,apiJson} from './network.js';
 import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia} from './media.js';
 import {generate} from './gemini.js';
-import {syncBookmarks,registerMedia} from './x.js';
+import {syncBookmarks,registerMedia,startFullScan} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
@@ -96,7 +96,7 @@ export function createLearningService(deps={}) {
     await query(env,"UPDATE learning_items SET status='waiting_local',stage='text',attempts=0,next_attempt_at=NULL,updated_at=? WHERE id=?",nowIso(),row.id).run();
     return {waiting:true};
   }
-  async function sync(env){return syncBookmarks(env,{...deps,collect});}
+  async function sync(env,scope='full'){return syncBookmarks(env,{...deps,collect},scope);}
   async function backfill(env){
     const state=await setting(env,'sync');
     state.backfill_approved=true;await setSetting(env,'sync',state);
@@ -174,7 +174,10 @@ export function createLearningService(deps={}) {
     if(tasks.includes('official'))try{await official(env);}catch(error){console.log(JSON.stringify({event:'official_discovery_failed',error:error.message}));}
     if(daily){
       await setSetting(env,'notifications',{bookmark_batch_open:true});
-      if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action)await env.LEARNING_JOBS.send({kind:'sync'});
+      if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action){await startFullScan(env);await env.LEARNING_JOBS.send({kind:'sync',scope:'full'});}
+    }
+    if(tasks.includes('bookmark_partial')){
+      if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync',scope:'partial'});
     }
     // 作者補充二十四小時後重查一次；來源沒變時沿用既有結果，不重新生成。
     if(tasks.includes('author_recheck'))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
@@ -193,7 +196,7 @@ export function createLearningService(deps={}) {
   async function queue(batch,env){
     for(const message of batch.messages){
       try {
-        const result=message.body.kind==='sync'?await sync(env):await process(env,message.body.id);
+        const result=message.body.kind==='sync'?await sync(env,message.body.scope==='partial'?'partial':'full'):await process(env,message.body.id);
         await flush(env,'share');
         if((await setting(env,'notifications')).bookmark_batch_open)await flush(env,'bookmarks');
         if(result.pending || result.running)message.retry({delaySeconds:60});else message.ack();

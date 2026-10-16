@@ -78,18 +78,40 @@ export async function postEvidence(env,id,fetcher=fetch) {
   if(!result.data?.id)throw new Error('X 主文不可取得或帳號沒有讀取權限');
   return normalizePost(result.data,result.includes);
 }
-export async function syncBookmarks(env,deps={}) {
+const FULL_LOCK='learning:sync-lock',PARTIAL_LOCK='learning:sync-lock-partial';
+async function acquireLock(env,key,ms=600000){
+  const id=crypto.randomUUID(),until=new Date(Date.now()+ms).toISOString();
+  await query(env,"INSERT OR IGNORE INTO settings(key,value_json,updated_at) VALUES(?,'{}',?)",key,nowIso()).run();
+  const acquired=await query(env,"UPDATE settings SET value_json=?,updated_at=? WHERE key=? AND (json_extract(value_json,'$.until') IS NULL OR json_extract(value_json,'$.until')<?)",JSON.stringify({id,until}),nowIso(),key,nowIso()).run();
+  return acquired.meta.changes?id:null;
+}
+async function releaseLock(env,key,id){await query(env,"UPDATE settings SET value_json='{}' WHERE key=? AND json_extract(value_json,'$.id')=?",key,id).run();}
+async function lockHeld(env,key){return !!(await query(env,"SELECT 1 FROM settings WHERE key=? AND json_extract(value_json,'$.until')>?",key,nowIso()).first());}
+const RATE_LIMIT_MS=15*60000;
+
+// 每日完整核對：逐頁保存游標直到沒有下一頁；遇到已知 ID 或短頁都不提前結束。
+export async function startFullScan(env){
+  const sync=await setting(env,'sync',{baseline_complete:false,cursor:null,running:false,backfill_approved:false});
+  // 已在掃描中就沿用原本的游標，重疊的排程不重新開始。
+  if(sync.running)return {...sync,reused:true};
+  Object.assign(sync,{running:true,cursor:null,incomplete:false,started_at:nowIso(),last_error:null});
+  await setSetting(env,'sync',sync);
+  return sync;
+}
+
+export async function syncBookmarks(env,deps={},scope='full') {
   const fetcher=deps.fetcher || fetch;
   const account=await connection(env,'x');
   if(!account)throw new Error('尚未連接 X');
   const sync=await setting(env,'sync',{baseline_complete:false,cursor:null,running:false,backfill_approved:false});
   if(sync.requires_action)return sync;
-  const lockId=crypto.randomUUID(), until=new Date(Date.now()+600000).toISOString();
-  await query(env,"INSERT OR IGNORE INTO settings(key,value_json,updated_at) VALUES('learning:sync-lock','{}',?)",nowIso()).run();
-  const acquired=await query(env,"UPDATE settings SET value_json=?,updated_at=? WHERE key='learning:sync-lock' AND (json_extract(value_json,'$.until') IS NULL OR json_extract(value_json,'$.until')<?)",JSON.stringify({id:lockId,until}),nowIso(),nowIso()).run();
-  if(!acquired.meta.changes)return {busy:true};
+  if(scope==='partial')return partialCheck(env,deps,account,sync,fetcher);
+  if(sync.retry_after && sync.retry_after>nowIso())return {...sync,rate_limited:true};
+  const lockId=await acquireLock(env,FULL_LOCK);
+  if(!lockId)return {busy:true};
   try {
-    sync.running=true;sync.last_error=null;
+    if(!sync.running || !sync.started_at)sync.started_at=sync.started_at && sync.running?sync.started_at:nowIso();
+    sync.running=true;sync.last_error=null;sync.retry_after=null;
     if(!sync.cursor)sync.incomplete=false;
     const initial=!sync.baseline_complete;
     for(let page=0;page<5;page++) {
@@ -107,16 +129,61 @@ export async function syncBookmarks(env,deps={}) {
         }
       }
       sync.cursor=result.meta?.next_token || null;
+      sync.pages_scanned=(sync.pages_scanned || 0)+1;
       sync.updated_at=nowIso();
-      if(!sync.cursor){sync.baseline_complete=true;sync.running=false;sync.completed_at=nowIso();await setSetting(env,'sync',sync);return sync;}
+      if(!sync.cursor){
+        Object.assign(sync,{baseline_complete:true,running:false,completed_at:nowIso(),last_full_completed_at:sync.incomplete?sync.last_full_completed_at || null:nowIso(),pages_scanned:0});
+        await setSetting(env,'sync',sync);return sync;
+      }
       await setSetting(env,'sync',sync);
     }
     return sync;
   }catch(error){
     sync.last_error=error.name==='BudgetPaused'?error.message:'X 同步未完成，請檢查授權、費用與 API 設定';
-    if(error.status===400&&sync.cursor){sync.cursor=null;sync.last_error='分頁請求失效，已保存內容會保留，下一次從頭核對。';}
+    if(error.status===429){sync.retry_after=new Date(Date.now()+RATE_LIMIT_MS).toISOString();sync.last_error='X 限流，已保存游標，稍後從同一頁續跑。';}
+    else if(error.status===400&&sync.cursor){sync.cursor=null;sync.pages_scanned=0;sync.last_error='分頁請求失效，已保存內容會保留，下一次從頭核對。';}
     else if([400,401,403].includes(error.status)){sync.running=false;sync.requires_action=true;sync.last_error='X 授權或 API 設定需處理，已停止自動重試，內容與進度仍保留。';}
     await setSetting(env,'sync',sync);throw error;
   }
-  finally {await query(env,"UPDATE settings SET value_json='{}' WHERE key='learning:sync-lock' AND json_extract(value_json,'$.id')=?",lockId).run();}
+  finally {await releaseLock(env,FULL_LOCK,lockId);}
+}
+
+// 十分鐘局部檢查：只看目前列表最前面幾頁，不宣稱完整，也不改動完整核對的游標與成功時間。
+async function partialCheck(env,deps,account,full,fetcher){
+  const state=await setting(env,'sync-partial',{});
+  const pages=Math.max(1,Math.min(10,Number(env.X_PARTIAL_PAGES || 1))),size=Math.max(5,Math.min(100,Number(env.X_PARTIAL_MAX_RESULTS || 100)));
+  state.last_started_at=nowIso();state.scope=`最前 ${pages} 頁、每頁最多 ${size} 筆`;
+  const skip=async reason=>{state.skipped=reason;await setSetting(env,'sync-partial',state);return state;};
+  // 首次基線沒完成前，無法分辨新舊收藏，不能把舊收藏當新收藏處理。
+  if(!full.baseline_complete)return skip('baseline_incomplete');
+  if(state.retry_after && state.retry_after>nowIso())return skip('rate_limited');
+  // 完整核對正在呼叫同一個端點時不重複讀取。
+  if(await lockHeld(env,FULL_LOCK))return skip('full_scan_running');
+  const lockId=await acquireLock(env,PARTIAL_LOCK,300000);
+  if(!lockId)return skip('partial_running');
+  try{
+    let cursor=null,checked=0,added=0;
+    for(let page=0;page<pages;page++){
+      const result=await xRead(env,`/users/${account.user_id}/bookmarks`,{...postParameters(env),max_results:size,pagination_token:cursor},size,true,fetcher);
+      if(result.data!=null&&!Array.isArray(result.data))throw new Error('X 書籤資料格式不符');
+      for(const post of result.data || []){
+        checked++;
+        if(!(await query(env,'SELECT 1 FROM learning_intakes WHERE receipt=?',`bookmark:${post.id}`).first()))added++;
+        const source=normalizePost(post,result.includes);
+        await deps.collect(env,source.url,'bookmark',`bookmark:${post.id}`,{source});
+      }
+      cursor=result.meta?.next_token || null;
+      if(!cursor)break;
+    }
+    Object.assign(state,{last_completed_at:nowIso(),checked,added,skipped:null,last_error:null,retry_after:null});
+    await setSetting(env,'sync-partial',state);
+    return state;
+  }catch(error){
+    state.last_error=error.name==='BudgetPaused'?'費用暫停，局部檢查未執行':'局部檢查未完成，請查看 X 授權或設定';
+    if(error.status===429){state.retry_after=new Date(Date.now()+RATE_LIMIT_MS).toISOString();state.last_error='X 限流，稍後再檢查';}
+    else if([401,403].includes(error.status)){full.requires_action=true;full.last_error='X 授權或 API 設定需處理，已停止自動檢查。';await setSetting(env,'sync',full);}
+    await setSetting(env,'sync-partial',state);
+    if(error.name==='BudgetPaused')return state;
+    throw error;
+  }finally{await releaseLock(env,PARTIAL_LOCK,lockId);}
 }

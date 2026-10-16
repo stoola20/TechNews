@@ -1,0 +1,125 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createLearningHandler} from '../src/learning/http.js';
+import {startFullScan} from '../src/learning/x.js';
+import {saveConnection,setting,setSetting,query,rows,item} from '../src/learning/store.js';
+import {environment,recorder,request,iso} from './helpers.js';
+
+const post=id=>({id:String(id),text:'收藏 '+id,author_id:'9',conversation_id:String(id),created_at:'2026-10-01T00:00:00Z'});
+// 三頁書籤：第二頁不足 100 筆但仍有 next_token；第一頁包含已知 ID。
+function bookmarks(){
+  const pages={'':{data:Array.from({length:100},(_,i)=>post(5000-i)),meta:{next_token:'p2'}},p2:{data:Array.from({length:40},(_,i)=>post(4000-i)),meta:{next_token:'p3'}},p3:{data:Array.from({length:20},(_,i)=>post(3000-i)),meta:{}}};
+  const calls=[];let fail=null;
+  const net=recorder(async url=>{
+    if(url.hostname==='api.x.com'&&url.pathname.endsWith('/bookmarks')){
+      const token=url.searchParams.get('pagination_token') || '';calls.push({token,max:url.searchParams.get('max_results')});
+      if(fail){const status=fail(token);if(status)return new Response('{}',{status});}
+      return Response.json(pages[token]);
+    }
+    return null;
+  });
+  return {pages,calls,net,setFail(f){fail=f;}};
+}
+async function setup(extra={}){
+  const env=environment(extra),x=bookmarks(),handler=createLearningHandler(x.net);
+  await saveConnection(env,'x',{user_id:'7',access_token:'a',refresh_token:'r',expires_at:Date.now()+86400000});
+  return {env,x,handler};
+}
+async function fullScan(s){let state;do{state=await s.handler.service.sync(s.env,'full');}while(state.running&&!state.rate_limited&&!state.busy);return state;}
+
+test('首次基線完成前局部檢查不處理收藏；完整核對逐頁到最後，舊 ID 與短頁都不會提早結束',async()=>{
+  const s=await setup();
+  const skipped=await s.handler.service.sync(s.env,'partial');
+  assert.equal(skipped.skipped,'baseline_incomplete');assert.equal(s.x.calls.length,0);
+  await startFullScan(s.env);
+  const done=await fullScan(s);
+  assert.equal(done.baseline_complete,true);assert.ok(done.last_full_completed_at);
+  assert.deepEqual(s.x.calls.map(c=>c.token),['','p2','p3']);
+  assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE status='awaiting_backfill'")).length,160);
+  // 局部檢查沒有把完整核對標成成功，也沒有動到完整核對的狀態。
+  assert.equal((await setting(s.env,'sync-partial')).last_completed_at,undefined);
+});
+
+test('十分鐘局部檢查只讀最前一頁、找到新收藏；新收藏的舊貼文等每日完整核對才發現',async()=>{
+  const s=await setup();
+  await startFullScan(s.env);await fullScan(s);
+  const fullBefore=await setting(s.env,'sync');
+  s.x.pages[''].data.unshift(post(9999));
+  s.x.pages.p3.data.push(post(1));
+  s.x.calls.length=0;
+  const partial=await s.handler.service.sync(s.env,'partial');
+  assert.deepEqual(s.x.calls,[{token:'',max:'100'}]);
+  assert.equal(partial.added,1);assert.ok(partial.last_completed_at);assert.match(partial.scope,/最前 1 頁/);
+  const fresh=(await rows(s.env,"SELECT i.status,k.origin FROM learning_items i JOIN learning_intakes k ON k.item_id=i.id WHERE i.url='https://x.com/i/status/9999'"))[0];
+  assert.deepEqual({...fresh},{status:'queued',origin:'bookmark'});
+  // 舊收藏仍等待確認，局部檢查不會啟動整批回補。
+  assert.equal((await item(s.env,(await query(s.env,"SELECT id FROM learning_items WHERE url='https://x.com/i/status/5000'").first()).id)).status,'awaiting_backfill');
+  assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE url='https://x.com/i/status/1'")).length,0);
+  assert.deepEqual((await setting(s.env,'sync')).last_full_completed_at,fullBefore.last_full_completed_at);
+  await startFullScan(s.env);await fullScan(s);
+  assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE url='https://x.com/i/status/1'")).length,1);
+  // 頁數是可調整的操作設定。
+  const wide=await setup({X_PARTIAL_PAGES:'2'});
+  await startFullScan(wide.env);await fullScan(wide);wide.x.calls.length=0;
+  await wide.handler.service.sync(wide.env,'partial');
+  assert.deepEqual(wide.x.calls.map(c=>c.token),['','p2']);
+});
+
+test('重疊排程共用在途掃描：完整核對不重新開始，局部檢查在完整核對進行中略過',async()=>{
+  const s=await setup();
+  await startFullScan(s.env);
+  await s.handler.service.sync(s.env,'full');
+  const cursor=(await setting(s.env,'sync')).cursor;
+  assert.ok(cursor===null || typeof cursor==='string');
+  await setSetting(s.env,'sync',{...(await setting(s.env,'sync')),running:true,cursor:'p3',baseline_complete:true});
+  assert.equal((await startFullScan(s.env)).reused,true);
+  assert.equal((await setting(s.env,'sync')).cursor,'p3');
+  await query(s.env,"INSERT OR REPLACE INTO settings(key,value_json,updated_at) VALUES('learning:sync-lock',?,?)",JSON.stringify({id:'other',until:iso(60000)}),iso(0)).run();
+  s.x.calls.length=0;
+  assert.equal((await s.handler.service.sync(s.env,'partial')).skipped,'full_scan_running');
+  assert.equal((await s.handler.service.sync(s.env,'full')).busy,true);
+  assert.equal(s.x.calls.length,0);
+});
+
+test('限流、游標失效、授權失效與費用暫停都保存可恢復狀態，不會悄悄改成沒有新收藏',async()=>{
+  const s=await setup();
+  await startFullScan(s.env);
+  s.x.setFail(token=>token==='p2'?429:0);
+  await assert.rejects(fullScan(s));
+  let state=await setting(s.env,'sync');
+  assert.equal(state.cursor,'p2');assert.equal(state.running,true);assert.ok(state.retry_after);assert.match(state.last_error,/限流/);
+  s.x.calls.length=0;
+  assert.equal((await s.handler.service.sync(s.env,'full')).rate_limited,true);assert.equal(s.x.calls.length,0);
+  await setSetting(s.env,'sync',{...state,retry_after:iso(-1000)});
+  s.x.setFail(null);
+  state=await fullScan(s);
+  assert.equal(state.baseline_complete,true);assert.equal(s.x.calls[0].token,'p2');
+
+  await setSetting(s.env,'sync',{...state,running:true,cursor:'expired'});
+  s.x.setFail(token=>token==='expired'?400:0);
+  await assert.rejects(s.handler.service.sync(s.env,'full'));
+  state=await setting(s.env,'sync');assert.equal(state.cursor,null);assert.match(state.last_error,/分頁請求失效/);assert.equal(state.requires_action,undefined);
+
+  s.x.setFail(()=>401);
+  await assert.rejects(s.handler.service.sync(s.env,'partial'));
+  assert.equal((await setting(s.env,'sync')).requires_action,true);
+  assert.equal((await s.handler.service.sync(s.env,'partial')).requires_action,true);
+
+  const budget=await setup({LEARNING_MONTHLY_USD:'0.0001'});
+  await setSetting(budget.env,'sync',{baseline_complete:true,running:false,cursor:null});
+  const paused=await budget.handler.service.sync(budget.env,'partial');
+  assert.match(paused.last_error,/費用暫停/);assert.equal(paused.last_completed_at,undefined);
+});
+
+test('排程任務：每十分鐘排入局部檢查，08:00 開始完整核對；狀態 API 分開顯示兩者',async()=>{
+  const s=await setup();
+  await setSetting(s.env,'sync',{baseline_complete:true,running:false,cursor:null,last_full_completed_at:'2026-10-15T00:10:00.000Z'});
+  await s.handler.scheduled(s.env,{tasks:['bookmark_partial']});
+  assert.deepEqual(s.env.LEARNING_JOBS.jobs,[{kind:'sync',scope:'partial'}]);
+  s.env.LEARNING_JOBS.jobs.length=0;
+  await s.handler.scheduled(s.env,{tasks:['bookmark_daily']});
+  assert.deepEqual(s.env.LEARNING_JOBS.jobs[0],{kind:'sync',scope:'full'});
+  assert.equal((await setting(s.env,'sync')).running,true);
+  const status=await (await s.handler.fetch(request('api/status'),s.env)).json();
+  assert.equal(status.sync.last_full_completed_at,'2026-10-15T00:10:00.000Z');assert.ok('sync_partial' in status);
+});
