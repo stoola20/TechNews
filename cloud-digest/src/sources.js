@@ -171,3 +171,11 @@ export async function loadArticle(source, entry, fetcher = fetch, env = {}) {
   if (!Number.isFinite(limit) || limit < 100 || article.content.length > limit) throw new Error("Full article exceeds configured input limit; no partial summary generated");
   return article;
 }
+
+export function initialSeenUrls(entries, now, lookbackDays = 14) {
+  const cutoff = now - lookbackDays * 86400000;
+  return entries.filter((entry, index) => {
+    const published = Date.parse(entry.publishedAt);
+    return Number.isFinite(published) ? published < cutoff : index > 0;
+  }).map((entry) => entry.url);
+}

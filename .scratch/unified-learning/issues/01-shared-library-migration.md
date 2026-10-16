@@ -4,10 +4,16 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 合成的兩套舊資料可重複搬移而不新增副本
-- [ ] 同網址合併收件／版本，保留收藏正文與閱讀資料
-- [ ] X 與外連文章不誤合併
-- [ ] 短導讀及缺失資料如實標示
-- [ ] 未登入無法讀取。相容演進期間既有寫入仍可讀取，原流程回歸通過。
+- [x] 合成的兩套舊資料可重複搬移而不新增副本
+- [x] 同網址合併收件／版本，保留收藏正文與閱讀資料
+- [x] X 與外連文章不誤合併
+- [x] 短導讀及缺失資料如實標示
+- [x] 未登入無法讀取。相容演進期間既有寫入仍可讀取，原流程回歸通過。
+
+## 實作紀錄
+
+- `migrations/0005_unified_library.sql`：文章版本、舊識別碼別名、收件 metadata、edition。
+- `src/learning/library.js`：正式網址身分、舊官方導讀搬移、同網址合併；維護排程與 `POST /learning/api/admin/migrate` 可重複執行。
+- 驗證：`tests/library.test.js`（合成資料，搬移期間不允許任何外部呼叫）。

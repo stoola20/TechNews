@@ -2,8 +2,8 @@ import {apiJson,publicFetch} from './network.js';
 import {rows,query,reserve,settle,uncertain,nowIso} from './store.js';
 
 const MAX_BYTES=200*1024*1024;
-export async function prepareMedia(env,itemId,fetcher=fetch) {
-  const assets=await rows(env,'SELECT * FROM learning_media WHERE item_id=?',itemId);
+export async function prepareMedia(env,itemId,fetcher=fetch,options={}) {
+  const assets=(await rows(env,'SELECT * FROM learning_media WHERE item_id=?',itemId)).filter(a=>!options.only || options.only.includes(a.id));
   let pending=false;
   for(const asset of assets) {
     if(['needs_attention','expired'].includes(asset.status))continue;

@@ -1,11 +1,20 @@
 import {readBoundedText} from '../sources.js';
 import {LEARNING_PAGE} from './page.js';
+import {ADMIN_PAGE} from './admin-page.js';
 import {createLearningService} from './service.js';
 import {equalSecret,authorized,createSession,cookie,mutationAllowed} from './auth.js';
 import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connection,saveConnection,nowIso} from './store.js';
 import {exchange,xRead} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
+import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
+import {articleMessage} from './notifications.js';
+
+// 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
+const STATE_GROUPS={ready:['ready','partial'],needs_action:['needs_attention','error','partial'],waiting_local:['waiting_local','generating'],paused:['budget_paused','paused'],processing:['queued','processing'],awaiting_backfill:['awaiting_backfill'],filtered:['filtered'],legacy:['ready','partial']};
+import {listQuestions,questionView} from './questions.js';
+import {budgetSummary,recordCost} from './pricing.js';
+import {claim,heartbeat,complete,fail,release,runnerStatus,setTextProvider,JobConflict} from './local.js';
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
 const json=(value,status=200,headers={})=>Response.json(value,{status,headers:{...JSON_HEADERS,...headers}});
@@ -15,6 +24,7 @@ export function createLearningHandler(deps={}) {
   async function handle(request,env,ctx={}){
     const url=new URL(request.url),path=url.pathname;
     if(!path.startsWith('/learning'))return null;
+    if(path==='/learning/admin'&&request.method==='GET')return new Response(ADMIN_PAGE,{headers:{'content-type':'text/html; charset=utf-8',...JSON_HEADERS,'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     if(path==='/learning'&&request.method==='GET')return new Response(LEARNING_PAGE,{headers:{'content-type':'text/html; charset=utf-8',...JSON_HEADERS,'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     if(env.LEARNING_ENABLED!=='true')return json({error:'學習流程尚未啟用，請先完成設定。'},503);
     try {
@@ -50,6 +60,25 @@ export function createLearningHandler(deps={}) {
         if(env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});
         return new Response(null,{status:303,headers:{location:'/learning','set-cookie':await createSession(env),...JSON_HEADERS}});
       }
+      if(path.startsWith('/learning/runner/')&&request.method==='POST'){
+        // Mac 執行器使用專用憑證，不能用來登入網站；網站登入憑證也不能領取工作。
+        if(!env.LEARNING_RUNNER_TOKEN || !equalSecret(request.headers.get('authorization')?.replace(/^Bearer\s+/i,''),env.LEARNING_RUNNER_TOKEN))return json({error:'Not found'},404);
+        const data=await body(request),action=path.slice('/learning/runner/'.length);
+        try{
+          if(action==='claim')return json({job:await claim(env,data.runner_id,data.info)});
+          if(action==='heartbeat')return json(await heartbeat(env,data.runner_id,data.info,data.job_id,data.attempt_token));
+          if(action==='fail')return json(await fail(env,data.job_id,data.attempt_token,data.error,data.retryable!==false));
+          if(action==='release')return json(await release(env,data.job_id,data.attempt_token,data.error));
+          if(action==='complete'){
+            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},...service.localHooks});
+            return json(result);
+          }
+        }catch(error){
+          if(error instanceof JobConflict)return json({error:error.message,code:error.code},error.code==='not_found'?404:error.code==='invalid_output'?422:409);
+          throw error;
+        }
+        return json({error:'Not found'},404);
+      }
       if(path==='/learning/session'&&request.method==='POST'){
         if(!mutationAllowed(request,env))return json({error:'登入請求來源不符'},403);
         const data=await body(request);
@@ -65,28 +94,71 @@ export function createLearningHandler(deps={}) {
       const route=path.replace(/^\/learning\/api\//,'');
       if(route==='status'&&request.method==='GET'){
         const count=await query(env,"SELECT COUNT(*) AS count FROM learning_items WHERE status='awaiting_backfill'").first();
-        return json({budget:await budget(env),sync:await setting(env,'sync'),awaiting_backfill:count.count,demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
+        return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
-      if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url)},202);
+      if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
+      if(route==='admin/migrate'&&request.method==='POST')return json(await migrateLibrary(env));
+      if(route==='budget'&&request.method==='GET')return json(await budgetSummary(env,await budget(env)));
+      if(route==='admin/budget-adjust'&&request.method==='POST'){
+        // 與供應商帳單核對後的人工修正；可為負數，保留說明供日後查核。
+        const data=await body(request),amount=Math.round(Number(data.amount_usd)*1e6);
+        if(!/^[a-z][a-z0-9-]{0,31}$/.test(data.category || '') || !Number.isSafeInteger(amount) || amount===0 || typeof data.note!=='string' || !data.note.trim() || data.note.length>500)throw new Error('調整需提供類別、非零金額與說明');
+        await recordCost(env,data.category,amount,'adjustment',{note:data.note.trim()});
+        return json(await budgetSummary(env,await budget(env)));
+      }
+      if(route==='admin/text-provider'&&request.method==='PUT'){await setTextProvider(env,(await body(request)).provider);return json(await runnerStatus(env));}
       if(route==='items'&&request.method==='GET'){
         const term=(url.searchParams.get('q') || '').trim();
         const offset=Number(url.searchParams.get('offset') || 0);
         if(term.length>200||!Number.isInteger(offset)||offset<0||offset>1000000)throw new Error('搜尋參數無效');
-        const filter=url.searchParams.get('status')||'';
-        if(filter&&!['awaiting_backfill','ready','partial','needs_attention'].includes(filter))throw new Error('文章篩選無效');
-        const pattern=`%${term.replace(/[\\%_]/g,s=>'\\'+s)}%`;
-        return json(await rows(env,`SELECT id,url,title,status,read_at,last_error,gaps_json,created_at,updated_at,
-          (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview
-          FROM learning_items WHERE status!='dismissed' ${filter?'AND status=?':''} AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\')) ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...(filter?[filter]:[]),pattern,pattern,pattern,pattern,offset));
+        // status 為舊參數，等同單一狀態篩選；state 為狀態群組。
+        const legacy=url.searchParams.get('status')||'',group=url.searchParams.get('state')||'',origin=url.searchParams.get('origin')||'',unread=url.searchParams.get('unread')==='1';
+        if(legacy&&!['awaiting_backfill','ready','partial','needs_attention','filtered'].includes(legacy))throw new Error('文章篩選無效');
+        if(group&&!STATE_GROUPS[group])throw new Error('狀態篩選無效');
+        if(origin&&!ORIGINS[origin])throw new Error('收件入口篩選無效');
+        const statuses=legacy?[legacy]:group?STATE_GROUPS[group]:null;
+        const conditions=["status NOT IN ('dismissed','merged')"],args=[];
+        if(statuses){conditions.push(`status IN (${statuses.map(()=>'?').join(',')})`);args.push(...statuses);}else conditions.push("status!='filtered'");
+        if(group==='legacy')conditions.push("edition='legacy_digest'");
+        if(unread)conditions.push('read_at IS NULL');
+        if(origin){conditions.push('EXISTS(SELECT 1 FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin=?)');args.push(origin);}
+        if(term){
+          const pattern=`%${term.replace(/[\\%_]/g,s=>'\\'+s)}%`;
+          conditions.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\'))");
+          args.push(pattern,pattern,pattern,pattern);
+        }
+        return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,revision,created_at,updated_at,
+          (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
+          (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins
+          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...args,offset));
       }
-      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill))?$/);
+      if(route==='items/states'&&request.method==='GET'){
+        // 輕量狀態刷新：只回狀態，不重建正文或筆記。
+        const ids=(url.searchParams.get('ids') || '').split(',').filter(Boolean);
+        if(ids.length>100 || ids.some(i=>!/^[a-f0-9]{32}$/.test(i)))throw new Error('文章識別碼無效');
+        if(!ids.length)return json([]);
+        return json(await rows(env,`SELECT id,status,stage,revision,read_at,last_error,updated_at,note_updated_at FROM learning_items WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids));
+      }
+      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify))?$/);
       if(match){
-        const id=match[1],current=await item(env,id);
+        const id=await resolveItemId(env,match[1]),current=id&&await item(env,id);
         if(!current||current.status==='dismissed')return json({error:'文章不存在'},404);
         if(match[2]==='/backfill'&&request.method==='POST'){
           const changed=await query(env,"UPDATE learning_items SET status='queued',updated_at=? WHERE id=? AND status='awaiting_backfill'",nowIso(),id).run();
           if(!changed.meta.changes)return json({error:'這篇已離開待回補清單，請重新整理。'},409);
           await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/rewrite'&&request.method==='POST'){
+          // 只重寫文字：沿用已保存的來源與媒體解析，不重新取得來源，也不重新解析媒體。
+          if(!['ready','partial','needs_attention','error'].includes(current.status))return json({error:'這篇目前不能重寫，請等處理完成。'},409);
+          await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL,article_json=json_set(COALESCE(article_json,'{}'),'$.input_fingerprint','rewrite-requested'),updated_at=? WHERE id=?",nowIso(),id).run();
+          await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/renotify'&&request.method==='POST'){
+          // 重送通知：用目前保存的文章內容再發一次，不重新生成。
+          if(!['ready','partial'].includes(current.status) || current.edition!=='detailed')return json({error:'只有已完成的詳細文章可以重送通知。'},409);
+          await query(env,'INSERT INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,?,?,?,?)',crypto.randomUUID(),JSON.stringify([{id,revision:current.revision}]),'resend',articleMessage(env,current,'complete'),nowIso()).run();
+          await service.flush(env);return json({ok:true});
         }
         if(match[2]==='/retry'&&request.method==='POST'){
           if(current.status==='awaiting_backfill')throw new Error('請先確認既有書籤回補');
@@ -110,12 +182,24 @@ export function createLearningHandler(deps={}) {
           for(const asset of assets)if(env.MEDIA)await env.MEDIA.delete(asset.object_key);
           return json({ok:true});
         }
-        if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},sources:await evidence(env,id),media:await rows(env,'SELECT id,type,duration_ms,status,error,object_key FROM learning_media WHERE item_id=?',id)});
+        if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},requested_id:match[1],sources:await evidence(env,id),
+          media:await rows(env,'SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=?',id),
+          analyses:(await rows(env,'SELECT media_id,model,prompt_version,analysis_json,created_at FROM learning_media_analyses WHERE item_id=? ORDER BY created_at',id)).map(a=>({...a,analysis:JSON.parse(a.analysis_json),analysis_json:undefined})),
+          intakes:await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id),
+          versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
         if(!match[2]&&request.method==='PATCH'){
           const data=await body(request);
-          if('note' in data){if(typeof data.note!=='string'||data.note.length>20000)throw new Error('筆記超過 20,000 字元');await query(env,'UPDATE learning_items SET note=? WHERE id=?',data.note,id).run();}
+          let noteUpdatedAt=current.note_updated_at;
+          if('note' in data){
+            if(typeof data.note!=='string'||data.note.length>20000)throw new Error('筆記超過 20,000 字元');
+            noteUpdatedAt=nowIso();
+            // 帶有 base_note_updated_at 時做版本檢查：另一個分頁已保存新內容就回 409，不覆寫。
+            const guarded='base_note_updated_at' in data;
+            const result=await query(env,`UPDATE learning_items SET note=?,note_updated_at=? WHERE id=? ${guarded?"AND COALESCE(note_updated_at,'')=COALESCE(?,'')":''}`,data.note,noteUpdatedAt,id,...(guarded?[data.base_note_updated_at]:[])).run();
+            if(!result.meta.changes){const latest=await item(env,id);return json({error:'筆記已在其他地方更新，請選擇要保留的版本。',code:'note_conflict',note:latest.note,note_updated_at:latest.note_updated_at},409);}
+          }
           if('read' in data){if(typeof data.read!=='boolean')throw new Error('已讀狀態需為 boolean');await query(env,'UPDATE learning_items SET read_at=? WHERE id=?',data.read?nowIso():null,id).run();}
-          return json({ok:true});
+          return json({ok:true,note_updated_at:noteUpdatedAt});
         }
       }
       if(route.startsWith('media/')&&request.method==='GET'){
@@ -131,7 +215,7 @@ export function createLearningHandler(deps={}) {
       }
       if(route==='control'&&request.method==='POST'){
         const data=await body(request);
-        if(data.action==='pause')await setSetting(env,'control',{paused:true,reason:'manual'});
+        if(data.action==='pause')await setSetting(env,'control',{paused:true,reason:'manual',paused_at:nowIso()});
         else if(data.action==='resume'){await resume(env);await service.recover(env);const sync=await setting(env,'sync');if(sync.running&&env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});}
         else throw new Error('未知處理動作');
         return json(await budget(env));
@@ -139,8 +223,19 @@ export function createLearningHandler(deps={}) {
       if(route==='ask'&&request.method==='POST'){
         const data=await body(request);
         if(data.item_id&&!await item(env,data.item_id))return json({error:'文章不存在'},404);
-        const result=await service.ask(env,data.question,data.item_id || null);
-        return json({...result,answer_html:renderMarkdown(result.answer)});
+        const itemId=data.item_id?await resolveItemId(env,data.item_id):null;
+        const result=await service.ask(env,data.question,itemId);
+        return json(result,result.status==='done'?200:202);
+      }
+      if(route==='questions'&&request.method==='GET'){
+        const itemId=url.searchParams.get('item_id');
+        if(itemId&&!/^[a-f0-9]{32}$/.test(itemId))throw new Error('文章識別碼無效');
+        return json(await listQuestions(env,itemId?await resolveItemId(env,itemId):null));
+      }
+      const questionMatch=route.match(/^questions\/([0-9a-f-]{36})$/);
+      if(questionMatch&&request.method==='GET'){
+        const row=await query(env,'SELECT * FROM learning_questions WHERE id=?',questionMatch[1]).first();
+        return row?json(questionView(row)):json({error:'問題不存在'},404);
       }
       if(route==='x/connect'&&request.method==='POST'){
         if(!env.X_CLIENT_ID || !env.X_CLIENT_SECRET || !env.PUBLIC_BASE_URL)throw new Error('X 授權設定未完成');

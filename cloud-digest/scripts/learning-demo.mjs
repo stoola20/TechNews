@@ -2,6 +2,7 @@ import {createServer} from 'node:http';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import {createLearningHandler} from '../src/learning/http.js';
+import {setTextProvider} from '../src/learning/local.js';
 
 // 此入口僅提供本機操作驗證，不讀取任何真實金鑰或呼叫外部服務。
 const sqlite=new DatabaseSync(':memory:');
@@ -9,9 +10,12 @@ for(const name of readdirSync(new URL('../migrations',import.meta.url)).filter(n
 const DB={prepare(sql){return {bind(...args){this.args=args;return this;},async first(){return sqlite.prepare(sql).get(...(this.args || [])) || null;},async all(){return {results:sqlite.prepare(sql).all(...(this.args || []))};},async run(){return {meta:sqlite.prepare(sql).run(...(this.args || []))};}};},async batch(statements){sqlite.exec('BEGIN');try{const out=[];for(const s of statements)out.push(await s.run());sqlite.exec('COMMIT');return out;}catch(error){sqlite.exec('ROLLBACK');throw error;}}};
 const samples={
   'video-input':{title:'原生影片輸入與自行前處理',content:'原生影片輸入表示 API 可以接收影片檔，不表示模型會連續看完每一幀。服務仍會取樣畫面並處理音訊。\n\n自行前處理則由應用程式取畫面、轉錄音訊並提供時間對應。好處是可以明確保存證據，代價是取樣與音畫對齊需要自己維護。\n\n例如講者說「打開這個選項」，畫面才顯示選項名稱；只讀逐字稿會漏掉操作細節。快速閃過的錯誤訊息可能被兩種取樣方式漏掉。'},
+  'code-and-table':{title:'設定檔欄位與重試參數',content:'設定檔使用 JSON。以下範例設定最大重試次數與逾時：\n\n```json\n{"max_retries": 3, "timeout_ms": 120000, "backoff": "exponential", "very_long_field_name_to_test_horizontal_scrolling_inside_code_blocks": true}\n```\n\n| 欄位 | 預設值 | 說明 | 適用版本 | 備註與限制條件（測試寬表格的水平捲動） |\n|---|---|---|---|---|\n| max_retries | 3 | 最多重試次數 | 2.1 以上 | 超過後標為需要處理，不會無限重試 |\n| timeout_ms | 120000 | 單次逾時 | 2.3 以上 | 長文生成可能需要提高 |\n\n限制：2.0 以前的版本不支援 backoff 欄位。'},
   'background-jobs':{title:'背景工作如何在失敗後繼續處理',content:'收件先持續保存於資料庫，再交給背景佇列處理。佇列負責喚醒，資料庫保存來源、處理階段與已生成文章。\n\n通知失敗時，重送已保存的結果，避免再付一次生成費用。來源取得失敗時則保留工作與缺漏，不把不完整內容寫成完整事實。\n\n預算用完後停止新的付費工作，收藏仍保留；即使跨月，也要等使用者手動恢復。'},
 };
-const env={DB,RUN_TOKEN:'demo-only',LEARNING_ENABLED:'true',LEARNING_DEMO:'true',PUBLIC_BASE_URL:'https://example.org',LEARNING_MONTHLY_USD:'30'};
+const env={DB,RUN_TOKEN:'demo-only',LEARNING_RUNNER_TOKEN:'demo-runner',LEARNING_ENABLED:'true',LEARNING_DEMO:'true',PUBLIC_BASE_URL:'https://example.org',LEARNING_MONTHLY_USD:'30'};
+// DEMO_LOCAL=1：文字工作交給本機執行器（runner/runner.mjs，TECHNEWS_RUNNER_TOKEN=demo-runner）。
+if(process.env.DEMO_LOCAL==='1')await setTextProvider(env,'local');
 const handler=createLearningHandler({
   postEvidence:async(env,id)=>({url:'https://x.com/i/status/'+id,relation:'primary',author_id:'demo',content:'這是本機 X 收件操作示範，未讀取這個網址的真實貼文。正式環境會取得來源與媒體，再交給 Gemini 整理。',metadata:{title:'本機 X 分享示範',author_username:'demo_author',post_id:id,conversation_id:id,references:[],links:[]},media:[]}),
   xRead:async()=>({data:[],meta:{}}),
@@ -20,17 +24,28 @@ const handler=createLearningHandler({
   generate:async(env,sources,media,gaps,question)=>question?{answer:'本機測試回答：\n'+sources[0].content.slice(0,500),citations:[sources[0].id],insufficient:false}:{title:JSON.parse(sources[0].metadata_json || '{}').title || '本機教材',body:sources.map(s=>s.content).join('\n\n'),intro:'本機操作驗證示範，未呼叫外部模型。',citations:sources.map(s=>s.id),observations:[]},
   sendTelegram:async()=>1,
 });
+const port=Number(process.env.DEMO_PORT || 8788);
 const jobs=[];env.LEARNING_JOBS={async send(job){jobs.push(job);}};
 for(const key of Object.keys(samples)){const id=await handler.service.collect(env,'https://example.org/'+key);await handler.service.process(env,id);}
+// 其他狀態：搬移前的官方短導讀、等待本機、需要處理與來源缺漏，讓列表與篩選都有資料可看。
+const time=new Date().toISOString();
+DB.prepare("INSERT INTO articles(source_url,source,title,published_at,status,summary_json,content,content_method,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind('https://developers.openai.com/blog/demo-legacy','openai_developer_blog','Legacy demo','2026-10-01','notified',JSON.stringify({title_zh:'舊官方短導讀示範',body_zh:'這是搬移前只有短導讀的官方文章，沒有保存模型資訊。'}),'官方原文示範內容。'.repeat(20),'article_html',time,time).run();
+await handler.service.migrate(env);
+const states=[['waiting','等待本機處理的示範','waiting_local','[]',null],['attention','需要處理的示範','needs_attention','[]','本機模型輸出三次都未通過格式檢查'],['partial','來源有缺漏的示範','partial','[{"url":"https://x.com/i/status/1","error":"父貼文無法取得"}]',null]];
+for(const [key,title,status,gaps,error] of states){
+  const id=await handler.service.collect(env,'https://example.org/state-'+key);
+  await DB.prepare("UPDATE learning_items SET title=?,status=?,gaps_json=?,last_error=?,body=?,article_json=? WHERE id=?").bind(title,status,gaps,error,status==='partial'?'## 已整理的部分\n\n父貼文缺漏，以下只根據主貼文整理。':null,status==='partial'?JSON.stringify({provider:'demo',model:'demo',intro:'示範',observations:[]}):null,id).run();
+}
+jobs.length=0;
 for(const suffix of ['keep','remove'])await handler.service.collect(env,'https://example.org/awaiting-'+suffix,'backfill','demo:'+suffix,{defer:true,source:{url:'https://example.org/awaiting-'+suffix,relation:'primary',content:'等待你確認的原始收藏 '+suffix+'。\n\n先讀原文，再決定是否使用模型整理。',metadata:{title:'待回補原文'},media:[]}});
 const server=createServer(async(req,res)=>{
   try{
     const chunks=[];for await(const chunk of req){chunks.push(chunk);if(chunks.reduce((n,c)=>n+c.length,0)>64000)throw Error('Request too large');}
     const data=Buffer.concat(chunks);
-    const request=new Request('http://localhost:8788'+req.url,{method:req.method,headers:req.headers,...(!['GET','HEAD'].includes(req.method)?{body:data}:{} )});
+    const request=new Request(`http://localhost:${port}`+req.url,{method:req.method,headers:req.headers,...(!['GET','HEAD'].includes(req.method)?{body:data}:{} )});
     const response=await handler.fetch(request,env);
     res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));
     while(jobs.length){const job=jobs.shift();try{if(job.kind==='article')await handler.service.process(env,job.id);}catch{console.log('本機背景工作已保留，請查看處理狀態。');}}
   }catch(error){if(!res.headersSent){res.writeHead(500,{'content-type':'text/plain'});res.end('本機測試處理失敗');}}
 });
-server.listen(8788,'127.0.0.1',()=>console.log('本機測試：http://localhost:8788/learning；示範登入：demo-only。所有資料與回應為測試素材。'));
+server.listen(port,'127.0.0.1',()=>console.log(`本機測試：http://localhost:${port}/learning；示範登入：demo-only。所有資料與回應為測試素材。`));
