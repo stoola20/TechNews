@@ -26,12 +26,12 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 .label{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.02em;color:var(--muted);text-transform:none;margin-bottom:6px}
 .source{margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}.source summary{min-height:32px;cursor:pointer}
 .source .text{white-space:pre-wrap;line-height:1.75;max-height:420px;overflow:auto;font-size:15px;margin-top:8px}
-.analysis{border-left:3px solid var(--line);padding-left:14px;margin:12px 0 20px}.stamp{min-height:32px;padding:2px 8px;font-variant-numeric:tabular-nums;margin-right:6px}
+.analysis{border-left:3px solid var(--line);padding-left:14px;margin:12px 0 20px}.stamp{min-height:32px;padding:2px 8px;font-variant-numeric:tabular-nums;margin-right:6px}mark{background:#fde68a;color:inherit;outline:none}#answer-sources li{margin:8px 0}
 #media img,#media video{max-width:100%;max-height:440px;display:block;margin:12px 0;border-radius:6px}
 #ask-scope{display:flex;gap:16px;flex-wrap:wrap}#ask-scope label{display:flex;align-items:center;gap:8px;min-height:44px}#ask-scope input{min-height:auto;width:18px;height:18px}
 #answer{margin-top:16px}#history details{border-bottom:1px solid var(--line);padding:4px 0}#history summary{min-height:44px;cursor:pointer;padding:10px 0}
 .empty{padding:48px 0;color:var(--muted)}
-.note-state{font-size:13px;min-height:20px;margin-top:6px}
+.note-state{font-size:13px;min-height:20px;margin-top:6px}.note-state.error{color:var(--danger)}
 @media(max-width:959px){
   body.app{display:block;height:auto}.layout{display:block}
   #library{border-right:0;overflow:visible}#reader{overflow:visible;padding:16px}
@@ -61,7 +61,7 @@ ${LOGIN}
 <div id="reader" tabindex="-1" aria-label="閱讀區">
   <div class="reader-bar"><button id="back">← 返回列表</button></div>
   <div id="article"><div class="empty"><h1 style="font-size:22px">選一篇文章開始閱讀</h1><p>官方文章、X 書籤與分享都在左側列表。處理狀態會自動更新。</p></div></div>
-  <section class="block hidden" id="notes-panel" aria-labelledby="notes-title"><h2 id="notes-title">我的筆記</h2><label class="sr" for="note">筆記內容</label><textarea id="note" maxlength="20000" placeholder="寫下自己的理解或待辦"></textarea><div class="actions"><button id="save-note">保存筆記</button></div><div id="note-state" class="note-state" aria-live="polite"></div></section>
+  <section class="block hidden" id="notes-panel" aria-labelledby="notes-title"><h2 id="notes-title">我的筆記</h2><label class="sr" for="note">筆記內容</label><textarea id="note" maxlength="20000" placeholder="寫下自己的理解或待辦；會自動保存"></textarea><div id="note-state" class="note-state" role="status" aria-live="polite"></div><div id="note-actions" class="actions"></div></section>
   <section class="block" id="ask-panel" aria-labelledby="ask-title"><h2 id="ask-title">來源追問</h2>
     <form id="ask-form"><fieldset style="border:0;padding:0;margin:0"><legend class="sr">追問範圍</legend><div id="ask-scope"><label><input type="radio" name="scope" value="article" checked> 目前文章</label><label><input type="radio" name="scope" value="all"> 整個文章庫</label></div></fieldset>
     <label for="question">你的問題</label><textarea id="question" maxlength="2000" placeholder="例如：這個設定需要哪個版本？" required></textarea><div class="actions"><button class="primary">依來源回答</button></div></form>
@@ -152,7 +152,7 @@ function renderArticle(result){
   box.replaceChildren(...nodes);
 }
 function sourceBlock(s){
-  const d=el('details',{class:'source'},[el('summary',{},[el('strong',{text:RELATIONS[s.relation]||s.relation}),document.createTextNode((s.published_at?'・'+when(s.published_at):'')+(s.status!=='available'?'・無法取得':''))])]);
+  const d=el('details',{class:'source','data-evidence':s.id},[el('summary',{},[el('strong',{text:RELATIONS[s.relation]||s.relation}),document.createTextNode((s.published_at?'・'+when(s.published_at):'')+(s.status!=='available'?'・無法取得':''))])]);
   d.append(el('p',{},[safeLink(s.url,'開啟這則原文')]));
   if(s.content)d.append(el('div',{class:'text',text:s.content}));
   else{const m=JSON.parse(s.metadata_json||'{}');d.append(el('p',{class:'muted',text:m.error||'沒有保存內容'}));}
@@ -223,6 +223,7 @@ async function poll(){
     for(const s of await api('items/states?ids='+ids.join(','))){
       applyState(s);
       if(current&&s.id===current.id&&(s.status!==current.status||s.revision!==current.revision||s.stage!==current.stage))await refreshArticle();
+      else if(current&&s.id===current.id&&(s.note_updated_at||null)!==(notes.base||null)){current.note_updated_at=s.note_updated_at;notes.sync({...current,...await api('items/'+current.id).then(r=>r.item)});}
     }
   }catch(e){}
 }
@@ -232,29 +233,104 @@ async function runnerStatus(){
     $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
   }catch(e){}
 }
+// 筆記：自動保存、失敗時草稿留在這台裝置、切換文章不互相覆寫、跨分頁衝突要使用者選擇。
+const NOTE_DELAY=1200;
 const notes={
-  item:null,
-  open(item){this.item=item;$('notes-panel').classList.remove('hidden');$('note').value=item.note||'';$('note-state').textContent='';},
-  sync(item){if(this.item&&this.item.id===item.id)this.item=item;},
-  close(){this.item=null;$('notes-panel').classList.add('hidden');},
+  item:null,base:null,saved:'',timer:null,inflight:0,conflict:null,
+  key(id){return 'technews-note:'+id;},
+  readDraft(id){try{return JSON.parse(localStorage.getItem(this.key(id))||'null');}catch(e){return null;}},
+  writeDraft(id,text,base){try{localStorage.setItem(this.key(id),JSON.stringify({text,base,at:Date.now()}));}catch(e){}},
+  clearDraft(id,text){try{const d=this.readDraft(id);if(!d||text==null||d.text===text)localStorage.removeItem(this.key(id));}catch(e){}},
+  dirty(){return !!this.item&&$('note').value!==this.saved;},
+  setState(text,tone,buttons){$('note-state').textContent=text||'';$('note-state').className='note-state'+(tone?' '+tone:'');$('note-actions').replaceChildren(...(buttons||[]));},
+  open(item){
+    // 離開前一篇時，把尚未送出的內容以那篇的身分送出，回應不會寫進新文章。
+    if(this.item&&this.item.id!==item.id&&this.dirty()){clearTimeout(this.timer);this.send(this.item.id,$('note').value,this.base);}
+    clearTimeout(this.timer);this.conflict=null;
+    this.item=item;this.base=item.note_updated_at||null;this.saved=item.note||'';
+    $('notes-panel').classList.remove('hidden');
+    const draft=this.readDraft(item.id);
+    if(draft&&draft.text!==this.saved){
+      $('note').value=draft.text;
+      if((draft.base||null)===this.base){this.setState('還原了這台裝置上尚未保存的草稿，將自動保存。','');this.schedule();}
+      else this.showConflict(item.note||'',item.note_updated_at);
+    }else{$('note').value=this.saved;this.clearDraft(item.id);this.setState(item.note_updated_at?'最後保存 '+when(item.note_updated_at):'','');}
+  },
+  sync(item){
+    if(!this.item||this.item.id!==item.id)return;
+    const changed=(item.note_updated_at||null)!==this.base;
+    if(changed&&!this.dirty()&&!this.inflight){this.base=item.note_updated_at||null;this.saved=item.note||'';$('note').value=this.saved;this.setState('已載入其他分頁保存的筆記（'+when(item.note_updated_at)+'）。','');}
+  },
+  close(){if(this.item&&this.dirty()){clearTimeout(this.timer);this.send(this.item.id,$('note').value,this.base);}this.item=null;$('notes-panel').classList.add('hidden');},
+  schedule(){clearTimeout(this.timer);this.timer=setTimeout(()=>this.save(),NOTE_DELAY);},
+  input(){if(!this.item)return;this.writeDraft(this.item.id,$('note').value,this.base);if(this.conflict)return;this.setState('編輯中…','');this.schedule();},
+  async send(id,text,base){
+    this.inflight++;
+    try{const r=await api('items/'+id,'PATCH',{note:text,base_note_updated_at:base});this.clearDraft(id,text);return {ok:true,note_updated_at:r.note_updated_at};}
+    catch(e){return {ok:false,error:e};}
+    finally{this.inflight--;}
+  },
+  async save(force){
+    if(!this.item)return;
+    clearTimeout(this.timer);
+    const id=this.item.id,text=$('note').value,base=force?this.conflict.note_updated_at:this.base;
+    if(text===this.saved&&!force){this.clearDraft(id,text);return;}
+    this.setState('保存中…','');
+    const result=await this.send(id,text,base);
+    if(!this.item||this.item.id!==id)return;
+    if(result.ok){
+      this.base=result.note_updated_at;this.saved=text;this.conflict=null;
+      if($('note').value===text)this.setState('已保存 '+when(result.note_updated_at),'');else{this.writeDraft(id,$('note').value,this.base);this.schedule();}
+      return;
+    }
+    const e=result.error;
+    if(e.status===409&&e.body&&e.body.code==='note_conflict'){this.showConflict(e.body.note,e.body.note_updated_at);return;}
+    this.writeDraft(id,text,this.base);
+    const retry=el('button',{type:'button',text:'重試保存'});retry.onclick=()=>this.save();
+    this.setState('保存失敗：'+e.message+'。草稿已保留在這台裝置，恢復連線後會再試。','error',[retry]);
+  },
+  showConflict(serverNote,serverAt){
+    clearTimeout(this.timer);this.conflict={note:serverNote,note_updated_at:serverAt||null};
+    const keepMine=el('button',{type:'button',class:'primary',text:'保留我的版本'});keepMine.onclick=()=>this.save(true);
+    const useTheirs=el('button',{type:'button',text:'改用另一份'});useTheirs.onclick=()=>{this.base=serverAt||null;this.saved=serverNote||'';$('note').value=this.saved;this.conflict=null;this.clearDraft(this.item.id);this.setState('已改用 '+when(serverAt)+' 保存的版本。','');};
+    const peek=el('details',{},[el('summary',{text:'查看另一份內容'}),el('div',{style:'white-space:pre-wrap',text:serverNote||'（空白）'})]);
+    this.setState('筆記已在其他分頁或裝置更新（'+when(serverAt)+'）。你的內容尚未保存，請選擇要保留哪一份。','error',[keepMine,useTheirs,peek]);
+  },
 };
-$('save-note').onclick=e=>run(async()=>{if(!notes.item)return;await api('items/'+notes.item.id,'PATCH',{note:$('note').value});$('note-state').textContent='筆記已保存。';},e.currentTarget,'儲存中…');
+$('note').addEventListener('input',()=>notes.input());
+$('note').addEventListener('blur',()=>{if(notes.dirty()&&!notes.conflict)notes.save();});
+window.addEventListener('online',()=>{if(notes.dirty()&&!notes.conflict)notes.save();});
+window.addEventListener('beforeunload',e=>{if(notes.dirty()||notes.inflight){e.preventDefault();e.returnValue='';}});
 const questionStates={waiting_local:'已保存，等待 Mac 回答',generating:'Mac 正在回答',failed:'回答失敗',done:'已回答'};let questionTimer=null,watching=null;
 const questions={
   open(item){watching=null;$('answer').replaceChildren();$('answer-sources').replaceChildren();if(!item)document.querySelector('input[name=scope][value=all]').checked=true;loadHistory().catch(()=>{});},
 };
 function scopeId(){return document.querySelector('input[name=scope]:checked').value==='article'&&current?current.id:null;}
 function renderQuestion(q){
-  if(q.status==='done'){$('answer').innerHTML=q.answer_html;$('answer-sources').replaceChildren(...(q.sources||[]).map(s=>el('li',{},[safeLink(s.url,(RELATIONS[s.relation]||s.relation)+'・'+s.url),s.excerpt?el('span',{class:'preview',text:s.excerpt}):null])));}
+  if(q.status==='done'){$('answer').innerHTML=q.answer_html;$('answer-sources').replaceChildren(...(q.sources||[]).map(s=>el('li',{},[safeLink(s.url,(RELATIONS[s.relation]||s.relation)+'・'+s.url),s.excerpt?el('span',{class:'preview',text:s.excerpt}):null,citeButton(s)])));}
   else{$('answer').textContent=(questionStates[q.status]||q.status)+(q.error?'：'+q.error:'。')+(q.status==='failed'?'':'可以離開這頁，之後在提問紀錄查看。');$('answer-sources').replaceChildren();}
+}
+// 回答引用的片段若來自目前文章，可直接在保存的原文中標出，核對模型是否忠於來源。
+function citeButton(s){
+  if(!current||s.item_id!==current.id)return null;
+  if(s.id.startsWith('media:')||s.id.endsWith(':observations')){const b=el('button',{type:'button',class:'stamp',text:'查看媒體證據'});b.onclick=()=>{const m=$('media');if(m){m.scrollIntoView({block:'start'});m.setAttribute('tabindex','-1');m.focus({preventScroll:true});}};return b;}
+  const b=el('button',{type:'button',class:'stamp',text:'在原文中標出'});b.onclick=()=>showExcerpt(s.id.split(':')[0],s.range_start||0,(s.excerpt||'').length);return b;
+}
+function showExcerpt(evidenceId,start,length){
+  const d=document.querySelector('details[data-evidence="'+evidenceId+'"]');if(!d){message('這篇文章的原文區塊中找不到這個片段。',true);return;}
+  const text=d.querySelector('.text');if(!text)return;
+  const full=text.textContent,mark=el('mark',{tabindex:'-1',text:full.slice(start,start+length)});
+  text.replaceChildren(document.createTextNode(full.slice(0,start)),mark,document.createTextNode(full.slice(start+length)));
+  d.open=true;mark.scrollIntoView({block:'center'});mark.focus({preventScroll:true});
 }
 async function loadHistory(){
   const id=scopeId(),list=await api('questions'+(id?'?item_id='+id:''));
   if(id!==scopeId())return;
-  $('history').replaceChildren(...list.map(q=>{const body=el('div',{class:'article-body'});if(q.status==='done')body.innerHTML=q.answer_html;else body.textContent=questionStates[q.status]||q.status;return el('details',{},[el('summary',{text:q.question.slice(0,80)+'・'+(questionStates[q.status]||q.status)+'・'+when(q.created_at)}),body]);}));
+  $('history').replaceChildren(...list.map(q=>{const body=el('div',{class:'article-body'});if(q.status==='done')body.innerHTML=q.answer_html;else body.textContent=questionStates[q.status]||q.status;const refs=el('ul',{},(q.sources||[]).map(s=>el('li',{},[safeLink(s.url,(RELATIONS[s.relation]||s.relation)+'・'+s.url),citeButton(s)])));if(['waiting_local','generating'].includes(q.status)&&watching!==q.id)pollQuestion(q.id,true);return el('details',{'data-question':q.id},[el('summary',{text:q.question.slice(0,80)+'・'+(questionStates[q.status]||q.status)+'・'+when(q.created_at)}),body,refs]);}));
   if(!list.length)$('history').textContent='尚無提問。';
 }
-function pollQuestion(id){clearTimeout(questionTimer);watching=id;questionTimer=setTimeout(async()=>{if(watching!==id)return;if(document.hidden){pollQuestion(id);return;}try{const q=await api('questions/'+id);if(watching!==id)return;renderQuestion(q);if(['waiting_local','generating'].includes(q.status))pollQuestion(id);else{watching=null;await loadHistory();}}catch(e){message('提問進度更新失敗：'+e.message,true);}},5000);}
+// 追問進度：只追蹤目前範圍內的問題；切換文章或範圍後，舊問題的回應不會寫進新的回答區。
+function pollQuestion(id,quiet){clearTimeout(questionTimer);watching=id;const scope=scopeId();questionTimer=setTimeout(async()=>{if(watching!==id||scope!==scopeId())return;if(document.hidden){pollQuestion(id,quiet);return;}try{const q=await api('questions/'+id);if(watching!==id||scope!==scopeId())return;if(!quiet)renderQuestion(q);if(['waiting_local','generating'].includes(q.status))pollQuestion(id,quiet);else{watching=null;await loadHistory();}}catch(e){message('提問進度更新失敗：'+e.message,true);}},5000);}
 $('ask-form').onsubmit=e=>{e.preventDefault();run(async()=>{const scoped=document.querySelector('input[name=scope]:checked').value==='article';if(scoped&&!current)throw Error('請先選一篇文章，或改為整個文章庫。');$('answer').textContent='正在保存問題並檢索來源…';const q=await api('ask','POST',{question:$('question').value,item_id:scoped?current.id:null});renderQuestion(q);if(['waiting_local','generating'].includes(q.status))pollQuestion(q.id);await loadHistory();},e.submitter||e.target.querySelector('button'),'送出中…');};
 for(const radio of document.querySelectorAll('input[name=scope]'))radio.onchange=()=>{watching=null;run(loadHistory);};
 $('search-form').onsubmit=e=>{e.preventDefault();run(()=>navigate({q:$('search').value.trim(),page:0,article:null}));};

@@ -57,7 +57,7 @@ export async function retrieve(env,question,articleId=null){
 }
 
 function sourcesFor(chunks,citations){
-  return chunks.filter(c=>citations.includes(c.id)).map(c=>({id:c.id,url:c.url,relation:c.relation,range_start:c.range_start || 0,excerpt:c.content.slice(0,500)}));
+  return chunks.filter(c=>citations.includes(c.id)).map(c=>({id:c.id,item_id:c.item_id || null,url:c.url,relation:c.relation,range_start:c.range_start || 0,excerpt:c.content.slice(0,500)}));
 }
 
 export function questionView(row){

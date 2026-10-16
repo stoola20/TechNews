@@ -137,7 +137,7 @@ export function createLearningHandler(deps={}) {
         const ids=(url.searchParams.get('ids') || '').split(',').filter(Boolean);
         if(ids.length>100 || ids.some(i=>!/^[a-f0-9]{32}$/.test(i)))throw new Error('文章識別碼無效');
         if(!ids.length)return json([]);
-        return json(await rows(env,`SELECT id,status,stage,revision,read_at,last_error,updated_at FROM learning_items WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids));
+        return json(await rows(env,`SELECT id,status,stage,revision,read_at,last_error,updated_at,note_updated_at FROM learning_items WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids));
       }
       const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify))?$/);
       if(match){
@@ -189,9 +189,17 @@ export function createLearningHandler(deps={}) {
           versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
         if(!match[2]&&request.method==='PATCH'){
           const data=await body(request);
-          if('note' in data){if(typeof data.note!=='string'||data.note.length>20000)throw new Error('筆記超過 20,000 字元');await query(env,'UPDATE learning_items SET note=? WHERE id=?',data.note,id).run();}
+          let noteUpdatedAt=current.note_updated_at;
+          if('note' in data){
+            if(typeof data.note!=='string'||data.note.length>20000)throw new Error('筆記超過 20,000 字元');
+            noteUpdatedAt=nowIso();
+            // 帶有 base_note_updated_at 時做版本檢查：另一個分頁已保存新內容就回 409，不覆寫。
+            const guarded='base_note_updated_at' in data;
+            const result=await query(env,`UPDATE learning_items SET note=?,note_updated_at=? WHERE id=? ${guarded?"AND COALESCE(note_updated_at,'')=COALESCE(?,'')":''}`,data.note,noteUpdatedAt,id,...(guarded?[data.base_note_updated_at]:[])).run();
+            if(!result.meta.changes){const latest=await item(env,id);return json({error:'筆記已在其他地方更新，請選擇要保留的版本。',code:'note_conflict',note:latest.note,note_updated_at:latest.note_updated_at},409);}
+          }
           if('read' in data){if(typeof data.read!=='boolean')throw new Error('已讀狀態需為 boolean');await query(env,'UPDATE learning_items SET read_at=? WHERE id=?',data.read?nowIso():null,id).run();}
-          return json({ok:true});
+          return json({ok:true,note_updated_at:noteUpdatedAt});
         }
       }
       if(route.startsWith('media/')&&request.method==='GET'){
