@@ -39,6 +39,8 @@ export async function generate(env,sources,media,gaps,question=null,fetcher=fetc
     if(!Array.isArray(data.citations) || data.citations.some(id=>!ids.has(id)))throw new Error('模型引用了未提供的來源');
     if(question){if(typeof data.answer!=='string'||!data.answer.trim()||typeof data.insufficient!=='boolean'||(!data.insufficient&&!data.citations.length))throw new Error('回答缺少來源或不足判斷');}
     else {
+      // 純文字來源沒有媒體可觀察；模型多回傳的觀察直接丟棄，不讓重寫因此失敗。
+      if(!media.length)data.observations=[];
       if(!data.title?.trim()||!data.body?.trim()||typeof data.intro!=='string'||!data.citations.length||!Array.isArray(data.observations))throw new Error('教材欄位不完整');
       const videoIds=new Set(media.filter(m=>m.type!=='photo').map(m=>m.evidence_id));
       const photoIds=new Set(media.filter(m=>m.type==='photo').map(m=>m.evidence_id));

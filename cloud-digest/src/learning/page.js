@@ -134,7 +134,7 @@ function renderArticle(result){
   nodes.push(el('h1',{id:'article-title',tabindex:'-1',text:item.title||(result.sources.find(s=>s.relation==='primary')||{content:''}).content.slice(0,100)||'處理中的來源'}));
   const origins=[...new Set((result.intakes||[]).map(i=>ORIGINS[i.origin]||i.origin))];
   nodes.push(el('p',{class:'meta'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' 更新於 '+when(item.updated_at)+(origins.length?'・收件：'+origins.join('、'):'')+(provenance(article)?'・'+provenance(article):'')+'・'),safeLink(item.url,'開啟原始來源')]));
-  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材。'}));
+  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
   if(item.status==='waiting_local')nodes.push(el('p',{class:'notice',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
   if(item.status==='budget_paused')nodes.push(el('p',{class:'notice',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
   if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>el('div',{text:'・'+(g.error||'來源缺漏')+(g.url?'（'+g.url+'）':'')})),item.last_error?el('div',{text:'・'+item.last_error}):null]));
@@ -193,11 +193,11 @@ function actions(item){
     row.append(start,remove);return row;
   }
   const retry=el('button',{text:'補取缺漏並整理'});
-  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
+  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
   row.append(retry);
   if(['ready','partial','needs_attention','error'].includes(item.status)){
     const rewrite=el('button',{text:'只重寫文字'});
-    rewrite.onclick=async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，只請文字模型重寫，不重新取得來源。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
+    rewrite.onclick=async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
     row.append(rewrite);
   }
   if(['ready','partial'].includes(item.status)&&item.edition==='detailed'){
@@ -226,8 +226,10 @@ async function poll(){
     }
   }catch(e){}
 }
+let textModel=null;
+function textModelName(){return !textModel?'目前設定的文字模型':textModel.provider==='local'?'本機 '+textModel.model:'Gemini '+textModel.model;}
 async function runnerStatus(){
-  try{const s=await api('status'),l=s.local,b=s.budget;
+  try{const s=await api('status'),l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};
     const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');
     $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
   }catch(e){}
@@ -348,7 +350,7 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){poll();runnerStatus();}});
 bindLogin(boot);
 async function boot(){
-  await api('status');showApp();view=readView();listKey=null;await apply();runnerStatus();
+  await api('status');showApp();await runnerStatus();view=readView();listKey=null;await apply();
   clearInterval(pollTimer);clearInterval(statusTimer);pollTimer=setInterval(poll,8000);statusTimer=setInterval(runnerStatus,30000);
 }
 run(boot);

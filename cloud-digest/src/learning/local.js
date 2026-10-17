@@ -189,7 +189,8 @@ export async function runnerStatus(env){
   const counts=await rows(env,"SELECT status,COUNT(*) AS count FROM learning_jobs WHERE status IN ('waiting_local','leased','failed') GROUP BY status");
   const current=await query(env,"SELECT id,kind,item_id,question_id,leased_at,lease_until FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",nowIso()).first();
   const lastSeen=runner?.last_seen_at || null;
-  return {provider:await textProvider(env),model:localModel(env),last_seen_at:lastSeen,online:!!lastSeen && Date.now()-Date.parse(lastSeen)<RUNNER_ONLINE_MS,
+  const provider=await textProvider(env);
+  return {provider,model:localModel(env),text_model:provider==='local'?localModel(env):env.LEARNING_MODEL || 'gemini-3.8-flash',last_seen_at:lastSeen,online:!!lastSeen && Date.now()-Date.parse(lastSeen)<RUNNER_ONLINE_MS,
     info:runner?JSON.parse(runner.info_json):null,jobs:Object.fromEntries(counts.map(c=>[c.status,c.count])),current,
     queue:(await queueOrder(env)).slice(0,20).map((j,i)=>({position:i+1,kind:j.kind,item_id:j.item_id,question_id:j.question_id,priority:j.priority,effective_priority:j.effective_priority,created_at:j.created_at}))};
 }
