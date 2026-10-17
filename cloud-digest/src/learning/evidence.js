@@ -25,7 +25,7 @@ export async function acquireEvidence(env,item,deps={}) {
   if(!primary){
     const official=item.kind==='x'?null:await officialSourceFor(env,item);
     const source=item.kind==='x'?await (deps.postEvidence || postEvidence)(env,item.url.split('/').at(-1),fetcher)
-      :official?await officialEvidence(env,official,item,deps,fetcher):await loadWeb(item.url,fetcher);
+      :official?await officialEvidence(env,official,item,deps,fetcher):await loadWeb(item.url,fetcher,env);
     if(!source.content?.trim()){
       if(source.media?.length || source.metadata?.references?.length){source.content='[主貼文沒有文字；附件與引用需另外取得，不可推測補齊。]';source.metadata={...source.metadata,no_text:true};}
       else throw new Error('來源沒有可取得的主文');
@@ -98,7 +98,7 @@ export async function acquireEvidence(env,item,deps={}) {
         if(!sources.some(s=>s.status==='available'&&s.url===postUrl))await saveEvidence(env,item.id,{url,relation:'external',status:'missing',metadata:{error:'額外 X 連結未列為父貼文、引用或作者續寫，尚未取得'}});
         state.external_done.push(url);continue;
       }
-      const source=await loadWeb(url,fetcher);
+      const source=await loadWeb(url,fetcher,env);
       const key=await saveEvidence(env,item.id,{...source,relation:'external'});
       await registerMedia(env,item.id,key,source.media);
     }catch(error){await saveEvidence(env,item.id,{url,relation:'external',status:'missing',metadata:{error:'直接外連文章無法取得'}});}
