@@ -5,6 +5,7 @@ import {prepareMedia,expireMedia} from './media.js';
 import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia,startFullScan} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
+import {linkedPostFor,mergeIntoLinkedArticle} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
 import {askQuestion,completeQuestion} from './questions.js';
@@ -26,7 +27,10 @@ export function createLearningService(deps={}) {
   const fetcher=deps.fetcher || fetch;
   async function enqueue(env,id){if(env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'article',id});}
   async function collect(env,value,origin='share',receipt=null,options={}) {
-    const url=await libraryUrl(env,value),id=await itemIdForUrl(env,url),time=nowIso();
+    const url=await libraryUrl(env,value),time=nowIso();
+    let id=await itemIdForUrl(env,url);
+    // 文章網址已被某則 X 貼文涵蓋（貼文唯一連到這篇）：收件記到那篇，不另建一篇、不重新生成。
+    if(new URL(url).hostname!=='x.com'&&!await item(env,id)){const linked=await linkedPostFor(env,url);if(linked)id=linked.id;}
     await query(env,`INSERT OR IGNORE INTO learning_items(id,url,kind,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`,id,url,new URL(url).hostname==='x.com'?'x':'web',options.defer?'awaiting_backfill':'queued',time,time).run();
     if((await item(env,id)).status==='dismissed'&&!['share','web'].includes(origin))return id;
     await query(env,'INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,metadata_json,created_at) VALUES(?,?,?,?,?)',receipt || crypto.randomUUID(),id,origin,JSON.stringify(options.metadata || {}),time).run();
@@ -50,6 +54,11 @@ export function createLearningService(deps={}) {
       await query(env,"UPDATE learning_items SET status='processing',stage='source',updated_at=? WHERE id=?",nowIso(),id).run();
       const acquisition=await acquireEvidence(env,row,deps);
       if(acquisition.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
+      // X 貼文唯一連到的文章已在文章庫：併進那篇，不另外整理。
+      if(row.kind==='x'){
+        const merged=await mergeIntoLinkedArticle(env,row);
+        if(merged){if(merged.rewrite)await enqueue(env,merged.id);else await flush(env).catch(()=>{});return {done:true,merged:merged.id};}
+      }
       await query(env,"UPDATE learning_items SET stage='media' WHERE id=?",id).run();
       // 本機文字路徑：Flash 只解析媒體並保存證據，寫作交給 Mac；純文字來源完全不呼叫 Flash。
       if((await textProvider(env))==='local'){
