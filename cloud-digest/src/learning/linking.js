@@ -28,7 +28,8 @@ export async function mergeIntoLinkedArticle(env,row){
   const primary=(await rows(env,"SELECT metadata_json FROM learning_evidence WHERE item_id=? AND relation='primary' AND status='available' LIMIT 1",row.id))[0];
   if(!primary)return null;
   const linked=await linkedArticleUrl(env,JSON.parse(primary.metadata_json || '{}').links || []);
-  await query(env,'UPDATE learning_items SET linked_url=? WHERE id=?',linked,row.id).run();
+  // 空字串代表已檢查過、沒有唯一外連，維護排程不再重算。
+  await query(env,'UPDATE learning_items SET linked_url=? WHERE id=?',linked || '',row.id).run();
   if(!linked)return null;
   const target=await query(env,"SELECT * FROM learning_items WHERE url=? AND id!=? AND status NOT IN ('merged','dismissed') LIMIT 1",linked,row.id).first();
   if(!target)return null;
@@ -58,4 +59,24 @@ export async function mergeIntoLinkedArticle(env,row){
   await query(env,'INSERT OR IGNORE INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,?,?,?,?)',
     await hash(`merged:${row.id}:${kept.id}`),JSON.stringify([{id:kept.id,revision:kept.revision}]),'merged',articleMessage(env,kept,'merged'),nowIso()).run();
   return {id:kept.id,rewrite:false};
+}
+
+// 一次性整理既有重複：已整理的 X 文章與它唯一外連的文章合併，保留 X 那篇（含貼文與外部全文）。
+// 只寫資料庫：不呼叫模型、不讀外部來源、不發通知；已檢查過的文章不再處理，可重複執行。
+export async function mergeExistingDuplicates(env){
+  let checked=0,merged=0;
+  for(const row of await rows(env,"SELECT * FROM learning_items WHERE kind='x' AND linked_url IS NULL AND status IN ('ready','partial') ORDER BY created_at LIMIT 100")){
+    checked++;
+    const primary=(await rows(env,"SELECT metadata_json FROM learning_evidence WHERE item_id=? AND relation='primary' AND status='available' LIMIT 1",row.id))[0];
+    const linked=primary?await linkedArticleUrl(env,JSON.parse(primary.metadata_json || '{}').links || []):null;
+    await query(env,'UPDATE learning_items SET linked_url=? WHERE id=?',linked || '',row.id).run();
+    if(!linked || !row.body)continue;
+    const target=await query(env,"SELECT id FROM learning_items WHERE url=? AND id!=? AND status NOT IN ('merged','dismissed') LIMIT 1",linked,row.id).first();
+    if(!target)continue;
+    await mergeItems(env,target.id,row.id);
+    // 併進來的收件紀錄不能讓 X 文章之後的更新被誤判為已通知。
+    await query(env,'UPDATE learning_intakes SET notify_revision=MIN(notify_revision,?) WHERE item_id=?',row.revision,row.id).run();
+    merged++;
+  }
+  return {checked,merged};
 }

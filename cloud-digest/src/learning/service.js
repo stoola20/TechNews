@@ -1,11 +1,11 @@
 import {query,rows,setting,setSetting,hash,item,evidence,saveEvidence,connection,lock,unlock,nowIso,budget,BudgetPaused,manuallyPaused} from './store.js';
 import {canonicalUrl,apiJson} from './network.js';
 import {acquireEvidence,resetIncomplete} from './evidence.js';
-import {prepareMedia,expireMedia} from './media.js';
+import {prepareMedia,expireMedia,skipDecorative} from './media.js';
 import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia,startFullScan} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
-import {linkedPostFor,mergeIntoLinkedArticle} from './linking.js';
+import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
 import {askQuestion,completeQuestion} from './questions.js';
@@ -174,7 +174,9 @@ export function createLearningService(deps={}) {
     if(tasks.includes('author_recheck'))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
       await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
     }
-    try{await migrateLibrary(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
+    try{await migrateLibrary(env);await mergeExistingDuplicates(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
+    // 舊資料裡只因外部網頁裝飾圖片而標成來源缺漏的文章，改回正確狀態。
+    for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='partial' AND gaps_json LIKE '%媒體%' LIMIT 50"))await skipDecorative(env,row.id);
     await recover(env);
     const syncState=await setting(env,'sync');
     if(syncState.running&&env.LEARNING_JOBS&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync'});

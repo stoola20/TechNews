@@ -10,6 +10,7 @@ import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
 import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
+import {mergeExistingDuplicates} from './linking.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS={ready:['ready','partial'],needs_action:['needs_attention','error','partial'],waiting_local:['waiting_local','generating'],paused:['budget_paused','paused'],processing:['queued','processing'],awaiting_backfill:['awaiting_backfill'],filtered:['filtered'],legacy:['ready','partial']};
@@ -98,7 +99,7 @@ export function createLearningHandler(deps={}) {
         return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
-      if(route==='admin/migrate'&&request.method==='POST')return json(await migrateLibrary(env));
+      if(route==='admin/migrate'&&request.method==='POST'){const library=await migrateLibrary(env),linked=await mergeExistingDuplicates(env);return json({...library,merged:library.merged+linked.merged,linked_checked:linked.checked});}
       if(route==='budget'&&request.method==='GET')return json(await budgetSummary(env,await budget(env)));
       if(route==='admin/budget-adjust'&&request.method==='POST'){
         // 與供應商帳單核對後的人工修正；可為負數，保留說明供日後查核。

@@ -83,6 +83,26 @@ test('連到多篇外部文章的整理型貼文不合併',async()=>{
   const xId=await s.handler.service.collect(s.env,'https://x.com/writer/status/203');
   await drain(s);
   const x=await item(s.env,xId);
-  assert.ok(['ready','partial'].includes(x.status));assert.equal(x.linked_url,null);
+  assert.ok(['ready','partial'].includes(x.status));assert.equal(x.linked_url,'');
   assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE status NOT IN ('merged')")).length,2);
+});
+
+test('既有重複一次合併：保留已整理的 X 文章，官方舊導讀併入；不呼叫模型、不通知、可重複執行',async()=>{
+  const s=setup(),officialId=await official(s.env);
+  const xId='d'.repeat(32);
+  await query(s.env,"INSERT INTO learning_items(id,url,kind,title,status,edition,body,article_json,revision,notified_revision,read_at,created_at,updated_at) VALUES(?,'https://x.com/i/status/300','x','X 詳細教材','ready','detailed','完整教材','{}',1,1,?,?,?)",xId,now,now,now).run();
+  await query(s.env,"INSERT INTO learning_intakes(receipt,item_id,origin,notify_revision,created_at) VALUES('share-300',?,'share',1,?)",xId,now).run();
+  await query(s.env,"INSERT INTO learning_evidence(id,item_id,url,relation,content,metadata_json,fetched_at) VALUES('x-300',?,'https://x.com/i/status/300','primary','貼文',?,?)",xId,JSON.stringify({links:[ARTICLE+'/']}),now).run();
+  const before=s.sent.length;
+  await s.handler.scheduled(s.env,{tasks:['maintenance']});
+  assert.equal((await item(s.env,officialId)).status,'merged');assert.equal(await resolveItemId(s.env,officialId),xId);
+  const kept=await item(s.env,xId);
+  assert.equal(kept.linked_url,ARTICLE);assert.equal(kept.note,'官方筆記');assert.equal(kept.body,'完整教材');
+  assert.deepEqual((await rows(s.env,'SELECT origin FROM learning_intakes WHERE item_id=? ORDER BY origin',xId)).map(r=>r.origin),['official','share']);
+  await s.handler.scheduled(s.env,{tasks:['maintenance']});
+  assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE status!='merged'")).length,1);
+  assert.equal(s.generated.length,0);assert.equal(s.sent.length,before);
+  // 合併後官方排程再抓到同一篇，也只記到保留的 X 文章。
+  await s.handler.service.official(s.env);await drain(s);
+  assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE status!='merged'")).length,1);assert.equal(s.generated.length,0);
 });
