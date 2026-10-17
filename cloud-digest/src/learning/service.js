@@ -13,6 +13,15 @@ import {queueArticleNotifications,sendPending,receiptMessage,contentFingerprint}
 import {effectiveEnvironment} from '../settings.js';
 import {getSources} from '../sources.js';
 
+// 只從官方來源收件、且還沒發過通知的新文章才做主題判斷；使用者分享或收藏過的同一篇、已發布過的舊導讀重寫都不淘汰。
+async function officialContext(env,row){
+  if(row.edition==='legacy_digest' || row.notified_revision)return null;
+  const intake=await officialIntake(env,row.id);
+  if(!intake.onlyOfficial)return null;
+  const settings=await effectiveEnvironment(env);
+  const source=getSources(settings).find(s=>s.id===intake.official.source_id);
+  return {source_id:intake.official.source_id,source_name:source?.name || intake.official.source_id,interests:settings.DIGEST_INTERESTS};
+}
 export function createLearningService(deps={}) {
   const fetcher=deps.fetcher || fetch;
   async function enqueue(env,id){if(env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'article',id});}
@@ -52,10 +61,17 @@ export function createLearningService(deps={}) {
       if(media.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
       const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
       const gaps=[...acquisition.sources.filter(s=>s.status!=='available').map(s=>({url:s.url,error:JSON.parse(s.metadata_json).error || '來源不可取得'})),...media.gaps];
-      const fingerprint=await hash(JSON.stringify({sources:sources.map(s=>({id:s.id,content:s.content,relation:s.relation,author_id:s.author_id,published_at:s.published_at,metadata_json:s.metadata_json})),media:media.media.map(m=>m.id),gaps,model:env.LEARNING_MODEL || 'gemini-3.8-flash',prompt_version:'learning-v2'}));
+      const official=await officialContext(env,row);
+      const fingerprint=await hash(JSON.stringify({sources:sources.map(s=>({id:s.id,content:s.content,relation:s.relation,author_id:s.author_id,published_at:s.published_at,metadata_json:s.metadata_json})),media:media.media.map(m=>m.id),gaps,official,model:env.LEARNING_MODEL || 'gemini-3.8-flash',prompt_version:'learning-v2'}));
       await query(env,"UPDATE learning_items SET stage='text' WHERE id=?",id).run();
       const old=row.article_json?JSON.parse(row.article_json):null;
-      const article=old?.input_fingerprint===fingerprint?old:await (deps.generate || generate)(env,sources,media.media,gaps,null,fetcher);
+      const article=old?.input_fingerprint===fingerprint?old:await (deps.generate || generate)(env,sources,media.media,gaps,null,fetcher,{official});
+      // 官方文章不符合讀者關注：保存判斷，不生成正文、不通知。
+      if(article.publish===false){
+        await query(env,"UPDATE learning_items SET status='filtered',stage=NULL,title=?,article_json=?,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=? WHERE id=?",
+          article.title || row.title,JSON.stringify({provider:'gemini',model:env.LEARNING_MODEL || 'gemini-3.8-flash',publish:false,reason:article.reason,input_fingerprint:fingerprint}),nowIso(),id).run();
+        return {done:true};
+      }
       const revision=old?.input_fingerprint===fingerprint?row.revision:row.revision+1;
       article.input_fingerprint=fingerprint;
       article.content_fingerprint=await contentFingerprint(sources,gaps,media.media.map(m=>m.id));
@@ -81,13 +97,7 @@ export function createLearningService(deps={}) {
     const evidence=media.evidence.map((m,i)=>({ref:`M${i+1}`,id:m.analysis_id,media_id:m.media_id,source_ref:refs.get(m.source_id) || null,type:m.type,duration_seconds:m.duration_seconds,expired:m.expired,
       ocr:m.ocr,speech:m.speech,visual:m.visual,unrecognized:m.unrecognized,coverage:m.coverage}));
     const observations=media.evidence.flatMap(m=>m.visual.map(v=>({source_id:m.source_id,media_id:m.media_id,timestamp:v.timestamp,description:v.observation,kind:v.kind})));
-    const intake=await officialIntake(env,row.id);
-    let official=null;
-    if(intake.onlyOfficial){
-      const settings=await effectiveEnvironment(env);
-      const source=getSources(settings).find(s=>s.id===intake.official.source_id);
-      official={source_id:intake.official.source_id,source_name:source?.name || intake.official.source_id,interests:settings.DIGEST_INTERESTS};
-    }
+    const official=await officialContext(env,row);
     const {input,fingerprint}=await articleInput(env,row,sources,gaps,{media:evidence,observations,...(official?{official}:{})});
     const old=row.article_json?JSON.parse(row.article_json):null;
     if(old?.input_fingerprint===fingerprint){

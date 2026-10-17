@@ -14,7 +14,9 @@ export function tokenCost(input,output,time=Date.now(),env={}) {
   if(!Number.isFinite(i)||!Number.isFinite(o)||i<=0||o<=0)throw new Error('模型價格設定無效');
   return Math.ceil(input*i+output*o);
 }
-export async function generate(env,sources,media,gaps,question=null,fetcher=fetch) {
+// 官方來源才需要主題判斷；主動分享與收藏不以相關性淘汰。
+const officialSchema={...articleSchema,properties:{...articleSchema.properties,publish:{type:'BOOLEAN'},reason:{type:'STRING'}},required:[...articleSchema.required,'publish','reason']};
+export async function generate(env,sources,media,gaps,question=null,fetcher=fetch,{official=null}={}) {
   if(!env.GEMINI_API_KEY)throw new Error('GEMINI_API_KEY 未設定');
   const payload=JSON.stringify({sources:sources.map(s=>({id:s.id,url:s.url,author:s.author_id,published_at:s.published_at,relation:s.relation,content:s.content,metadata:JSON.parse(s.metadata_json || '{}')})),gaps,question});
   if(new TextEncoder().encode(payload).length>1200000)throw new Error('來源超過單次處理範圍，已保留原文，未截短');
@@ -25,7 +27,7 @@ export async function generate(env,sources,media,gaps,question=null,fetcher=fetc
   try {
     result=await apiJson(await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.LEARNING_MODEL || 'gemini-3.8-flash')}:generateContent`,{
       method:'POST',headers:{'content-type':'application/json','x-goog-api-key':env.GEMINI_API_KEY},signal:AbortSignal.timeout(180000),
-      body:JSON.stringify({systemInstruction:{parts:[{text:INSTRUCTIONS}]},contents:[{role:'user',parts:[...media.flatMap(m=>[{text:`媒體來源 ID：${m.evidence_id}；媒體 ID：${m.id}（觀察的 media_id 填這個值）；${m.type==='photo'?'圖片觀察使用該 ID，timestamp 留空字串；圖片沒有時間點':'影片觀察使用該 ID，timestamp 使用 MM:SS'}。`},{fileData:{mimeType:m.mime,fileUri:JSON.parse(m.file_json).uri}}]),{text:question?'依提供來源回答問題。引用來源 ID；證據不足時 insufficient=true，明確說明缺少什麼。':'編寫完整教材並輸出導讀、使用的來源 ID、每個影片的觀察與 MM:SS 時間點。圖片觀察的 timestamp 留空字串；無媒體時 observations 為空陣列。文章不受 Telegram 字數限制。'}, {text:payload}]}],generationConfig:{maxOutputTokens:output,thinkingConfig:{thinkingLevel:'MEDIUM'},responseMimeType:'application/json',responseSchema:question?answerSchema:articleSchema}}),
+      body:JSON.stringify({systemInstruction:{parts:[{text:INSTRUCTIONS}]},contents:[{role:'user',parts:[...media.flatMap(m=>[{text:`媒體來源 ID：${m.evidence_id}；媒體 ID：${m.id}（觀察的 media_id 填這個值）；${m.type==='photo'?'圖片觀察使用該 ID，timestamp 留空字串；圖片沒有時間點':'影片觀察使用該 ID，timestamp 使用 MM:SS'}。`},{fileData:{mimeType:m.mime,fileUri:JSON.parse(m.file_json).uri}}]),{text:question?'依提供來源回答問題。引用來源 ID；證據不足時 insufficient=true，明確說明缺少什麼。':'編寫完整教材並輸出導讀、使用的來源 ID、每個影片的觀察與 MM:SS 時間點。圖片觀察的 timestamp 留空字串；無媒體時 observations 為空陣列。文章不受 Telegram 字數限制。'},...(official&&!question?[{text:`這是官方來源「${official.source_name}」的新文章。讀者關注：${official.interests}\n先判斷是否符合讀者關注，結果寫在 publish；只有商務合作、人物或政策宣傳而沒有技術或產品變更時為 false。reason 用一句話說明判斷理由。publish 為 false 時 title 仍要填，body 與 intro 可以只寫「略過」。`}]:[]), {text:payload}]}],generationConfig:{maxOutputTokens:output,thinkingConfig:{thinkingLevel:'MEDIUM'},responseMimeType:'application/json',responseSchema:question?answerSchema:official?officialSchema:articleSchema}}),
     }),4000000);
     const usage=result.usageMetadata;
     if(!usage || [usage.promptTokenCount,usage.candidatesTokenCount,usage.thoughtsTokenCount || 0].some(n=>!Number.isSafeInteger(n)||n<0))throw new Error('Gemini 未回傳可核對用量');
@@ -35,6 +37,10 @@ export async function generate(env,sources,media,gaps,question=null,fetcher=fetc
     const text=(candidate.content?.parts || []).filter(p=>p.text&&!p.thought).map(p=>p.text).join('');
     let data;
     try{data=JSON.parse(text);}catch{throw new Error('Gemini 回應不是有效的教材 JSON');}
+    if(official&&!question){
+      if(typeof data.publish!=='boolean')throw new Error('官方文章缺少主題判斷');
+      if(!data.publish)return {publish:false,reason:String(data.reason || '').slice(0,500),title:String(data.title || '').slice(0,200)};
+    }
     const ids=new Set(sources.map(s=>s.id));
     if(!Array.isArray(data.citations) || data.citations.some(id=>!ids.has(id)))throw new Error('模型引用了未提供的來源');
     if(question){if(typeof data.answer!=='string'||!data.answer.trim()||typeof data.insufficient!=='boolean'||(!data.insufficient&&!data.citations.length))throw new Error('回答缺少來源或不足判斷');}
