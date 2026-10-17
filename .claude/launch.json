@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "learning-demo",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "cloud-digest/scripts/learning-demo.mjs"
+      ],
+      "port": 8788
+    },
+    {
+      "name": "previews",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8799",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "docs/previews"
+      ],
+      "port": 8799
+    }
+  ]
+}

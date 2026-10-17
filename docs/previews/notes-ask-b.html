@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>設計稿 B・下方懸浮對話框</title>
+<style>
+:root{--bg:#f3f6f5;--paper:#fff;--ink:#183a37;--muted:#4f615e;--line:#d3e0dd;--accent:#0f766e;--soft:#e6f3ef;--focus:#b45309;--warn-bg:#fff4df;--dock:64px;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg)}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{display:flex;flex-direction:column;background:var(--bg)}
+button,textarea,input{font:inherit;color:inherit}
+button{cursor:pointer;min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+textarea,input{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 12px;line-height:1.7;min-height:44px}
+textarea{resize:vertical}
+.top{display:flex;gap:16px;align-items:center;padding:10px 20px;min-height:60px;background:var(--ink);color:#fff}
+.top b{font-size:18px;margin-right:auto}.pill{font-size:13px;padding:4px 10px;border-radius:999px;background:#2b524e}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:340px minmax(0,1fr)}
+.col{overflow:auto;min-width:0}
+#library{border-right:1px solid var(--line);background:var(--paper);padding:12px 16px}
+.list a{display:block;padding:12px;margin:0 -12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;border-radius:6px}
+.list a[aria-current]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
+.badge{display:inline-block;font-size:12px;background:var(--soft);padding:3px 8px;border-radius:5px;margin:6px 6px 0 0}
+.reader-wrap{position:relative;min-width:0;display:flex;flex-direction:column;min-height:0}
+#reader{flex:1;padding:28px clamp(16px,4vw,56px) calc(var(--dock) + 40px)}
+body.dock-open #reader{padding-bottom:calc(46vh + 40px)}
+#reader h1{font-size:28px;line-height:1.45;margin:0 0 8px}.meta{color:var(--muted);font-size:14px}
+.body-text{font-size:17px;line-height:1.9;max-width:72ch}
+section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;max-width:880px}
+.media{display:grid;gap:8px}.video{aspect-ratio:16/9;background:#c9d8d5;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
+.line{display:flex;gap:10px;align-items:baseline}.stamp{min-height:32px;padding:2px 8px;font-variant-numeric:tabular-nums}
+#dock{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;width:min(880px,calc(100% - 32px));background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 28px rgba(24,58,55,.18);display:flex;flex-direction:column;max-height:var(--dock);transition:max-height .2s ease;overflow:hidden;z-index:4}
+body.dock-open #dock{max-height:46vh}
+.dock-bar{display:flex;align-items:center;gap:8px;padding:10px 10px 10px 14px;min-height:var(--dock)}
+.tabs{display:flex;gap:4px}
+.tabs button{border:0;border-radius:999px;background:none;font-weight:600;color:var(--muted);padding:6px 14px}
+.tabs button[aria-selected=true]{background:var(--soft);color:var(--ink)}
+.quick{flex:1;display:flex;gap:8px;min-width:0}
+body.dock-open .quick{display:none}
+.icon{width:44px;padding:0;display:inline-grid;place-items:center;margin-left:auto}.icon svg{width:20px;height:20px;transition:transform .2s ease}
+body.dock-open .icon svg{transform:rotate(180deg)}
+.dock-body{flex:1;min-height:0;overflow:auto;padding:0 16px 16px;display:none;flex-direction:column;gap:10px}
+body.dock-open .dock-body{display:flex}
+.tabpanel[hidden]{display:none}.tabpanel{display:flex;flex-direction:column;gap:10px}
+.state{font-size:13px;color:var(--muted)}
+.qa{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;line-height:1.7}
+.qa q{display:block;font-weight:600;quotes:none;margin-bottom:4px}
+.caption{background:var(--warn-bg);border-bottom:1px solid var(--line);padding:6px 20px;font-size:13px}
+@media(max-width:959px){
+  body{display:block;height:auto}.layout{display:block}#library{display:none}
+  #reader{padding:16px 16px calc(var(--dock) + 32px)}#reader h1{font-size:23px}.body-text{font-size:16px}
+  body.dock-open #reader{padding-bottom:calc(var(--dock) + 32px)}
+  #dock{position:fixed;left:0;right:0;bottom:0;transform:none;width:auto;border-radius:16px 16px 0 0;border-bottom:0}
+  body.dock-open #dock{max-height:78vh}
+  .quick input{display:none}.quick{flex:0}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head><body>
+<header class="top"><b>TechNews 文章庫</b><span class="pill">Gemini 模式</span></header>
+<div class="caption">設計稿 B：閱讀區下方懸浮、可收合的筆記／追問對話框（合成資料）</div>
+<main class="layout">
+  <aside id="library" class="col" aria-label="文章列表">
+    <h2 style="font-size:15px;margin:4px 0 8px">文章列表</h2>
+    <ul class="list" style="list-style:none;padding:0;margin:0">
+      <li><a href="#" aria-current="page"><strong>示範：瀏覽器擴充功能如何讀取分頁內容</strong><br><span class="badge">已完成</span><span class="badge">Telegram 分享</span></a></li>
+      <li><a href="#"><strong>示範：大型團隊的程式碼審查流程</strong><br><span class="badge">已完成</span><span class="badge">官方來源</span></a></li>
+      <li><a href="#"><strong>示範：開源模型在 agent 工作流的表現</strong><br><span class="badge">已完成・來源缺漏</span><span class="badge">X 書籤</span></a></li>
+    </ul>
+  </aside>
+  <div class="reader-wrap">
+    <article id="reader" class="col" tabindex="-1">
+      <h1>示範：瀏覽器擴充功能如何讀取分頁內容</h1>
+      <p class="meta">已完成・收件：Telegram 分享・Gemini 3.8 Flash 整理</p>
+      <div class="body-text"><p>這是合成的教材段落，用來呈現閱讀欄寬度。擴充功能取得使用者授權後，可以讀取已開啟分頁的文字內容，再交給模型比較與彙整。</p><p>第二段說明權限範圍與限制：只讀取使用者明確指定的分頁，不會在背景持續擷取。這一段刻意寫長一些，讓你判斷對話框展開時遮住多少正文，以及收合時是否干擾閱讀。</p><p>第三段示範程式碼與操作步驟的位置。收合時可以直接在下方輸入追問，展開後看完整筆記與提問紀錄。</p></div>
+      <section class="block"><h2 style="font-size:19px">媒體與時間點</h2>
+        <div class="media"><div class="video">影片 1</div>
+          <div class="line"><button class="stamp">00:01</button><span>標題畫面說明這個功能的用途。</span></div>
+          <div class="line"><button class="stamp">00:14</button><span>狀態列顯示正在讀取已開啟的分頁。</span></div></div></section>
+      <section class="block"><h2 style="font-size:19px">原始來源與片段</h2><p class="meta">保存的原文放在最下方。</p></section>
+    </article>
+    <section id="dock" aria-label="筆記與追問">
+      <div class="dock-bar">
+        <div class="tabs" role="tablist"><button role="tab" aria-selected="false" aria-controls="tab-note" id="t-note">筆記</button><button role="tab" aria-selected="true" aria-controls="tab-ask" id="t-ask">追問</button></div>
+        <form class="quick" onsubmit="event.preventDefault();open_(true)"><label class="sr" for="quick" style="position:absolute;left:-9999px">快速追問</label><input id="quick" placeholder="直接問這篇的來源…"></form>
+        <button class="icon" id="toggle" aria-expanded="false" aria-controls="dock-body" aria-label="展開筆記與追問"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 15l6-6 6 6"/></svg></button>
+      </div>
+      <div class="dock-body" id="dock-body">
+        <div class="tabpanel" id="tab-note" role="tabpanel" aria-labelledby="t-note" hidden><textarea rows="8" aria-label="筆記內容">權限只限使用者指定的分頁。
+待查：企業管理的政策設定。</textarea><div class="state">已保存 23:41</div></div>
+        <div class="tabpanel" id="tab-ask" role="tabpanel" aria-labelledby="t-ask">
+          <div class="qa"><q>需要哪些權限才會讀到分頁？</q>來源提到需要使用者授權並指定分頁（S1）。</div>
+          <label for="qa">你的問題</label><textarea id="qa" rows="3" placeholder="例如：這個設定需要哪個版本？"></textarea><button class="primary">依來源回答</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+const b=document.body,t=document.getElementById('toggle');
+function open_(on){b.classList.toggle('dock-open',on);t.setAttribute('aria-expanded',String(on));t.setAttribute('aria-label',(on?'收合':'展開')+'筆記與追問');if(on){const q=document.getElementById('quick').value;if(q)document.getElementById('qa').value=q;}}
+t.onclick=()=>open_(!b.classList.contains('dock-open'));
+for(const x of document.querySelectorAll('[role=tab]'))x.onclick=()=>{for(const o of document.querySelectorAll('[role=tab]')){const on=o===x;o.setAttribute('aria-selected',String(on));document.getElementById(o.getAttribute('aria-controls')).hidden=!on;}open_(true);};
+// 截圖用：#open 展開對話框，#note 切到筆記。
+if(location.hash.includes('note'))document.getElementById('t-note').click();
+if(location.hash.includes('open'))open_(true);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&b.classList.contains('dock-open')){open_(false);t.focus();}});
+</script></body></html>
