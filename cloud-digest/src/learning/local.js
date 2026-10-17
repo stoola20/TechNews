@@ -1,4 +1,4 @@
-import {query,rows,item,hash,nowIso,setting,setSetting,manuallyPaused} from './store.js';
+import {query,rows,item,hash,nowIso,setting,setSetting,manuallyPaused,saveEvidence} from './store.js';
 import {ARTICLE_PROMPT_VERSION,validateArticle} from './local-prompt.js';
 import {saveVersion} from './library.js';
 import {normalizeMarkdown} from './markdown.js';
@@ -39,9 +39,9 @@ export async function articleInput(env,row,sources,gaps,extra={}){
 
 // 同一輸入版本只保留一份工作；輸入改變時，舊工作標為 superseded，舊回報不能覆寫新文章。
 // 呼叫端只在目前文章不是這個輸入版本時才建立工作，因此已完成的同版本工作會重新排隊。
-export async function ensureJob(env,{kind,itemId=null,questionId=null,priority,input,fingerprint}){
+export async function ensureJob(env,{kind,itemId=null,questionId=null,priority,input,fingerprint,supersede=true}){
   const id=(await hash(`${kind}:${itemId || questionId}:${fingerprint}`)).slice(0,32),time=nowIso();
-  await query(env,`UPDATE learning_jobs SET status='superseded',attempt_token=NULL,lease_until=NULL,updated_at=? WHERE ${itemId?'item_id':'question_id'}=? AND kind=? AND id!=? AND status IN ('waiting_local','leased')`,time,itemId || questionId,kind,id).run();
+  if(supersede)await query(env,`UPDATE learning_jobs SET status='superseded',attempt_token=NULL,lease_until=NULL,updated_at=? WHERE ${itemId?'item_id':'question_id'}=? AND kind=? AND id!=? AND status IN ('waiting_local','leased')`,time,itemId || questionId,kind,id).run();
   await query(env,`INSERT INTO learning_jobs(id,kind,item_id,question_id,status,priority,input_version,input_json,created_at,updated_at) VALUES(?,?,?,?,'waiting_local',?,?,?,?,?)
     ON CONFLICT(id) DO UPDATE SET status=CASE WHEN learning_jobs.status IN ('failed','superseded','done') THEN 'waiting_local' ELSE learning_jobs.status END,
       attempt_token=CASE WHEN learning_jobs.status IN ('failed','superseded','done') THEN NULL ELSE learning_jobs.attempt_token END,
@@ -70,14 +70,17 @@ export async function queueOrder(env,now=nowIso()){
 }
 
 // 全域單工：仍有有效 lease 時不發出第二份工作。
-export async function claim(env,runnerId,info={}){
+// 舊版執行器不回報能力，只能處理文字工作；X 長文代抓需要執行器明確支援。
+export const DEFAULT_KINDS=['article','question'];
+export async function claim(env,runnerId,info={},kinds=DEFAULT_KINDS){
+  const supported=new Set(Array.isArray(kinds)?kinds:DEFAULT_KINDS);
   await touchRunner(env,runnerId,info);
   if(await manuallyPaused(env))return null;
   const now=nowIso();
-  const held=await query(env,"SELECT id,status,attempt_token,priority,created_at,runner_id FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",now).first();
+  const held=await query(env,"SELECT id,kind,status,attempt_token,priority,created_at,runner_id FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",now).first();
   // 同一執行器重新啟動後，原本的領取已不在記憶體中：改發新 attempt token，舊 token 的回報會被拒絕。
   if(held && held.runner_id!==runnerId)return null;
-  for(const candidate of held?[held]:(await queueOrder(env,now)).slice(0,20)){
+  for(const candidate of held?[held]:(await queueOrder(env,now)).filter(c=>supported.has(c.kind)).slice(0,20)){
     const token=crypto.randomUUID(),lease=new Date(Date.now()+LEASE_MS).toISOString();
     const expired=candidate.status==='leased';
     const result=await query(env,`UPDATE learning_jobs SET status='leased',attempt_token=?,runner_id=?,lease_until=?,leased_at=?,updated_at=?,lease_expirations=lease_expirations+?
@@ -115,8 +118,9 @@ export async function fail(env,jobId,token,error,retryable=true){
   const attempts=job.attempts+1,final=!retryable || attempts>=MAX_MODEL_ATTEMPTS,message=String(error || '本機模型處理失敗').slice(0,500),time=nowIso();
   await env.DB.batch([
     query(env,`UPDATE learning_jobs SET status=?,attempts=?,last_error=?,attempt_token=NULL,lease_until=NULL,updated_at=? WHERE id=? AND attempt_token=?`,final?'failed':'waiting_local',attempts,message,time,jobId,token),
-    ...(job.item_id?[query(env,'UPDATE learning_items SET status=?,last_error=?,updated_at=? WHERE id=? AND status IN (\'waiting_local\',\'generating\')',final?'needs_attention':'waiting_local',message,time,job.item_id)]:[]),
+    ...(job.item_id&&job.kind!==FETCH_X_ARTICLE?[query(env,'UPDATE learning_items SET status=?,last_error=?,updated_at=? WHERE id=? AND status IN (\'waiting_local\',\'generating\')',final?'needs_attention':'waiting_local',message,time,job.item_id)]:[]),
     ...(job.question_id?[query(env,"UPDATE learning_questions SET status=?,error=?,updated_at=? WHERE id=? AND status IN ('waiting_local','generating')",final?'failed':'waiting_local',message,time,job.question_id)]:[]),
+    ...(job.kind===FETCH_X_ARTICLE&&final?[query(env,"UPDATE learning_evidence SET metadata_json=? WHERE item_id=? AND url=? AND status='missing'",JSON.stringify({error:'Mac 代抓 X 長文失敗：'+message.slice(0,200)+'；可手動貼上原文'}),job.item_id,JSON.parse(job.input_json).url)]:[]),
   ]);
   return {ok:true,final,attempts};
 }
@@ -141,6 +145,7 @@ export async function complete(env,data,hooks={}){
     else throw new JobConflict('工作已由其他領取完成','lease_lost');
   if(job.status!=='leased' || job.attempt_token!==data.attempt_token)throw new JobConflict('這次領取已失效，結果不會寫入','lease_lost');
   if(job.input_version!==data.input_version)throw new JobConflict('回報的輸入版本已過期','stale_input');
+  if(job.kind===FETCH_X_ARTICLE)return completeFetch(env,job,JSON.parse(job.input_json),data,hooks);
   const model=data.model || {};
   if(model.done_reason!=='stop'){await fail(env,job.id,job.attempt_token,'本機模型輸出未正常結束（可能超過輸出上限）');throw new JobConflict('模型輸出未完成，不能標為完成','incomplete');}
   const input=JSON.parse(job.input_json);
@@ -175,6 +180,28 @@ async function completeArticle(env,job,input,data,hooks){
   if(!result[1].meta.changes)return {ok:true,replay:true};
   if(hooks.articleCompleted)await hooks.articleCompleted(env,row.id);
   return {ok:true,revision:row.revision+1};
+}
+
+// X 長文需要登入才看得到：雲端不保存登入狀態，由 Mac 執行器用本機已登入的瀏覽器代抓正文。
+export const FETCH_X_ARTICLE='fetch_x_article';
+export function xArticleUrl(value){
+  try{const u=new URL(value),m=u.pathname.match(/^\/(?:i|[A-Za-z0-9_]{1,15})\/article\/(\d+)\/?$/);
+    return /^(www\.|mobile\.)?(x|twitter)\.com$/.test(u.hostname)&&m?`https://x.com/i/article/${m[1]}`:null;}catch{return null;}
+}
+export async function queueXArticle(env,itemId,url){
+  await ensureJob(env,{kind:FETCH_X_ARTICLE,itemId,priority:await itemPriority(env,itemId),input:{url},fingerprint:url,supersede:false});
+}
+async function completeFetch(env,job,input,data,hooks){
+  const output=data.output || {},content=typeof output.content==='string'?output.content.trim():'',title=typeof output.title==='string'?output.title.trim().slice(0,200):'';
+  if(content.length<200 || content.length>500000){await fail(env,job.id,job.attempt_token,'代抓的頁面沒有可用的長文正文');throw new JobConflict('代抓內容不完整','invalid_output');}
+  const time=nowIso();
+  const done=await query(env,"UPDATE learning_jobs SET status='done',result_json=?,completed_at=?,updated_at=?,lease_until=NULL,last_error=NULL WHERE id=? AND status='leased' AND attempt_token=?",JSON.stringify({chars:content.length}),time,time,job.id,job.attempt_token).run();
+  if(!done.meta.changes)return {ok:true,replay:true};
+  await saveEvidence(env,job.item_id,{url:input.url,relation:'external',content,metadata:{title,content_method:'mac_browser'}});
+  // 取得新來源後重新整理同一篇；正在處理或等待回補的文章不打斷。
+  const changed=await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL,updated_at=? WHERE id=? AND status IN ('ready','partial','needs_attention','error')",time,job.item_id).run();
+  if(changed.meta.changes&&hooks.sourceFetched)await hooks.sourceFetched(env,job.item_id);
+  return {ok:true,fetched:true};
 }
 
 function sanitizeMetrics(metrics={}){

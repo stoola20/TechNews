@@ -3,6 +3,7 @@ import {webEvidence,canonicalUrl} from './network.js';
 import {postEvidence,xRead,postParameters,normalizePost,registerMedia} from './x.js';
 import {loadArticle,getSources} from '../sources.js';
 import {effectiveEnvironment} from '../settings.js';
+import {xArticleUrl,queueXArticle} from './local.js';
 
 // 官方來源沿用既有官方擷取（含 Markdown 與瀏覽器備援），第一版只取全文文字，不抓媒體。
 async function officialSourceFor(env,item){
@@ -92,7 +93,15 @@ export async function acquireEvidence(env,item,deps={}) {
   for(const url of links.filter(u=>!state.external_done.includes(u))){
     if(steps++>=8)return {pending:true,sources:await evidence(env,item.id)};
     try {
-      const host=new URL(url).hostname;
+      const host=new URL(url).hostname,article=xArticleUrl(url);
+      if(article){
+        // X 長文未登入讀不到：保留缺漏並排入 Mac 代抓；已有可用原文（含手動貼上）時不再排。
+        if(!sources.some(s=>s.url===article&&s.status==='available')){
+          await saveEvidence(env,item.id,{url:article,relation:'external',status:'missing',metadata:{error:'X 長文需要登入才能讀取，已排入 Mac 代抓；也可以手動貼上原文'}});
+          await queueXArticle(env,item.id,article);
+        }
+        state.external_done.push(url);await setSetting(env,`context:${item.id}`,state);continue;
+      }
       if(/(^|\.)(x\.com|twitter\.com)$/.test(host)){
         const postUrl=canonicalUrl(url);
         if(!sources.some(s=>s.status==='available'&&s.url===postUrl))await saveEvidence(env,item.id,{url,relation:'external',status:'missing',metadata:{error:'額外 X 連結未列為父貼文、引用或作者續寫，尚未取得'}});

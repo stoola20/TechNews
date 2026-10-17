@@ -2,7 +2,7 @@ import {writeFile,mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {articleMessages,questionMessages,parseArticle,parseAnswer,estimateTokens} from '../src/learning/local-prompt.js';
 
-export const RUNNER_VERSION='1.0.0';
+export const RUNNER_VERSION='1.1.0';
 
 export class RunnerError extends Error{
   constructor(message,{retryable=true,local=false}={}){super(message);this.name='RunnerError';this.retryable=retryable;this.local=local;}
@@ -15,6 +15,7 @@ export function loadConfig(env=process.env){
     numCtx:Number(env.OLLAMA_NUM_CTX || 32768),numPredict:Number(env.OLLAMA_NUM_PREDICT || 8192),
     keepAlive:env.OLLAMA_KEEP_ALIVE || '30m',temperature:Number(env.OLLAMA_TEMPERATURE || 0.3),
     pollMs:Number(env.RUNNER_POLL_SECONDS || 20)*1000,debugDir:env.RUNNER_DEBUG_DIR || '',heartbeatMs:Number(env.RUNNER_HEARTBEAT_SECONDS || 30)*1000,
+    xProfileDir:env.RUNNER_X_PROFILE_DIR || '',
   };
   const base=new URL(config.baseUrl || 'invalid:');
   // 雲端連線需 HTTPS；只有本機開發時允許 http://localhost。
@@ -112,12 +113,14 @@ async function debugDump(config,job,content,reason){
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 // 領取並處理至多一份工作；回傳處理結果供 CLI 記錄。
-export async function runOnce(config,{serverFetch=fetch,ollamaFetch=fetch,log=()=>{},info=null}={}){
+// xFetch：可處理 X 長文代抓時傳入代抓函式；Ollama 停止時仍可代抓，不需要模型。
+export async function runOnce(config,{serverFetch=fetch,ollamaFetch=fetch,log=()=>{},info=null,xFetch=null}={}){
   const call=serverClient(config,serverFetch);
   const status=info || {...await ollamaInfo(config,ollamaFetch),version:RUNNER_VERSION};
-  if(!status.ollama){await call('heartbeat',{info:{...status,state:'ollama_unavailable'}});return {state:'ollama_unavailable'};}
-  const {job}=await call('claim',{info:{...status,state:'idle'}});
-  if(!job)return {state:'idle'};
+  const kinds=[...(status.ollama?['article','question']:[]),...(xFetch?['fetch_x_article']:[])];
+  if(!kinds.length){await call('heartbeat',{info:{...status,state:'ollama_unavailable'}});return {state:'ollama_unavailable'};}
+  const {job}=await call('claim',{info:{...status,state:'idle'},kinds});
+  if(!job)return {state:status.ollama?'idle':'ollama_unavailable'};
   log({event:'job_claimed',job:job.id,kind:job.kind});
   const controller=new AbortController();
   let lost=false;
@@ -126,7 +129,8 @@ export async function runOnce(config,{serverFetch=fetch,ollamaFetch=fetch,log=()
     catch(error){if([404,409].includes(error.status)){lost=true;controller.abort();}}
   },config.heartbeatMs);
   try{
-    const result=await generate(config,{...job,modelDigest:status.model_digest},{signal:controller.signal,fetcher:ollamaFetch});
+    const result=job.kind==='fetch_x_article'?{output:await xFetch(config,job.input.url),model:{name:'browser'},metrics:{}}
+      :await generate(config,{...job,modelDigest:status.model_digest},{signal:controller.signal,fetcher:ollamaFetch});
     if(!result.output){
       await call('fail',{job_id:job.id,attempt_token:job.attempt_token,error:`本機模型輸出未完成（${result.model.done_reason || 'unknown'}），可能超過輸出上限`});
       return {state:'failed',job:job.id};

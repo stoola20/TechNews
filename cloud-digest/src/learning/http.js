@@ -66,12 +66,12 @@ export function createLearningHandler(deps={}) {
         if(!env.LEARNING_RUNNER_TOKEN || !equalSecret(request.headers.get('authorization')?.replace(/^Bearer\s+/i,''),env.LEARNING_RUNNER_TOKEN))return json({error:'Not found'},404);
         const data=await body(request),action=path.slice('/learning/runner/'.length);
         try{
-          if(action==='claim')return json({job:await claim(env,data.runner_id,data.info)});
+          if(action==='claim')return json({job:await claim(env,data.runner_id,data.info,data.kinds)});
           if(action==='heartbeat')return json(await heartbeat(env,data.runner_id,data.info,data.job_id,data.attempt_token));
           if(action==='fail')return json(await fail(env,data.job_id,data.attempt_token,data.error,data.retryable!==false));
           if(action==='release')return json(await release(env,data.job_id,data.attempt_token,data.error));
           if(action==='complete'){
-            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},...service.localHooks});
+            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},sourceFetched:(env,id)=>service.enqueue(env,id),...service.localHooks});
             return json(result);
           }
         }catch(error){
