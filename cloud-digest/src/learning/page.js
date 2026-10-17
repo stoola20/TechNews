@@ -28,6 +28,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 .source .text{white-space:pre-wrap;line-height:1.75;max-height:420px;overflow:auto;font-size:15px;margin-top:8px}
 .analysis{border-left:3px solid var(--line);padding-left:14px;margin:12px 0 20px}.stamp{min-height:32px;padding:2px 8px;font-variant-numeric:tabular-nums;margin-right:6px}mark{background:#fde68a;color:inherit;outline:none}#answer-sources li{margin:8px 0}
 #media img,#media video{max-width:100%;max-height:440px;display:block;margin:12px 0 8px;border-radius:6px}
+.gap{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0}.gap button{min-height:36px;padding:4px 12px}
 .media-item{margin:0 0 28px}.obs{display:flex;gap:8px;align-items:baseline;margin:6px 0;line-height:1.7}.obs .stamp{flex:none;margin:0}
 #ask-scope{display:flex;gap:16px;flex-wrap:wrap}#ask-scope label{display:flex;align-items:center;gap:8px;min-height:44px}#ask-scope input{min-height:auto;width:18px;height:18px}
 #answer{margin-top:16px}#history details{border-bottom:1px solid var(--line);padding:4px 0}#history summary{min-height:44px;cursor:pointer;padding:10px 0}
@@ -138,7 +139,7 @@ function renderArticle(result){
   if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
   if(item.status==='waiting_local')nodes.push(el('p',{class:'notice',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
   if(item.status==='budget_paused')nodes.push(el('p',{class:'notice',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
-  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>el('div',{text:'・'+(g.error||'來源缺漏')+(g.url?'（'+g.url+'）':'')})),item.last_error?el('div',{text:'・'+item.last_error}):null]));
+  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]));
   nodes.push(actions(item));
   if(item.status==='awaiting_backfill'){
     nodes.push(el('p',{class:'notice',text:'這篇尚未呼叫模型。先閱讀同步時保存的原文，或開啟原始來源查看最新內容，再決定是否整理。'}));
@@ -152,11 +153,21 @@ function renderArticle(result){
   if(item.status!=='awaiting_backfill'&&result.sources.length)nodes.push(el('section',{class:'block'},[el('h2',{text:'原始來源與片段'}),el('p',{class:'muted',text:'以下是系統保存的原文，與上方模型整理的內容分開。'}),...result.sources.map(sourceBlock)]));
   box.replaceChildren(...nodes);
 }
+// 自動取不到的文章來源，可以手動貼上原文後重新整理。
+function gapLine(item,g,sources){
+  const line=el('div',{class:'gap'},[document.createTextNode('・'+(g.error||'來源缺漏')+(g.url?'（'+g.url+'）':''))]);
+  if(!g.url||!sources.some(s=>s.status==='missing'&&s.url===g.url&&['primary','external'].includes(s.relation)))return line;
+  const paste=el('button',{type:'button',text:'貼上原文'});
+  paste.onclick=async()=>{const text=await askText('貼上這個來源的原文','把原文完整貼上，保存後會用 '+textModelName()+' 重新整理。之後的自動補取不會覆蓋你貼上的內容。');if(!text)return;
+    run(async()=>{await api('items/'+item.id+'/source','POST',{url:g.url,content:text});message('已保存原文並排入整理。');await refreshArticle();await updateListItem(item.id);},paste,'保存中…');};
+  line.append(paste);return line;
+}
 function sourceBlock(s){
   const d=el('details',{class:'source','data-evidence':s.id},[el('summary',{},[el('strong',{text:RELATIONS[s.relation]||s.relation}),document.createTextNode((s.published_at?'・'+when(s.published_at):'')+(s.status!=='available'?'・無法取得':''))])]);
   d.append(el('p',{},[safeLink(s.url,'開啟這則原文')]));
   if(s.content)d.append(el('div',{class:'text',text:s.content}));
   else{const m=JSON.parse(s.metadata_json||'{}');d.append(el('p',{class:'muted',text:m.error||'沒有保存內容'}));}
+  if(JSON.parse(s.metadata_json||'{}').provided_by==='user')d.querySelector('summary').append(document.createTextNode('・你貼上的原文'));
   return d;
 }
 function seekButton(stamp,player){const b=el('button',{type:'button',class:'stamp',text:stamp});if(!player){b.disabled=true;b.title='原始媒體已不可播放，保留解析與原始連結';return b;}b.setAttribute('aria-label','跳到 '+stamp);b.onclick=()=>{const p=stamp.split(':').map(Number);player.currentTime=p[0]*60+p[1];player.focus();player.play().catch(()=>{});};return b;}
@@ -234,7 +245,7 @@ async function poll(){
   }catch(e){}
 }
 let textModel=null;
-function textModelName(){return !textModel?'目前設定的文字模型':textModel.provider==='local'?'本機 '+textModel.model:'Gemini '+textModel.model;}
+function textModelName(){return !textModel?'目前設定的文字模型':textModel.provider==='local'?'本機 '+textModel.model:/gemini/i.test(textModel.model)?textModel.model:'Gemini '+textModel.model;}
 async function runnerStatus(){
   try{const s=await api('status'),l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};
     const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');

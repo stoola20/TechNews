@@ -35,6 +35,7 @@ label{font-size:14px;font-weight:600}
 .article-body blockquote{border-left:3px solid var(--line);margin-left:0;padding-left:14px;color:var(--muted)}
 #login{max-width:460px;margin:64px auto}
 dialog.confirm{border:1px solid var(--line);border-radius:12px;padding:20px;max-width:min(440px,calc(100vw - 32px));background:var(--paper);color:var(--ink)}dialog.confirm::backdrop{background:rgba(24,58,55,.45)}
+dialog.confirm.wide{max-width:min(720px,calc(100vw - 32px));width:100%}dialog.confirm textarea{margin-bottom:16px}
 dialog.confirm p{margin:0 0 16px;line-height:1.7;white-space:pre-wrap}dialog.confirm .actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin:0}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.spinner{animation:none}}
 `;
@@ -66,6 +67,21 @@ function askConfirm(text,confirmLabel,danger){
     box.addEventListener('cancel',e=>{e.preventDefault();finish(false);});
     box.addEventListener('close',()=>finish(false));
     document.body.append(box);box.showModal();cancel.focus();
+  });
+}
+// 頁內輸入對話框：回傳輸入內容，取消時回傳 null。
+function askText(title,hint,confirmLabel){
+  return new Promise(resolve=>{
+    const opener=document.activeElement,box=el('dialog',{class:'confirm wide','aria-labelledby':'ask-text-title'});
+    const area=el('textarea',{id:'ask-text-input',rows:'12'}),ok=el('button',{type:'button',class:'primary',text:confirmLabel||'保存'}),cancel=el('button',{type:'button',text:'取消'});
+    box.append(el('p',{id:'ask-text-title',text:title}),el('p',{class:'muted',text:hint}),el('label',{class:'sr',for:'ask-text-input',text:title}),area,el('div',{class:'actions'},[cancel,ok]));
+    let done=false;
+    const finish=value=>{if(done)return;done=true;if(box.open)box.close();box.remove();if(opener&&opener.focus)opener.focus({preventScroll:true});resolve(value);};
+    ok.onclick=()=>finish(area.value.trim()||null);cancel.onclick=()=>finish(null);
+    box.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();e.preventDefault();finish(null);}});
+    box.addEventListener('cancel',e=>{e.preventDefault();finish(null);});
+    box.addEventListener('close',()=>finish(null));
+    document.body.append(box);box.showModal();area.focus();
   });
 }
 const when=t=>t?new Date(t).toLocaleString('zh-TW',{hour12:false}):'—';

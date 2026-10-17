@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Script} from 'node:vm';
 import {createLearningHandler} from '../src/learning/http.js';
 import {setTextProvider} from '../src/learning/local.js';
-import {query,rows,item} from '../src/learning/store.js';
+import {query,rows,item,saveEvidence} from '../src/learning/store.js';
 import {LEARNING_PAGE} from '../src/learning/page.js';
 import {ADMIN_PAGE} from '../src/learning/admin-page.js';
 import {environment,recorder,request} from './helpers.js';
@@ -80,4 +80,23 @@ test('外部網頁的裝飾圖片不顯示，對應缺漏一併隱藏；X 貼文
   await query(env,"UPDATE learning_items SET gaps_json=?,status='partial' WHERE id=?",JSON.stringify([{id:'logo2',url:'https://cdn.example.org/brand/logo2.svg',error:'媒體格式不支援'}]),id).run();
   await query(env,"INSERT INTO learning_media(id,item_id,evidence_id,url,type,status,updated_at) VALUES('logo2',?,'page','https://cdn.example.org/brand/logo2.svg','photo','needs_attention',?)",id,now).run();
   assert.equal((await (await handler.fetch(request('api/items/'+id),env)).json()).item.status,'ready');
+});
+
+test('手動貼上原文：只接受缺漏網址，保存為使用者來源並重新排入整理，之後自動補取不覆蓋',async()=>{
+  const env=environment(),handler=createLearningHandler(recorder()),id='8'.repeat(32),article='https://example.org/long-article';
+  await query(env,"INSERT INTO learning_items(id,url,kind,title,status,body,article_json,gaps_json,revision,created_at,updated_at) VALUES(?,?,'x','文章','partial','正文','{}',?,1,?,?)",id,'https://x.com/i/status/8',JSON.stringify([{url:article,error:'直接外連文章無法取得'}]),now,now).run();
+  await saveEvidence(env,id,{url:article,relation:'external',status:'missing',metadata:{error:'直接外連文章無法取得'}});
+  const paste=(url,content)=>handler.fetch(request('api/items/'+id+'/source','POST',{url,content}),env);
+  assert.equal((await paste('https://example.org/other','長度足夠的原文內容。'.repeat(5))).status,409);
+  assert.equal((await paste(article,'太短')).status,400);
+  const long='使用者貼上的長文原文。'.repeat(3000);
+  assert.equal((await paste(article,long)).status,202);
+  const saved=(await rows(env,"SELECT * FROM learning_evidence WHERE item_id=? AND url=?",id,article))[0];
+  assert.equal(saved.status,'available');assert.equal(saved.content,long);assert.equal(JSON.parse(saved.metadata_json).provided_by,'user');
+  assert.equal((await item(env,id)).status,'queued');
+  // 補取缺漏再次失敗或取得較短內容，都不能覆蓋使用者貼上的原文。
+  await saveEvidence(env,id,{url:article,relation:'external',status:'missing',metadata:{error:'直接外連文章無法取得'}});
+  await saveEvidence(env,id,{url:article,relation:'external',content:'自動取得的片段',metadata:{}});
+  assert.equal((await rows(env,"SELECT content FROM learning_evidence WHERE item_id=? AND url=?",id,article))[0].content,long);
+  assert.equal((await paste(article,long)).status,409);
 });

@@ -31,7 +31,7 @@ for(const key of Object.keys(samples)){const id=await handler.service.collect(en
 const time=new Date().toISOString();
 DB.prepare("INSERT INTO articles(source_url,source,title,published_at,status,summary_json,content,content_method,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind('https://developers.openai.com/blog/demo-legacy','openai_developer_blog','Legacy demo','2026-10-01','notified',JSON.stringify({title_zh:'舊官方短導讀示範',body_zh:'這是搬移前只有短導讀的官方文章，沒有保存模型資訊。'}),'官方原文示範內容。'.repeat(20),'article_html',time,time).run();
 await handler.service.migrate(env);
-const states=[['waiting','等待本機處理的示範','waiting_local','[]',null],['attention','需要處理的示範','needs_attention','[]','本機模型輸出三次都未通過格式檢查'],['partial','來源有缺漏的示範','partial','[{"url":"https://x.com/i/status/1","error":"父貼文無法取得"}]',null]];
+const states=[['waiting','等待本機處理的示範','waiting_local','[]',null],['attention','需要處理的示範','needs_attention','[]','本機模型輸出三次都未通過格式檢查'],['partial','來源有缺漏的示範','partial','[{"url":"https://x.com/i/status/1","error":"父貼文無法取得"},{"url":"https://example.org/linked-article","error":"直接外連文章無法取得"}]',null]];
 for(const [key,title,status,gaps,error] of states){
   const id=await handler.service.collect(env,'https://example.org/state-'+key);
   await DB.prepare("UPDATE learning_items SET title=?,status=?,gaps_json=?,last_error=?,body=?,article_json=? WHERE id=?").bind(title,status,gaps,error,status==='partial'?'## 已整理的部分\n\n父貼文缺漏，以下只根據主貼文整理。':null,status==='partial'?JSON.stringify({provider:'demo',model:'demo',intro:'示範',observations:[]}):null,id).run();
@@ -45,11 +45,14 @@ for(const [key,title,status,gaps,error] of states){
   const observations=[['demo-v1','00:01','標題畫面說明這個功能的用途。'],['demo-v1','00:14','狀態列顯示正在讀取已開啟的分頁。'],['demo-v2','00:03','第二支影片示範在分頁中直接提問。']].map(([mid,timestamp,description])=>({source_id:media.find(m=>m[0]===mid)[1],media_id:mid,timestamp,description}));
   await DB.prepare("UPDATE learning_items SET title=?,status='partial',body=?,article_json=?,gaps_json=? WHERE id=?").bind('兩支影片與逐段說明的示範','## 教材\n\n影片的逐段說明會緊接在各自影片下方。',JSON.stringify({provider:'demo',model:'demo',intro:'示範',observations}),JSON.stringify([{id:'demo-logo',url:'https://cdn.example.org/brand/logo.svg',error:'媒體格式不支援'}]),id).run();
 }
+// 外連文章取不到時，可在文章頁手動貼上原文。
+{const partial=await DB.prepare("SELECT id FROM learning_items WHERE url='https://example.org/state-partial'").first();
+  await DB.prepare("INSERT INTO learning_evidence(id,item_id,url,relation,content,metadata_json,status,fetched_at) VALUES('demo-missing',?,'https://example.org/linked-article','external','',?,'missing',?)").bind(partial.id,JSON.stringify({error:'直接外連文章無法取得'}),time).run();}
 jobs.length=0;
 for(const suffix of ['keep','remove'])await handler.service.collect(env,'https://example.org/awaiting-'+suffix,'backfill','demo:'+suffix,{defer:true,source:{url:'https://example.org/awaiting-'+suffix,relation:'primary',content:'等待你確認的原始收藏 '+suffix+'。\n\n先讀原文，再決定是否使用模型整理。',metadata:{title:'待回補原文'},media:[]}});
 const server=createServer(async(req,res)=>{
   try{
-    const chunks=[];for await(const chunk of req){chunks.push(chunk);if(chunks.reduce((n,c)=>n+c.length,0)>64000)throw Error('Request too large');}
+    const chunks=[];for await(const chunk of req){chunks.push(chunk);if(chunks.reduce((n,c)=>n+c.length,0)>1100000)throw Error('Request too large');}
     const data=Buffer.concat(chunks);
     const request=new Request(`http://localhost:${port}`+req.url,{method:req.method,headers:req.headers,...(!['GET','HEAD'].includes(req.method)?{body:data}:{} )});
     const response=await handler.fetch(request,env);
