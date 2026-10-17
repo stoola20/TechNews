@@ -34,6 +34,8 @@ label{font-size:14px;font-weight:600}
 .article-body table{display:block;overflow:auto;border-collapse:collapse;max-width:100%}.article-body th,.article-body td{border:1px solid var(--line);padding:6px 10px;text-align:left;min-width:7em;overflow-wrap:normal;word-break:normal}
 .article-body blockquote{border-left:3px solid var(--line);margin-left:0;padding-left:14px;color:var(--muted)}
 #login{max-width:460px;margin:64px auto}
+dialog.confirm{border:1px solid var(--line);border-radius:12px;padding:20px;max-width:min(440px,calc(100vw - 32px));background:var(--paper);color:var(--ink)}dialog.confirm::backdrop{background:rgba(24,58,55,.45)}
+dialog.confirm p{margin:0 0 16px;line-height:1.7;white-space:pre-wrap}dialog.confirm .actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin:0}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.spinner{animation:none}}
 `;
 
@@ -50,6 +52,22 @@ async function api(path,method,data){
 }
 function safeLink(url,label){const a=document.createElement('a');try{if(new URL(url).protocol!=='https:')throw Error();a.href=url;a.target='_blank';a.rel='noopener noreferrer';}catch(e){a.removeAttribute('href');}a.textContent=label||url;return a;}
 function el(tag,props,children){const n=document.createElement(tag);for(const k in props||{}){if(k==='text')n.textContent=props[k];else if(k==='class')n.className=props[k];else if(k.startsWith('on'))n[k]=props[k];else n.setAttribute(k,props[k]);}for(const c of children||[])if(c!=null)n.append(c);return n;}
+// 頁內確認對話框：Telegram 等 App 內建瀏覽器常會擋掉 window.confirm()，直接回傳取消。
+function askConfirm(text,confirmLabel,danger){
+  return new Promise(resolve=>{
+    const opener=document.activeElement,box=el('dialog',{class:'confirm','aria-labelledby':'confirm-text'});
+    const ok=el('button',{type:'button',class:danger?'danger':'primary',text:confirmLabel||'確定'}),cancel=el('button',{type:'button',text:'取消'});
+    box.append(el('p',{id:'confirm-text',text}),el('div',{class:'actions'},[cancel,ok]));
+    let done=false;
+    const finish=value=>{if(done)return;done=true;if(box.open)box.close();box.remove();if(opener&&opener.focus)opener.focus({preventScroll:true});resolve(value);};
+    ok.onclick=()=>finish(true);cancel.onclick=()=>finish(false);
+    // Escape 只關閉對話框，不能再觸發頁面的返回列表快捷鍵。
+    box.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();e.preventDefault();finish(false);}});
+    box.addEventListener('cancel',e=>{e.preventDefault();finish(false);});
+    box.addEventListener('close',()=>finish(false));
+    document.body.append(box);box.showModal();cancel.focus();
+  });
+}
 const when=t=>t?new Date(t).toLocaleString('zh-TW',{hour12:false}):'—';
 const money=n=>'US$'+((n||0)/1e6).toFixed(2);
 async function run(fn,button,label){

@@ -55,7 +55,11 @@ test('只重寫文字不重抓來源；重送通知只用保存內容；頁面�
   const sent=net.calls.filter(c=>c.url.includes('api.telegram.org'));
   assert.equal(sent.length,1);assert.match(JSON.parse(sent[0].options.body).text,/介紹/);
   assert.equal((await handler.fetch(request('api/items/'+'7'.repeat(32)+'/renotify','POST',{}),env)).status,409);
-  for(const page of [LEARNING_PAGE,ADMIN_PAGE])new Script(page.match(/<script>([\s\S]*)<\/script>/)[1]);
+  for(const page of [LEARNING_PAGE,ADMIN_PAGE]){
+    const script=page.match(/<script>([\s\S]*)<\/script>/)[1];new Script(script);
+    // App 內建瀏覽器會擋原生 confirm()，所有確認都要走頁內對話框。
+    assert.doesNotMatch(script,/(^|[^.\w])confirm\(/);assert.match(script,/askConfirm\(/);
+  }
   const admin=await handler.fetch(new Request('https://learning.example.org/learning/admin'),env);
   assert.equal(admin.status,200);assert.match(admin.headers.get('content-security-policy'),/frame-ancestors 'none'/);
 });

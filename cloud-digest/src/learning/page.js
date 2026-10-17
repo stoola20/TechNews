@@ -128,7 +128,6 @@ async function openArticle(id){
 }
 async function refreshArticle(){if(!current)return;const seq=openSeq,result=await api('items/'+current.id);if(seq!==openSeq||result.item.id!==current.id)return;current=result.item;renderArticle(result);notes.sync(current);}
 function provenance(a){if(!a)return '';if(a.legacy)return '搬移前的官方短導讀'+(a.model?'（'+a.model+'）':'，未保存模型資訊');if(a.provider==='ollama')return '本機 '+(a.model||'Gemma')+' 整理';if(a.provider==='gemini')return 'Gemini '+(a.model||'')+' 整理';if(a.provider==='demo')return '示範資料';return a.model||'';}
-function confirmAction(text){return confirm(text);}
 function renderArticle(result){
   const item=result.item,box=$('article'),article=JSON.parse(item.article_json||'{}'),gaps=JSON.parse(item.gaps_json||'[]');
   const nodes=[];
@@ -190,20 +189,20 @@ function actions(item){
     const start=el('button',{class:'primary',text:'開始整理這篇'});
     start.onclick=()=>run(async()=>{await api('items/'+item.id+'/backfill','POST',{});message('已啟動這篇文章的整理，完成後會通知你。');await refreshArticle();await updateListItem(item.id);},start,'啟動整理…');
     const remove=el('button',{class:'danger',text:'刪除這篇待回補'});
-    remove.onclick=()=>{if(!confirmAction('刪除後，下次同步不會再加入；重新分享原始連結可再次收件。要刪除嗎？'))return;run(async()=>{await api('items/'+item.id,'DELETE');message('已刪除待回補文章。');listKey=null;await navigate({article:null});},remove,'刪除中…');};
+    remove.onclick=async()=>{if(!await askConfirm('刪除後，下次同步不會再加入；重新分享原始連結可再次收件。要刪除嗎？','刪除',true))return;run(async()=>{await api('items/'+item.id,'DELETE');message('已刪除待回補文章。');listKey=null;await navigate({article:null});},remove,'刪除中…');};
     row.append(start,remove);return row;
   }
   const retry=el('button',{text:'補取缺漏並整理'});
-  retry.onclick=()=>{if(!confirmAction('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
+  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
   row.append(retry);
   if(['ready','partial','needs_attention','error'].includes(item.status)){
     const rewrite=el('button',{text:'只重寫文字'});
-    rewrite.onclick=()=>{if(!confirmAction('沿用已保存的來源與媒體解析，只請文字模型重寫，不重新取得來源。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
+    rewrite.onclick=async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，只請文字模型重寫，不重新取得來源。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
     row.append(rewrite);
   }
   if(['ready','partial'].includes(item.status)&&item.edition==='detailed'){
     const resend=el('button',{text:'重送通知'});
-    resend.onclick=()=>{if(!confirmAction('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},resend,'送出中…');};
+    resend.onclick=async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},resend,'送出中…');};
     row.append(resend);
   }
   return row;

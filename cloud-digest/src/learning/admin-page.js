@@ -47,13 +47,13 @@ async function load(){
   $('sync-state').textContent='局部檢查（'+(p.scope||'最前 1 頁')+'）：最後完成 '+when(p.last_completed_at)+(p.added!=null?'，新增 '+p.added+' 篇':'')+(p.skipped?'；'+(SKIPS[p.skipped]||p.skipped):'')+(p.last_error?'；'+p.last_error:'')+'\n完整核對：'+(f.running?'進行中，已保存游標'+(f.pages_scanned?'（已掃 '+f.pages_scanned+' 頁）':''):'最後完整完成 '+when(f.last_full_completed_at||f.completed_at))+(f.baseline_complete?'':'；首次基線尚未完成')+(f.requires_action?'；需要重新授權或檢查設定':'')+(f.last_error?'；'+f.last_error:'')+'\n等待確認回補：'+s.awaiting_backfill+' 篇';
   const c=s.configured;$('setup').textContent='Gemini：'+(c.gemini?'已設定':'待設定')+'；X：'+(c.x?'已設定':'待設定')+'；背景佇列：'+(c.queue?'已設定':'待設定')+'；媒體保存：'+(c.media?'已設定':'待設定')+'；Telegram 收件：'+(c.telegram_input?'已設定':'待設定');
 }
-$('use-local').onclick=e=>{if(!confirm('改用本機 Gemma 後，文字整理與追問都交給 Mac；Mac 離線時工作會等待。確定已完成驗收？'))return;run(async()=>{await api('admin/text-provider','PUT',{provider:'local'});await load();message('文字模型已改為本機。');},e.currentTarget,'切換中…');};
+$('use-local').onclick=async e=>{const button=e.currentTarget;if(!await askConfirm('改用本機 Gemma 後，文字整理與追問都交給 Mac；Mac 離線時工作會等待。確定已完成驗收？'))return;run(async()=>{await api('admin/text-provider','PUT',{provider:'local'});await load();message('文字模型已改為本機。');},button,'切換中…');};
 $('use-gemini').onclick=e=>run(async()=>{await api('admin/text-provider','PUT',{provider:'gemini'});await load();message('文字模型已改回 Gemini。');},e.currentTarget,'切換中…');
 $('pause').onclick=e=>run(async()=>{await api('control','POST',{action:'pause'});await load();message('已暫停全部處理；正在執行的請求可能仍會完成。');},e.currentTarget,'暫停中…');
 $('resume').onclick=e=>run(async()=>{await api('control','POST',{action:'resume'});await load();message('已恢復處理。');},e.currentTarget,'恢復中…');
 $('connect').onclick=e=>run(async()=>{const r=await api('x/connect','POST',{});location.assign(r.url);},e.currentTarget,'前往 X 授權…');
 $('sync').onclick=e=>run(async()=>{await api('x/sync','POST',{});await load();message('已啟動完整核對，進度會保存。');},e.currentTarget,'同步中…');
-$('backfill').onclick=e=>{if(!confirm('這會整理全部等待回補的書籤，並產生模型與讀取費用。若想逐篇決定，請到文章庫篩選「等待確認回補」。要繼續嗎？'))return;run(async()=>{await api('x/backfill','POST',{});await load();message('已確認回補，工作會依可用預算處理。');},e.currentTarget,'送出中…');};
+$('backfill').onclick=async e=>{const button=e.currentTarget;if(!await askConfirm('這會整理全部等待回補的書籤，並產生模型與讀取費用。若想逐篇決定，請到文章庫篩選「等待確認回補」。要繼續嗎？'))return;run(async()=>{await api('x/backfill','POST',{});await load();message('已確認回補，工作會依可用預算處理。');},button,'送出中…');};
 $('migrate').onclick=e=>run(async()=>{const r=await api('admin/migrate','POST',{});$('migrate-result').textContent='新增 '+r.imported+' 篇、合併 '+r.merged+' 篇、更新網址 '+r.renamed+' 篇。';},e.currentTarget,'搬移中…');
 bindLogin(boot);
 async function boot(){await load();showApp();}
