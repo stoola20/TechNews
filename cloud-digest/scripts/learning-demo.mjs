@@ -36,6 +36,15 @@ for(const [key,title,status,gaps,error] of states){
   const id=await handler.service.collect(env,'https://example.org/state-'+key);
   await DB.prepare("UPDATE learning_items SET title=?,status=?,gaps_json=?,last_error=?,body=?,article_json=? WHERE id=?").bind(title,status,gaps,error,status==='partial'?'## 已整理的部分\n\n父貼文缺漏，以下只根據主貼文整理。':null,status==='partial'?JSON.stringify({provider:'demo',model:'demo',intro:'示範',observations:[]}):null,id).run();
 }
+// 媒體示範：主貼文與作者補充各有一支影片，說明緊接各自影片；外部頁面的 logo 不顯示、不算缺漏。
+{
+  const id=await handler.service.collect(env,'https://example.org/state-media');
+  await DB.prepare("INSERT INTO learning_evidence(id,item_id,url,relation,content,metadata_json,status,fetched_at) VALUES('demo-main',?,'https://example.org/state-media','primary','主貼文示範內容','{}','available',?),('demo-post',?,'https://example.org/state-media/reply','author_reply','作者補充的示範貼文','{}','available',?),('demo-page',?,'https://example.org/extension','external','外部頁面示範內容','{}','available',?)").bind(id,time,id,time,id,time).run();
+  const media=[['demo-v1','demo-main','https://video.example.org/one.mp4','video'],['demo-v2','demo-post','https://video.example.org/two.mp4','video'],['demo-logo','demo-page','https://cdn.example.org/brand/logo.svg','photo']];
+  for(const [mid,evidence,url,type] of media)await DB.prepare("INSERT INTO learning_media(id,item_id,evidence_id,url,type,duration_ms,status,error,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(mid,id,evidence,url,type,type==='video'?40000:null,type==='video'?'expired':'needs_attention',type==='video'?'原始媒體已超過 30 天保存期限':'媒體格式不支援',time).run();
+  const observations=[['demo-v1','00:01','標題畫面說明這個功能的用途。'],['demo-v1','00:14','狀態列顯示正在讀取已開啟的分頁。'],['demo-v2','00:03','第二支影片示範在分頁中直接提問。']].map(([mid,timestamp,description])=>({source_id:media.find(m=>m[0]===mid)[1],media_id:mid,timestamp,description}));
+  await DB.prepare("UPDATE learning_items SET title=?,status='partial',body=?,article_json=?,gaps_json=? WHERE id=?").bind('兩支影片與逐段說明的示範','## 教材\n\n影片的逐段說明會緊接在各自影片下方。',JSON.stringify({provider:'demo',model:'demo',intro:'示範',observations}),JSON.stringify([{id:'demo-logo',url:'https://cdn.example.org/brand/logo.svg',error:'媒體格式不支援'}]),id).run();
+}
 jobs.length=0;
 for(const suffix of ['keep','remove'])await handler.service.collect(env,'https://example.org/awaiting-'+suffix,'backfill','demo:'+suffix,{defer:true,source:{url:'https://example.org/awaiting-'+suffix,relation:'primary',content:'等待你確認的原始收藏 '+suffix+'。\n\n先讀原文，再決定是否使用模型整理。',metadata:{title:'待回補原文'},media:[]}});
 const server=createServer(async(req,res)=>{

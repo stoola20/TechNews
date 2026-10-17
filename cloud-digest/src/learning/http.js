@@ -9,6 +9,7 @@ import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
 import {articleMessage} from './notifications.js';
+import {skipDecorative} from './media.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS={ready:['ready','partial'],needs_action:['needs_attention','error','partial'],waiting_local:['waiting_local','generating'],paused:['budget_paused','paused'],processing:['queued','processing'],awaiting_backfill:['awaiting_backfill'],filtered:['filtered'],legacy:['ready','partial']};
@@ -182,11 +183,16 @@ export function createLearningHandler(deps={}) {
           for(const asset of assets)if(env.MEDIA)await env.MEDIA.delete(asset.object_key);
           return json({ok:true});
         }
-        if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},requested_id:match[1],sources:await evidence(env,id),
-          media:await rows(env,'SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=?',id),
+        if(!match[2]&&request.method==='GET'){
+          // 裝飾圖片不顯示；舊資料留下的對應缺漏也一併隱藏，下次整理時會正式移除。
+          await skipDecorative(env,id);
+          const fresh=await item(env,id);
+          return json({item:{...fresh,body_html:renderMarkdown(fresh.body||'')},requested_id:match[1],sources:await evidence(env,id),
+          media:await rows(env,"SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=? AND status!='decorative' ORDER BY rowid",id),
           analyses:(await rows(env,'SELECT media_id,model,prompt_version,analysis_json,created_at FROM learning_media_analyses WHERE item_id=? ORDER BY created_at',id)).map(a=>({...a,analysis:JSON.parse(a.analysis_json),analysis_json:undefined})),
           intakes:await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id),
           versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
+        }
         if(!match[2]&&request.method==='PATCH'){
           const data=await body(request);
           let noteUpdatedAt=current.note_updated_at;

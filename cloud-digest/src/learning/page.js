@@ -27,7 +27,8 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 .source{margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}.source summary{min-height:32px;cursor:pointer}
 .source .text{white-space:pre-wrap;line-height:1.75;max-height:420px;overflow:auto;font-size:15px;margin-top:8px}
 .analysis{border-left:3px solid var(--line);padding-left:14px;margin:12px 0 20px}.stamp{min-height:32px;padding:2px 8px;font-variant-numeric:tabular-nums;margin-right:6px}mark{background:#fde68a;color:inherit;outline:none}#answer-sources li{margin:8px 0}
-#media img,#media video{max-width:100%;max-height:440px;display:block;margin:12px 0;border-radius:6px}
+#media img,#media video{max-width:100%;max-height:440px;display:block;margin:12px 0 8px;border-radius:6px}
+.media-item{margin:0 0 28px}.obs{display:flex;gap:8px;align-items:baseline;margin:6px 0;line-height:1.7}.obs .stamp{flex:none;margin:0}
 #ask-scope{display:flex;gap:16px;flex-wrap:wrap}#ask-scope label{display:flex;align-items:center;gap:8px;min-height:44px}#ask-scope input{min-height:auto;width:18px;height:18px}
 #answer{margin-top:16px}#history details{border-bottom:1px solid var(--line);padding:4px 0}#history summary{min-height:44px;cursor:pointer;padding:10px 0}
 .empty{padding:48px 0;color:var(--muted)}
@@ -122,7 +123,7 @@ async function openArticle(id){
   if(seq!==openSeq)return;
   current=result.item;
   if(current.id!==id){view.article=current.id;history.replaceState(history.state,'',urlFor(view));}
-  renderArticle(result);notes.open(current);questions.open(current);markSelected();
+  renderArticle(result);applyState(current);notes.open(current);questions.open(current);markSelected();
   const title=$('article-title');if(title)title.focus({preventScroll:true});
   $('reader').scrollTop=0;if(narrow.matches)window.scrollTo(0,0);
 }
@@ -145,9 +146,10 @@ function renderArticle(result){
     nodes.push(el('section',{class:'block'},[el('h2',{text:'保存的原文'}),...(originals.length?originals.map(sourceBlock):[el('p',{text:'尚未保存原文，請先開啟上方原始來源。'})])]));
   }
   if(item.body){const content=el('div',{class:'article-body'});content.innerHTML=current.body_html;nodes.push(el('section',{class:'block','aria-labelledby':'body-title'},[el('h2',{id:'body-title',class:'sr',text:'教材'}),el('span',{class:'label',text:'教材（'+(provenance(article)||'模型整理')+'；標示「補充例子」的段落是模型額外加的教學例子）'}),content]));}
-  if(item.status!=='awaiting_backfill'&&result.sources.length)nodes.push(el('section',{class:'block'},[el('h2',{text:'原始來源與片段'}),el('p',{class:'muted',text:'以下是系統保存的原文，與上方模型整理的內容分開。'}),...result.sources.map(sourceBlock)]));
   const media=mediaBlock(result);if(media)nodes.push(media);
   if((result.versions||[]).length)nodes.push(el('section',{class:'block'},[el('h2',{text:'舊版本'}),el('ul',{},result.versions.map(v=>el('li',{text:when(v.created_at)+'・'+(v.edition==='legacy_digest'?'既有導讀':'版本 '+v.revision)+(v.title?'・'+v.title:'')})))]));
+  // 原始來源放在整頁最下方，閱讀教材時不被打斷。
+  if(item.status!=='awaiting_backfill'&&result.sources.length)nodes.push(el('section',{class:'block'},[el('h2',{text:'原始來源與片段'}),el('p',{class:'muted',text:'以下是系統保存的原文，與上方模型整理的內容分開。'}),...result.sources.map(sourceBlock)]));
   box.replaceChildren(...nodes);
 }
 function sourceBlock(s){
@@ -158,26 +160,31 @@ function sourceBlock(s){
   return d;
 }
 function seekButton(stamp,player){const b=el('button',{type:'button',class:'stamp',text:stamp});if(!player){b.disabled=true;b.title='原始媒體已不可播放，保留解析與原始連結';return b;}b.setAttribute('aria-label','跳到 '+stamp);b.onclick=()=>{const p=stamp.split(':').map(Number);player.currentTime=p[0]*60+p[1];player.focus();player.play().catch(()=>{});};return b;}
+function observationLine(stamp,text,player){return el('p',{class:'obs'},[stamp?seekButton(stamp,player):null,el('span',{text})]);}
 function renderAnalysis(a,player){
-  const d=a.analysis,wrap=el('div',{class:'analysis'},[el('span',{class:'label',text:'媒體證據（模型觀察：'+a.model+'）'}),el('p',{class:'muted',text:'涵蓋範圍：'+(d.coverage.from?d.coverage.from+'–'+d.coverage.to+'，':'')+d.coverage.summary})]);
-  wrap.append(el('p',{style:'white-space:pre-wrap',text:'畫面文字（OCR）：'+({text:'',partial:'（部分可辨識）',none:'沒有可辨識文字',unreadable:'無法辨識'}[d.ocr.status]||'')+(d.ocr.text?'\n'+d.ocr.text:'')}));
-  if(d.speech.status!=='not_applicable'){wrap.append(el('p',{text:'語音：'+({transcribed:'已轉錄',partial:'部分可辨識',none:'沒有語音',unclear:'聽不清楚'}[d.speech.status]||d.speech.status)}));for(const s of d.speech.segments)wrap.append(el('p',{},[seekButton(s.start,player),document.createTextNode('– '+s.end+' '+s.text)]));}
-  for(const o of d.visual)wrap.append(el('p',{},[o.timestamp?seekButton(o.timestamp,player):null,document.createTextNode((o.kind==='inferred'?'推論：':'畫面：')+o.observation)]));
+  const d=a.analysis,wrap=el('div',{class:'analysis'});
+  if(d.coverage.summary)wrap.append(el('p',{class:'muted',text:(d.coverage.from?d.coverage.from+'–'+d.coverage.to+'・':'')+d.coverage.summary}));
+  if(d.ocr.text)wrap.append(el('p',{style:'white-space:pre-wrap',text:'畫面文字：'+(d.ocr.status==='partial'?'（部分可辨識）':'')+'\n'+d.ocr.text}));
+  if(d.speech.status!=='not_applicable')for(const s of d.speech.segments)wrap.append(observationLine(s.start,s.text,player));
+  for(const o of d.visual)wrap.append(observationLine(o.timestamp,(o.kind==='inferred'?'推論：':'')+o.observation,player));
   for(const u of d.unrecognized)wrap.append(el('p',{class:'muted',text:'無法辨識'+(u.timestamp?'（'+u.timestamp+'）':'')+'：'+u.description}));
   return wrap;
 }
+// 每個媒體下方緊接它自己的說明。舊資料的觀察只對應到貼文，放在該貼文最後一個媒體之下。
 function mediaBlock(result){
   const media=result.media||[],analyses=result.analyses||[],old=analyses.length?[]:(JSON.parse(result.item.article_json||'{}').observations||[]);
   if(!media.length&&!old.length)return null;
-  const box=el('section',{class:'block',id:'media'},[el('h2',{text:'媒體與時間點'})]);
+  const box=el('section',{class:'block',id:'media'},[el('h2',{text:'媒體與時間點'})]),last={},placed=new Set();
+  for(const m of media)last[m.evidence_id]=m.id;
   for(const m of media){
-    let player=null;
-    if(m.object_key){const node=el(m.type==='photo'?'img':'video',{src:'/learning/api/media/'+m.id});if(m.type==='photo'){node.alt='來源圖片';node.loading='lazy';}else{node.controls=true;node.preload='metadata';player=node;}box.append(node);}
-    else box.append(el('p',{class:'muted'},[document.createTextNode((m.error||'原始媒體尚未取得或已過保存期限')+' '),safeLink(m.url,'原始媒體連結')]));
-    const a=analyses.find(x=>x.media_id===m.id);if(a)box.append(renderAnalysis(a,player));
+    const item=el('div',{class:'media-item'});let player=null;
+    if(m.object_key){const node=el(m.type==='photo'?'img':'video',{src:'/learning/api/media/'+m.id});if(m.type==='photo'){node.alt='來源圖片';node.loading='lazy';}else{node.controls=true;node.preload='metadata';player=node;}item.append(node);}
+    else item.append(el('p',{class:'muted'},[document.createTextNode((m.error||'原始媒體尚未取得或已過保存期限')+' '),safeLink(m.url,'原始媒體連結')]));
+    const a=analyses.find(x=>x.media_id===m.id);if(a)item.append(renderAnalysis(a,player));
+    for(const o of old)if(o.media_id?o.media_id===m.id:o.source_id===m.evidence_id&&last[m.evidence_id]===m.id){placed.add(o);item.append(observationLine(o.timestamp,o.description,player));}
+    box.append(item);
   }
-  // 舊版教材只保存簡短媒體觀察。
-  for(const o of old)box.append(el('p',{},[el('span',{class:'label',text:'舊版媒體觀察'}),document.createTextNode(' '+(o.timestamp?o.timestamp+'・':'')+o.description)]));
+  for(const o of old)if(!placed.has(o))box.append(observationLine(o.timestamp,o.description,null));
   return box;
 }
 function actions(item){

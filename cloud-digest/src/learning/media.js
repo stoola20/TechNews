@@ -1,9 +1,23 @@
-import {apiJson,publicFetch} from './network.js';
+import {apiJson,publicFetch,decorativeImage} from './network.js';
 import {rows,query,reserve,settle,uncertain,nowIso} from './store.js';
 
 const MAX_BYTES=200*1024*1024;
+// 外部網頁的裝飾圖片（舊資料可能已登記）改標 decorative：不下載、不解析，也不算缺漏。
+const NO_ELEMENT={getAttribute:()=>null,closest:()=>null};
+export async function skipDecorative(env,itemId){
+  const external=await rows(env,"SELECT m.id,m.url FROM learning_media m JOIN learning_evidence e ON e.id=m.evidence_id WHERE m.item_id=? AND e.relation='external' AND m.status!='decorative'",itemId);
+  const marked=external.filter(asset=>!asset.url || decorativeImage(NO_ELEMENT,asset.url)).map(asset=>asset.id);
+  for(const id of marked)await query(env,"UPDATE learning_media SET status='decorative',error=NULL,updated_at=? WHERE id=?",nowIso(),id).run();
+  if(!marked.length)return;
+  // 已寫進文章的裝飾圖片缺漏一併移除；沒有其他缺漏時，文章改回已完成。
+  const item=await query(env,'SELECT gaps_json,status FROM learning_items WHERE id=?',itemId).first();
+  const gaps=JSON.parse(item?.gaps_json || '[]'),kept=gaps.filter(g=>!marked.includes(g.id || g.media_id));
+  if(kept.length===gaps.length)return;
+  await query(env,"UPDATE learning_items SET gaps_json=?,status=CASE WHEN status='partial' AND ?=0 THEN 'ready' ELSE status END WHERE id=?",JSON.stringify(kept),kept.length,itemId).run();
+}
 export async function prepareMedia(env,itemId,fetcher=fetch,options={}) {
-  const assets=(await rows(env,'SELECT * FROM learning_media WHERE item_id=?',itemId)).filter(a=>!options.only || options.only.includes(a.id));
+  await skipDecorative(env,itemId);
+  const assets=(await rows(env,"SELECT * FROM learning_media WHERE item_id=? AND status!='decorative'",itemId)).filter(a=>!options.only || options.only.includes(a.id));
   let pending=false;
   for(const asset of assets) {
     if(['needs_attention','expired'].includes(asset.status))continue;
