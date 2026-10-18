@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>設計稿 B・緊湊清單</title>
+<style>
+:root{--bg:#f3f6f5;--paper:#fff;--ink:#183a37;--muted:#4f615e;--line:#d3e0dd;--accent:#0f766e;--soft:#e6f3ef;--focus:#b45309;--warn-bg:#fff4df;--warn:#8b440a;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg)}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{display:flex;flex-direction:column;background:var(--bg)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+input,select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:40px;background:#fff}
+.top{display:flex;gap:16px;align-items:center;padding:10px 20px;min-height:60px;background:var(--ink);color:#fff}
+.top b{font-size:18px;margin-right:auto}.pill{font-size:13px;padding:4px 10px;border-radius:999px;background:#2b524e}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(320px,400px) minmax(0,1fr)}
+#library{border-right:1px solid var(--line);background:var(--paper);overflow:auto;display:flex;flex-direction:column}
+.head{position:sticky;top:0;z-index:2;background:var(--paper);padding:12px 16px 0;border-bottom:1px solid var(--line)}
+.bar{display:flex;gap:8px}.bar input{flex:1;min-width:0}
+.tools{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:8px 0;font-size:14px}
+.tools label{display:flex;align-items:center;gap:6px;min-height:40px}.tools input[type=checkbox]{width:18px;height:18px;min-height:auto}
+.tools select{min-height:36px;padding:4px 8px;font-size:14px}
+.manage{border:0;background:none;color:var(--muted);font-size:13px;min-height:36px;padding:4px 6px;text-decoration:underline}
+.chips{display:flex;gap:6px;overflow-x:auto;margin:0 -16px;padding:4px 16px 10px;scrollbar-width:thin}
+.chips button{flex:none;min-height:34px;padding:3px 12px;border-radius:999px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.chips small{opacity:.7;font-variant-numeric:tabular-nums}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+#list{padding:0 16px 24px}
+.day{display:flex;justify-content:space-between;align-items:baseline;margin:14px 0 2px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.02em}
+ul{list-style:none;margin:0;padding:0}
+.item{display:grid;grid-template-columns:8px minmax(0,1fr);gap:0 10px;padding:9px 10px;margin:0 -10px;color:var(--ink);text-decoration:none;border-radius:6px}
+.item:hover{background:#f4f8f7}.item[aria-current]{background:var(--soft)}
+.item .dot{margin-top:8px}
+.item strong{font-size:15px;line-height:1.45;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.item:not(.unread) strong{font-weight:400;color:#33504c}
+.meta{grid-column:2;font-size:12px;color:var(--muted);margin-top:2px;display:flex;gap:6px;flex-wrap:wrap}
+.state{color:var(--warn);font-weight:600}
+.more{margin:12px 16px 24px;color:var(--muted)}
+#reader{overflow:auto;padding:28px clamp(16px,4vw,56px)}
+#reader h1{font-size:28px;line-height:1.45;margin:0 0 8px}.rmeta{color:var(--muted);font-size:14px;line-height:1.8}
+.tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin-right:6px;color:var(--ink)}
+.fake{height:14px;border-radius:4px;background:#e4ecea;margin:14px 0;max-width:72ch}
+.note{margin-top:32px;padding:12px 14px;border-left:4px solid var(--focus);background:var(--warn-bg);border-radius:4px;font-size:14px;max-width:72ch;line-height:1.7}
+@media (max-width:760px){.layout{grid-template-columns:minmax(0,1fr)}#library{min-width:0}#reader{display:none}}
+</style></head><body>
+<header class="top"><b>TechNews 文章庫</b><span class="pill">設計稿 B・緊湊清單</span></header>
+<main class="layout">
+<aside id="library" aria-label="文章列表">
+  <div class="head">
+    <div class="bar"><input type="search" placeholder="搜尋標題、正文與原文"></div>
+    <div class="tools">
+      <label><input type="checkbox"> 只看未讀</label>
+      <label>排序 <select id="sort"><option value="published">發表時間</option><option value="added">加入時間</option></select></label>
+      <button class="manage" title="收件入口、處理狀態">管理篩選</button>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="主題"></div>
+  </div>
+  <div id="list"></div>
+  <button class="more">捲到底自動載入更多…</button>
+</aside>
+<section id="reader">
+  <h1 id="title"></h1>
+  <div class="rmeta" id="rmeta"></div>
+  <div class="fake"></div><div class="fake" style="width:92%"></div><div class="fake" style="width:84%"></div><div class="fake"></div><div class="fake" style="width:60%"></div>
+  <p class="note">B 版用顏色點標主題，標題最多兩行，同一個畫面約可多看 40% 篇數。已讀文章改成細字，未讀不另加圓點。搜尋列、排序與主題 chip 固定在列表頂端。</p>
+</section>
+</main>
+<script>
+// 設計稿共用的合成資料；標題、帳號與時間皆為虛構範例。
+const TOPICS=['模型發布與能力','AI Coding 工具','Agent 架構與工程實踐','產品功能更新','iOS／Apple 開發','安全、治理與政策','企業導入案例'];
+const ITEMS=[
+  {id:'a1',title:'範例模型 Nova 3 推出百萬 token 上下文與更低延遲的推論 API',topic:'模型發布與能力',publisher:'OpenAI News',published:'2026-03-16T19:00:00Z',added:'2026-03-17T00:00:00Z',unread:true,origins:'官方來源'},
+  {id:'a2',title:'用 Hook 攔截 Agent 工具呼叫：在不改模型的情況下降低重複讀檔',topic:'Agent 架構與工程實踐',topic2:'AI Coding 工具',publisher:'X @example_dev',published:'2026-03-16T13:31:00Z',added:'2026-03-16T17:01:00Z',unread:true,origins:'Telegram 分享'},
+  {id:'a3',title:'App Review 指南更新：隱藏功能與外部購買連結的新規範',topic:'iOS／Apple 開發',publisher:'Apple Developer',published:'2026-03-16T20:05:00Z',added:'2026-03-17T00:00:08Z',unread:false,origins:'官方來源'},
+  {id:'a4',title:'Code Review 代理正式推出：審查分級、權限與團隊導入流程',topic:'AI Coding 工具',publisher:'X @example_tools',published:'2026-03-15T22:51:00Z',added:'2026-03-16T07:16:00Z',unread:true,origins:'Telegram 分享、網站加入'},
+  {id:'a5',title:'跨模型供應商的容錯設計：從重試策略到降級回應',topic:'Agent 架構與工程實踐',publisher:'OpenAI Developers',published:null,added:'2026-03-17T00:00:07Z',unread:true,origins:'官方來源（既有導讀）'},
+  {id:'a6',title:'語音模式更新：新聲線與更準確的口音辨識',topic:'產品功能更新',publisher:'X @example_app',published:'2026-03-15T18:19:00Z',added:'2026-03-16T16:59:00Z',unread:false,origins:'網站加入'},
+  {id:'a7',title:'第三方安全評估機構取得模型的員工級存取權限',topic:'安全、治理與政策',publisher:'Anthropic News',published:'2026-03-15T17:20:00Z',added:'2026-03-16T01:01:00Z',unread:true,origins:'官方來源'},
+  {id:'a8',title:'一家銀行如何用內部平台治理多個模型的調度與稽核',topic:'企業導入案例',publisher:'OpenAI News',published:'2026-03-15T19:00:00Z',added:'2026-03-16T01:00:53Z',unread:false,origins:'官方來源'},
+  {id:'a9',title:'Agent 的閒置上下文壓縮：快取如何保存與何時失效',topic:'AI Coding 工具',publisher:'X @example_dev',published:'2026-03-14T21:36:00Z',added:'2026-03-16T01:00:45Z',unread:true,state:'本機生成中',origins:'X 書籤'},
+  {id:'a10',title:'從 Prompting 到 Graph：Agent 架構的重心轉移',topic:'Agent 架構與工程實踐',publisher:'X @example_researcher',published:'2026-02-28T13:53:00Z',added:'2026-03-13T15:16:21Z',unread:false,origins:'書籤回補'},
+  {id:'a11',title:'開發者授權條款更新：新 API 權限與替代 App 的規範',topic:'iOS／Apple 開發',publisher:'Apple Developer',published:'2026-03-13T22:00:00Z',added:'2026-03-14T01:00:17Z',unread:true,origins:'官方來源'},
+  {id:'a12',title:'多模態推論架構解析：影片理解與工具呼叫的整合',topic:'模型發布與能力',publisher:'X @example_ceo',published:'2026-03-13T16:04:00Z',added:'2026-03-15T03:19:00Z',unread:false,state:'來源缺漏',origins:'Telegram 分享'},
+];
+const WEEK=['日','一','二','三','四','五','六'];
+// 以台灣時間顯示日期。
+function tw(iso){return new Date(new Date(iso).getTime()+8*3600e3);}
+function dayLabel(iso){const d=tw(iso);return `${d.getUTCFullYear()} 年 ${d.getUTCMonth()+1} 月 ${d.getUTCDate()} 日（週${WEEK[d.getUTCDay()]}）`;}
+function shortDate(iso){const d=tw(iso);return `${d.getUTCMonth()+1}/${d.getUTCDate()}`;}
+</script>
+<script>
+const COLORS=['#0f766e','#7c3aed','#2563eb','#d97706','#64748b','#be123c','#0891b2'];
+const color=t=>COLORS[TOPICS.indexOf(t)]||'#94a3b8';
+let topic='',sort='published',current=ITEMS[0].id;
+const $=id=>document.getElementById(id);
+function chips(){
+  const counts={};ITEMS.forEach(i=>[i.topic,i.topic2].filter(Boolean).forEach(t=>counts[t]=(counts[t]||0)+1));
+  $('chips').innerHTML=[['','全部',ITEMS.length],...TOPICS.map(t=>[t,t,counts[t]||0])].map(([v,l,n])=>`<button aria-pressed="${v===topic}" data-topic="${v}">${v?`<span class="dot" style="background:${color(v)}"></span>`:''}${l}<small>${n}</small></button>`).join('');
+}
+function render(){
+  chips();
+  const items=ITEMS.filter(i=>!topic||i.topic===topic||i.topic2===topic).slice().sort((a,b)=>(sort==='published'?(b.published||b.added).localeCompare(a.published||a.added):b.added.localeCompare(a.added)));
+  const groups=new Map();
+  for(const i of items){const d=sort==='published'?(i.published||i.added):i.added;const k=dayLabel(d);(groups.get(k)||groups.set(k,[]).get(k)).push(i);}
+  $('list').innerHTML=[...groups].map(([day,list])=>`<div class="day"><span>${day.replace(/^\d+ 年 /,'')}</span><span>${list.length} 篇</span></div><ul>${list.map(i=>`<li><a class="item${i.unread?' unread':''}" href="#" data-id="${i.id}" ${i.id===current?'aria-current="page"':''}><span class="dot" style="background:${color(i.topic)}" title="${i.topic}"></span><strong>${i.title}</strong><span class="meta"><span>${i.topic}${i.topic2?'、'+i.topic2:''}</span><span>·</span><span>${i.publisher}</span><span>·</span><span>${i.published?shortDate(i.published):'日期未知・加入於 '+shortDate(i.added)}</span>${i.state?`<span class="state">${i.state}</span>`:''}</span></a></li>`).join('')}</ul>`).join('');
+  const c=ITEMS.find(i=>i.id===current);$('title').textContent=c.title;
+  $('rmeta').innerHTML=`<span class="tag"><span class="dot" style="background:${color(c.topic)}"></span>${c.topic}</span>${c.topic2?`<span class="tag"><span class="dot" style="background:${color(c.topic2)}"></span>${c.topic2}</span>`:''}<br>${c.publisher}・發表 ${c.published?shortDate(c.published):'日期未知'}・加入 ${shortDate(c.added)}・收件入口：${c.origins}`;
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-topic]');if(t){topic=t.dataset.topic;render();}
+  const a=e.target.closest('.item');if(a){e.preventDefault();current=a.dataset.id;render();}
+});
+$('sort').onchange=e=>{sort=e.target.value;render();};
+render();
+</script>
+</body></html>
