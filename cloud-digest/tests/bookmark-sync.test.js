@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createLearningHandler} from '../src/learning/http.js';
-import {startFullScan} from '../src/learning/x.js';
+import {startFullScan,failureDetail} from '../src/learning/x.js';
 import {saveConnection,setting,setSetting,query,rows,item} from '../src/learning/store.js';
-import {environment,recorder,request,iso} from './helpers.js';
+import {environment,recorder,request,iso,message} from './helpers.js';
 
 const post=id=>({id:String(id),text:'收藏 '+id,author_id:'9',conversation_id:String(id),created_at:'2026-10-01T00:00:00Z'});
 // 三頁書籤：第二頁不足 100 筆但仍有 next_token；第一頁包含已知 ID。
@@ -135,4 +135,43 @@ test('停用書籤同步與作者重查：排程、續跑、手動同步都不�
   assert.deepEqual(await (await s.handler.fetch(request('api/x/sync','POST',{}),s.env)).json(),{disabled:true});
   assert.equal(s.x.calls.length,0);
   assert.equal((await (await s.handler.fetch(request('api/status'),s.env)).json()).bookmarks_enabled,false);
+});
+
+test('同步失敗時保存並記錄狀態碼、錯誤類型與出錯階段，log 不含 token、帳號 ID 或貼文內容',async t=>{
+  const logs=[];t.mock.method(console,'log',line=>logs.push(line));
+  const s=await setup();
+  await saveConnection(s.env,'x',{user_id:'1234567890123',access_token:'synthetic-access-token',refresh_token:'synthetic-refresh-token',expires_at:Date.now()+86400000});
+  // X 回 400／401／403／429 以外的狀態：保留原本的一般錯誤訊息，但狀態碼與階段要查得到。
+  await startFullScan(s.env);
+  s.x.setFail(()=>402);
+  await assert.rejects(s.handler.service.sync(s.env,'full'));
+  let state=await setting(s.env,'sync');
+  assert.match(state.last_error,/X 同步未完成/);assert.equal(state.requires_action,undefined);
+  assert.deepEqual({...state.last_failure,at:undefined},{stage:'x_read',status:402,name:'Error',message:'外部服務 HTTP 402',at:undefined});
+
+  // 存書籤時資料庫丟出例外：經由佇列執行，log 帶出階段與訊息，局部檢查狀態也記下來。
+  await setSetting(s.env,'sync',{...state,baseline_complete:true,running:false,cursor:null});
+  s.x.setFail(null);
+  s.env.DB.sqlite.exec("CREATE TRIGGER synthetic_failure BEFORE INSERT ON learning_evidence BEGIN SELECT RAISE(ABORT,'合成的寫入失敗'); END");
+  const job=message({kind:'sync',scope:'partial'});
+  await s.handler.service.queue({messages:[job]},s.env);
+  assert.equal(job.retries,1);
+  const partial=await setting(s.env,'sync-partial');
+  assert.match(partial.last_error,/局部檢查未完成/);
+  assert.equal(partial.last_failure.stage,'collect');assert.equal(partial.last_failure.status,null);assert.match(partial.last_failure.message,/合成的寫入失敗/);
+  const failed=logs.map(line=>JSON.parse(line)).find(e=>e.event==='learning_task_failed');
+  assert.deepEqual({kind:failed.kind,scope:failed.scope,error:failed.error,stage:failed.stage},{kind:'sync',scope:'partial',error:'processing_failed',stage:'collect'});
+  assert.match(failed.message,/合成的寫入失敗/);
+  assert.ok(logs.some(line=>JSON.parse(line).event==='bookmark_sync_failed'));
+  const joined=logs.join('\n');
+  for(const secret of ['synthetic-access-token','synthetic-refresh-token','1234567890123','收藏 '])assert.equal(joined.includes(secret),false,secret);
+
+  // 下一次成功就清掉失敗紀錄。
+  s.env.DB.sqlite.exec('DROP TRIGGER synthetic_failure');
+  state=await s.handler.service.sync(s.env,'partial');
+  assert.ok(state.last_completed_at);assert.equal(state.last_error,null);assert.equal(state.last_failure,null);
+
+  // 解析錯誤的訊息可能夾帶原文，不記錄；長串數字遮掉。
+  assert.equal(failureDetail(new SyntaxError('Unexpected token, "原文片段" is not valid JSON'),'x_read').message,'回應解析失敗（原文不記錄）');
+  assert.equal(failureDetail(new Error('找不到 1234567890123'),'collect').message,'找不到 …');
 });

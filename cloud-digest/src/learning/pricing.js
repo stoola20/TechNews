@@ -28,8 +28,9 @@ export async function firstReads(env,type,ids,day=utcDay()){
     for(const row of await rows(env,`SELECT resource_id FROM learning_x_reads WHERE utc_day=? AND resource_type=? AND resource_id IN (${chunk.map(()=>'?').join(',')})`,day,type,...chunk))seen.add(row.resource_id);
   }
   const fresh=unique.filter(id=>!seen.has(id)),time=nowIso();
-  for(let i=0;i<fresh.length;i+=30){
-    const chunk=fresh.slice(i,i+30);
+  // D1 單一查詢最多 100 個綁定參數：每列 4 個，一次最多寫 25 列。
+  for(let i=0;i<fresh.length;i+=25){
+    const chunk=fresh.slice(i,i+25);
     await query(env,`INSERT OR IGNORE INTO learning_x_reads(utc_day,resource_type,resource_id,first_read_at) VALUES ${chunk.map(()=>'(?,?,?,?)').join(',')}`,...chunk.flatMap(id=>[day,type,id,time])).run();
   }
   return {first:fresh.length,reread:unique.length-fresh.length};

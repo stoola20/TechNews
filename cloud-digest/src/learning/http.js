@@ -9,6 +9,8 @@ import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
 import {articleMessage} from './notifications.js';
+import {skipDecorative} from './media.js';
+import {mergeExistingDuplicates} from './linking.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS={ready:['ready','partial'],needs_action:['needs_attention','error','partial'],waiting_local:['waiting_local','generating'],paused:['budget_paused','paused'],processing:['queued','processing'],awaiting_backfill:['awaiting_backfill'],filtered:['filtered'],legacy:['ready','partial']};
@@ -18,7 +20,7 @@ import {claim,heartbeat,complete,fail,release,runnerStatus,setTextProvider,JobCo
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
 const json=(value,status=200,headers={})=>Response.json(value,{status,headers:{...JSON_HEADERS,...headers}});
-async function body(request){return JSON.parse(await readBoundedText(new Response(request.body),64000));}
+async function body(request,limit=64000){return JSON.parse(await readBoundedText(new Response(request.body),limit));}
 export function createLearningHandler(deps={}) {
   const service=createLearningService(deps),fetcher=deps.fetcher || fetch;
   async function handle(request,env,ctx={}){
@@ -65,12 +67,12 @@ export function createLearningHandler(deps={}) {
         if(!env.LEARNING_RUNNER_TOKEN || !equalSecret(request.headers.get('authorization')?.replace(/^Bearer\s+/i,''),env.LEARNING_RUNNER_TOKEN))return json({error:'Not found'},404);
         const data=await body(request),action=path.slice('/learning/runner/'.length);
         try{
-          if(action==='claim')return json({job:await claim(env,data.runner_id,data.info)});
+          if(action==='claim')return json({job:await claim(env,data.runner_id,data.info,data.kinds)});
           if(action==='heartbeat')return json(await heartbeat(env,data.runner_id,data.info,data.job_id,data.attempt_token));
           if(action==='fail')return json(await fail(env,data.job_id,data.attempt_token,data.error,data.retryable!==false));
           if(action==='release')return json(await release(env,data.job_id,data.attempt_token,data.error));
           if(action==='complete'){
-            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},...service.localHooks});
+            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},sourceFetched:(env,id)=>service.enqueue(env,id),...service.localHooks});
             return json(result);
           }
         }catch(error){
@@ -97,7 +99,7 @@ export function createLearningHandler(deps={}) {
         return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),bookmarks_enabled:bookmarksEnabled(env),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
-      if(route==='admin/migrate'&&request.method==='POST')return json(await migrateLibrary(env));
+      if(route==='admin/migrate'&&request.method==='POST'){const library=await migrateLibrary(env),linked=await mergeExistingDuplicates(env);return json({...library,merged:library.merged+linked.merged,linked_checked:linked.checked});}
       if(route==='budget'&&request.method==='GET')return json(await budgetSummary(env,await budget(env)));
       if(route==='admin/budget-adjust'&&request.method==='POST'){
         // 與供應商帳單核對後的人工修正；可為負數，保留說明供日後查核。
@@ -139,7 +141,7 @@ export function createLearningHandler(deps={}) {
         if(!ids.length)return json([]);
         return json(await rows(env,`SELECT id,status,stage,revision,read_at,last_error,updated_at,note_updated_at FROM learning_items WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids));
       }
-      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify))?$/);
+      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source))?$/);
       if(match){
         const id=await resolveItemId(env,match[1]),current=id&&await item(env,id);
         if(!current||current.status==='dismissed')return json({error:'文章不存在'},404);
@@ -152,6 +154,17 @@ export function createLearningHandler(deps={}) {
           // 只重寫文字：沿用已保存的來源與媒體解析，不重新取得來源，也不重新解析媒體。
           if(!['ready','partial','needs_attention','error'].includes(current.status))return json({error:'這篇目前不能重寫，請等處理完成。'},409);
           await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL,article_json=json_set(COALESCE(article_json,'{}'),'$.input_fingerprint','rewrite-requested'),updated_at=? WHERE id=?",nowIso(),id).run();
+          await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/source'&&request.method==='POST'){
+          // 手動貼上原文：只接受目前列為缺漏的來源網址，保存後重新整理。
+          const data=await body(request,1000000),content=typeof data.content==='string'?data.content.trim():'';
+          if(current.status==='awaiting_backfill')return json({error:'請先確認既有書籤回補'},409);
+          if(content.length<20 || content.length>200000)return json({error:'原文需介於 20 到 200,000 字之間'},400);
+          const missing=await query(env,"SELECT id FROM learning_evidence WHERE item_id=? AND url=? AND status='missing' AND relation IN ('primary','external') LIMIT 1",id,data.url).first();
+          if(!missing)return json({error:'這個網址目前不是缺漏來源'},409);
+          await query(env,"UPDATE learning_evidence SET content=?,metadata_json=?,status='available',fetched_at=? WHERE id=?",content,JSON.stringify({provided_by:'user',title:typeof data.title==='string'?data.title.slice(0,200):null}),nowIso(),missing.id).run();
+          await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL,updated_at=? WHERE id=?",nowIso(),id).run();
           await service.enqueue(env,id);return json({ok:true},202);
         }
         if(match[2]==='/renotify'&&request.method==='POST'){
@@ -182,11 +195,16 @@ export function createLearningHandler(deps={}) {
           for(const asset of assets)if(env.MEDIA)await env.MEDIA.delete(asset.object_key);
           return json({ok:true});
         }
-        if(!match[2]&&request.method==='GET')return json({item:{...current,body_html:renderMarkdown(current.body||'')},requested_id:match[1],sources:await evidence(env,id),
-          media:await rows(env,'SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=?',id),
+        if(!match[2]&&request.method==='GET'){
+          // 裝飾圖片不顯示；舊資料留下的對應缺漏也一併隱藏，下次整理時會正式移除。
+          await skipDecorative(env,id);
+          const fresh=await item(env,id);
+          return json({item:{...fresh,body_html:renderMarkdown(fresh.body||'')},requested_id:match[1],sources:await evidence(env,id),
+          media:await rows(env,"SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=? AND status!='decorative' ORDER BY rowid",id),
           analyses:(await rows(env,'SELECT media_id,model,prompt_version,analysis_json,created_at FROM learning_media_analyses WHERE item_id=? ORDER BY created_at',id)).map(a=>({...a,analysis:JSON.parse(a.analysis_json),analysis_json:undefined})),
           intakes:await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id),
           versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
+        }
         if(!match[2]&&request.method==='PATCH'){
           const data=await body(request);
           let noteUpdatedAt=current.note_updated_at;

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>設計稿 A・三欄可收合</title>
+<style>
+:root{--bg:#f3f6f5;--paper:#fff;--ink:#183a37;--muted:#4f615e;--line:#d3e0dd;--accent:#0f766e;--soft:#e6f3ef;--focus:#b45309;--warn-bg:#fff4df;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg)}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{display:flex;flex-direction:column;background:var(--bg)}
+button,textarea,input,select{font:inherit;color:inherit}
+button{cursor:pointer;min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 12px;line-height:1.7;resize:vertical}
+.top{display:flex;gap:16px;align-items:center;padding:10px 20px;min-height:60px;background:var(--ink);color:#fff}
+.top b{font-size:18px;margin-right:auto}.pill{font-size:13px;padding:4px 10px;border-radius:999px;background:#2b524e}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:var(--left,340px) minmax(0,1fr) var(--right,380px);transition:grid-template-columns .2s ease}
+body.left-closed{--left:52px}body.right-closed{--right:52px}
+.col{overflow:auto;min-width:0}
+#library{border-right:1px solid var(--line);background:var(--paper);padding:12px 16px}
+#panel{border-left:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column}
+.rail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.icon{width:44px;padding:0;display:inline-grid;place-items:center}
+.icon svg{width:20px;height:20px}
+body.left-closed #library .body,body.right-closed #panel .body{display:none}
+body.left-closed #library .rail-head h2,body.right-closed #panel .rail-head h2{display:none}
+body.left-closed #library{padding:12px 4px}body.right-closed #panel{padding:12px 4px}
+.list a{display:block;padding:12px;margin:0 -12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;border-radius:6px}
+.list a[aria-current]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
+.badge{display:inline-block;font-size:12px;background:var(--soft);padding:3px 8px;border-radius:5px;margin:6px 6px 0 0}
+#reader{padding:28px clamp(16px,4vw,56px) 80px}
+#reader h1{font-size:28px;line-height:1.45;margin:0 0 8px}.meta{color:var(--muted);font-size:14px}
+.body-text{font-size:17px;line-height:1.9;max-width:72ch}
+section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;max-width:880px}
+.media{display:grid;gap:8px}.video{aspect-ratio:16/9;background:#c9d8d5;border-radius:8px;display:grid;place-items:center;color:var(--muted)}
+.line{display:flex;gap:10px;align-items:baseline}.stamp{min-height:32px;padding:2px 8px;font-variant-numeric:tabular-nums}
+#panel .body{padding:0 16px 16px;display:flex;flex-direction:column;gap:12px;flex:1;min-height:0}
+#panel .rail-head{padding:12px 16px 0}
+body.right-closed #panel .rail-head{padding:0;justify-content:center}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}
+.tabs button{border:0;border-bottom:3px solid transparent;border-radius:0;background:none;font-weight:600;color:var(--muted)}
+.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
+.tabpanel{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px}
+.tabpanel[hidden]{display:none}
+.state{font-size:13px;color:var(--muted)}
+.qa{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;line-height:1.7}
+.qa q{display:block;font-weight:600;quotes:none;margin-bottom:4px}
+.composer{margin-top:auto;display:grid;gap:8px}
+.mobile-fab{display:none}
+.caption{background:var(--warn-bg);border-bottom:1px solid var(--line);padding:6px 20px;font-size:13px}
+@media(max-width:959px){
+  body{display:block;height:auto}.layout{display:block}
+  #library,body.left-closed #library{display:none}
+  #panel{position:fixed;inset:auto 0 0 0;height:78vh;border:0;border-top:1px solid var(--line);border-radius:16px 16px 0 0;box-shadow:0 -8px 24px rgba(24,58,55,.18);transform:translateY(100%);transition:transform .2s ease;z-index:5}
+  body.sheet-open #panel{transform:none}
+  body.right-closed #panel .body{display:flex}body.right-closed #panel .rail-head h2{display:block}body.right-closed #panel{padding:0}
+  #panel .rail-head{padding:12px 16px 0}
+  #reader{padding:16px 16px 96px}#reader h1{font-size:23px}.body-text{font-size:16px}
+  .mobile-fab{display:flex;position:fixed;right:16px;bottom:16px;z-index:4;gap:8px;align-items:center;border-radius:999px;padding:10px 18px;box-shadow:0 4px 14px rgba(24,58,55,.25)}
+  .desk{display:none}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head><body>
+<header class="top"><b>TechNews 文章庫</b><span class="pill">Gemini 模式</span></header>
+<div class="caption">設計稿 A：桌機三欄，左右欄都可收合；手機改為右下按鈕開啟底部面板（合成資料）</div>
+<main class="layout">
+  <aside id="library" class="col" aria-label="文章列表">
+    <div class="rail-head"><h2 style="font-size:15px;margin:0">文章列表</h2>
+      <button class="icon desk" id="toggle-left" aria-expanded="true" aria-controls="library" aria-label="收合文章列表"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg></button></div>
+    <div class="body"><ul class="list" style="list-style:none;padding:0;margin:0">
+      <li><a href="#" aria-current="page"><strong>示範：瀏覽器擴充功能如何讀取分頁內容</strong><br><span class="badge">已完成</span><span class="badge">Telegram 分享</span></a></li>
+      <li><a href="#"><strong>示範：大型團隊的程式碼審查流程</strong><br><span class="badge">已完成</span><span class="badge">官方來源</span></a></li>
+      <li><a href="#"><strong>示範：開源模型在 agent 工作流的表現</strong><br><span class="badge">已完成・來源缺漏</span><span class="badge">X 書籤</span></a></li>
+    </ul></div>
+  </aside>
+  <article id="reader" class="col" tabindex="-1">
+    <h1>示範：瀏覽器擴充功能如何讀取分頁內容</h1>
+    <p class="meta">已完成・收件：Telegram 分享・Gemini 3.8 Flash 整理</p>
+    <div class="body-text"><p>這是合成的教材段落，用來呈現閱讀欄寬度。擴充功能取得使用者授權後，可以讀取已開啟分頁的文字內容，再交給模型比較與彙整。</p><p>第二段說明權限範圍與限制：只讀取使用者明確指定的分頁，不會在背景持續擷取。這一段刻意寫長一些，讓你判斷三欄時中間欄的行長是否舒適，以及收合左右欄後版面如何變化。</p><p>第三段示範程式碼與操作步驟的位置。閱讀時可以在右側直接記下重點或追問，不必捲到頁尾。</p></div>
+    <section class="block"><h2 style="font-size:19px">媒體與時間點</h2>
+      <div class="media"><div class="video">影片 1</div>
+        <div class="line"><button class="stamp">00:01</button><span>標題畫面說明這個功能的用途。</span></div>
+        <div class="line"><button class="stamp">00:14</button><span>狀態列顯示正在讀取已開啟的分頁。</span></div></div></section>
+    <section class="block"><h2 style="font-size:19px">原始來源與片段</h2><p class="meta">保存的原文放在最下方。</p></section>
+  </article>
+  <aside id="panel" class="col" aria-label="筆記與追問">
+    <div class="rail-head"><h2 style="font-size:15px;margin:0">筆記與追問</h2>
+      <button class="icon desk" id="toggle-right" aria-expanded="true" aria-controls="panel" aria-label="收合筆記與追問"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
+      <button class="icon mobile-close" id="close-sheet" aria-label="關閉筆記與追問" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="body">
+      <div class="tabs" role="tablist"><button role="tab" aria-selected="true" aria-controls="tab-note" id="t-note">我的筆記</button><button role="tab" aria-selected="false" aria-controls="tab-ask" id="t-ask">來源追問</button></div>
+      <div class="tabpanel" id="tab-note" role="tabpanel" aria-labelledby="t-note"><textarea rows="12" aria-label="筆記內容">權限只限使用者指定的分頁。
+待查：企業管理的政策設定。</textarea><div class="state">已保存 23:41</div></div>
+      <div class="tabpanel" id="tab-ask" role="tabpanel" aria-labelledby="t-ask" hidden>
+        <div class="qa"><q>需要哪些權限才會讀到分頁？</q>來源提到需要使用者授權並指定分頁（S1）。</div>
+        <div class="composer"><label for="qa">你的問題</label><textarea id="qa" rows="3" placeholder="例如：這個設定需要哪個版本？"></textarea><button class="primary">依來源回答</button></div>
+      </div>
+    </div>
+  </aside>
+</main>
+<button class="mobile-fab primary" id="open-sheet" aria-controls="panel" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H8l-4 4z"/></svg>筆記・追問</button>
+<script>
+const b=document.body;
+function toggle(side,btn){const closed=b.classList.toggle(side+'-closed');btn.setAttribute('aria-expanded',String(!closed));btn.setAttribute('aria-label',(closed?'展開':'收合')+(side==='left'?'文章列表':'筆記與追問'));btn.firstElementChild.style.transform=closed?'rotate(180deg)':'';}
+document.getElementById('toggle-left').onclick=e=>toggle('left',e.currentTarget);
+document.getElementById('toggle-right').onclick=e=>toggle('right',e.currentTarget);
+for(const t of document.querySelectorAll('[role=tab]'))t.onclick=()=>{for(const o of document.querySelectorAll('[role=tab]')){const on=o===t;o.setAttribute('aria-selected',String(on));document.getElementById(o.getAttribute('aria-controls')).hidden=!on;}};
+const narrow=matchMedia('(max-width:959px)');
+function sync(){document.getElementById('close-sheet').style.display=narrow.matches?'inline-grid':'none';}
+narrow.addEventListener('change',sync);sync();
+document.getElementById('open-sheet').onclick=e=>{b.classList.add('sheet-open');e.currentTarget.setAttribute('aria-expanded','true');document.getElementById('close-sheet').focus();};
+document.getElementById('close-sheet').onclick=()=>{b.classList.remove('sheet-open');const f=document.getElementById('open-sheet');f.setAttribute('aria-expanded','false');f.focus();};
+// 截圖用：#collapsed 收合左右欄，#sheet 打開手機面板，#ask 切到追問。
+if(location.hash.includes('collapsed')){document.getElementById('toggle-left').click();document.getElementById('toggle-right').click();}
+if(location.hash.includes('ask'))document.getElementById('t-ask').click();
+if(location.hash.includes('sheet'))document.getElementById('open-sheet').click();
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&b.classList.contains('sheet-open'))document.getElementById('close-sheet').click();});
+</script></body></html>

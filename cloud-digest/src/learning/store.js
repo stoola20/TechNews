@@ -13,10 +13,12 @@ export async function hash(value) {
 }
 export async function item(env, id) { return query(env, 'SELECT * FROM learning_items WHERE id=?', id).first(); }
 export async function evidence(env, id) { return rows(env, 'SELECT * FROM learning_evidence WHERE item_id=? ORDER BY fetched_at,id', id); }
+// 使用者手動貼上的原文，之後自動補取（成功或失敗）都不能覆蓋。
 export async function saveEvidence(env, id, value) {
   const key = await hash(`${id}:${value.url}:${value.relation}`);
   await query(env, `INSERT INTO learning_evidence(id,item_id,url,relation,author_id,published_at,content,metadata_json,status,fetched_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,metadata_json=excluded.metadata_json,status=excluded.status,fetched_at=excluded.fetched_at`,
+    VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,metadata_json=excluded.metadata_json,status=excluded.status,fetched_at=excluded.fetched_at
+    WHERE json_extract(learning_evidence.metadata_json,'$.provided_by') IS NOT 'user' OR json_extract(excluded.metadata_json,'$.provided_by')='user'`,
     key,id,value.url,value.relation,value.author_id || null,value.published_at || null,value.content || '',JSON.stringify(value.metadata || {}),value.status || 'available',nowIso()).run();
   return key;
 }

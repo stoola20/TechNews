@@ -85,6 +85,30 @@ runner/install-launchd.sh "$HOME/.config/technews-runner/runner.env"
 
 為什麼不用 Apple container 跑執行器：Linux 容器沒有 Apple GPU，推論一定要在 macOS 原生 Ollama 進行；而容器要連到主機上的 Ollama，Ollama 就得改聽非 loopback 介面，違反「不暴露 Ollama」。執行器本身很輕，直接用 launchd 最單純。Apple container 仍可用來跑其他不需要 GPU 的隔離工作。
 
+## X 長文代抓（選用）
+
+X 長文（`x.com/i/article/...`）要登入才看得到。雲端讀取貼文時會先請 X API 附上長文全文；API 沒附上時，才把它列為缺漏並排一份代抓工作。執行器用這台 Mac 上一個專用的 Chrome profile 開啟長文頁，擷取正文後回報。登入狀態只留在這個 profile，不會上傳到文章庫。
+
+- 需要 Google Chrome 與 `playwright-core`（已列在 `package.json` 的選用相依套件，在 `cloud-digest/` 執行 `npm install` 即會安裝）。
+- 代抓不需要 Ollama。Ollama 停止時，執行器仍會領取代抓工作。
+- 代抓頻率很低：只在文章有 X 長文缺漏時才開頁。自動化瀏覽仍可能被 X 視為異常登入，建議之後改用專用帳號。
+
+1. 在 `runner.env` 設定 profile 資料夾（放在 repo 外）：
+
+   ```bash
+   RUNNER_X_PROFILE_DIR=$HOME/.config/technews-runner/x-profile
+   ```
+
+2. 開啟有畫面的 Chrome 登入 X，完成後關閉視窗：
+
+   ```bash
+   node --env-file="$HOME/.config/technews-runner/runner.env" runner/runner.mjs --x-login
+   ```
+
+3. 執行 `--check`，確認 `check_x_fetch` 的 `enabled` 為 `true`，再重新啟動常駐執行器。
+
+登入失效時，代抓工作會失敗並在文章頁提示重新登入；重新執行步驟 2 後，到文章頁按「補取缺漏並整理」。也可以直接按「貼上原文」手動補上。
+
 ## 網站上的處理狀態
 
 | 狀態 | 意思 |

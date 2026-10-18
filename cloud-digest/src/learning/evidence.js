@@ -1,8 +1,9 @@
 import {rows,query,saveEvidence,evidence,setting,setSetting} from './store.js';
 import {webEvidence,canonicalUrl} from './network.js';
-import {postEvidence,xRead,postParameters,normalizePost,registerMedia} from './x.js';
+import {postEvidence,xRead,postParameters,normalizePost,registerMedia,saveArticle} from './x.js';
 import {loadArticle,getSources} from '../sources.js';
 import {effectiveEnvironment} from '../settings.js';
+import {xArticleUrl,queueXArticle} from './local.js';
 
 // 官方來源沿用既有官方擷取（含 Markdown 與瀏覽器備援），第一版只取全文文字，不抓媒體。
 async function officialSourceFor(env,item){
@@ -25,13 +26,14 @@ export async function acquireEvidence(env,item,deps={}) {
   if(!primary){
     const official=item.kind==='x'?null:await officialSourceFor(env,item);
     const source=item.kind==='x'?await (deps.postEvidence || postEvidence)(env,item.url.split('/').at(-1),fetcher)
-      :official?await officialEvidence(env,official,item,deps,fetcher):await loadWeb(item.url,fetcher);
+      :official?await officialEvidence(env,official,item,deps,fetcher):await loadWeb(item.url,fetcher,env);
     if(!source.content?.trim()){
       if(source.media?.length || source.metadata?.references?.length){source.content='[主貼文沒有文字；附件與引用需另外取得，不可推測補齊。]';source.metadata={...source.metadata,no_text:true};}
       else throw new Error('來源沒有可取得的主文');
     }
     const key=await saveEvidence(env,item.id,source);
     await registerMedia(env,item.id,key,source.media);
+    await saveArticle(env,item.id,source);
     primary=(await evidence(env,item.id)).find(s=>s.id===key);
   }
   if(item.kind!=='x')return {pending:false,sources:await evidence(env,item.id)};
@@ -47,6 +49,7 @@ export async function acquireEvidence(env,item,deps={}) {
       const relation=ref.type==='replied_to'?'parent':ref.type==='retweeted'?'repost':'quote';
       const key=await saveEvidence(env,item.id,{...source,relation});
       await registerMedia(env,item.id,key,source.media);
+      if(!cached)await saveArticle(env,item.id,source);
       state.parents_done.push(ref.id);state.parent_queue.shift();
       for(const r of source.metadata.references || [])if(!state.parents_done.includes(r.id)&&!state.parent_queue.some(p=>p.id===r.id)&&r.id!==metadata.post_id)state.parent_queue.push(r);
     }catch(error){
@@ -75,6 +78,7 @@ export async function acquireEvidence(env,item,deps={}) {
         const source=normalizePost(post,result.includes);
         const key=await saveEvidence(env,item.id,{...source,relation:'author_reply'});
         await registerMedia(env,item.id,key,source.media);
+        await saveArticle(env,item.id,source);
       }
       state.author_cursor=result.meta?.next_token || null;
       state.author_done=!state.author_cursor;
@@ -92,13 +96,21 @@ export async function acquireEvidence(env,item,deps={}) {
   for(const url of links.filter(u=>!state.external_done.includes(u))){
     if(steps++>=8)return {pending:true,sources:await evidence(env,item.id)};
     try {
-      const host=new URL(url).hostname;
+      const host=new URL(url).hostname,article=xArticleUrl(url);
+      if(article){
+        // X 長文未登入讀不到：保留缺漏並排入 Mac 代抓；已有可用原文（X API 附帶、手動貼上或代抓過）時不再排。
+        if(!sources.some(s=>s.url===article&&s.status==='available')){
+          await saveEvidence(env,item.id,{url:article,relation:'external',status:'missing',metadata:{error:'X 長文需要登入才能讀取，已排入 Mac 代抓；也可以手動貼上原文'}});
+          await queueXArticle(env,item.id,article);
+        }
+        state.external_done.push(url);await setSetting(env,`context:${item.id}`,state);continue;
+      }
       if(/(^|\.)(x\.com|twitter\.com)$/.test(host)){
         const postUrl=canonicalUrl(url);
         if(!sources.some(s=>s.status==='available'&&s.url===postUrl))await saveEvidence(env,item.id,{url,relation:'external',status:'missing',metadata:{error:'額外 X 連結未列為父貼文、引用或作者續寫，尚未取得'}});
         state.external_done.push(url);continue;
       }
-      const source=await loadWeb(url,fetcher);
+      const source=await loadWeb(url,fetcher,env);
       const key=await saveEvidence(env,item.id,{...source,relation:'external'});
       await registerMedia(env,item.id,key,source.media);
     }catch(error){await saveEvidence(env,item.id,{url,relation:'external',status:'missing',metadata:{error:'直接外連文章無法取得'}});}
