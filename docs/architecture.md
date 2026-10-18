@@ -1,8 +1,16 @@
-# TechNews 新版架構
+# TechNews 架構
 
 這份文件描述目前 Worker 的架構。部署後，手機設定頁位於 `https://<你的 Worker 網址>/settings`。
-本頁的流程圖描述既有部落格 digest；新增的 X 收藏學習流程見 [實作計畫](plans/x-learning.md) 與 [設定說明](learning-setup.md)，預設尚未啟用。
 說明採用 [SimpleEnglish](https://github.com/AminBlg/SimpleEnglish/blob/main/skills/simple-english/SKILL.md) 的短句與明確主詞原則。
+
+系統有兩條流程，由 `wrangler.jsonc` 的 `LEARNING_ENABLED` 決定官方文章走哪一條：
+
+| `LEARNING_ENABLED` | 官方文章 | 說明 |
+| --- | --- | --- |
+| `false` | 每日 Telegram 導讀 | 下方「每日 Telegram 導讀」一節 |
+| `true`（repo 預設） | 私人文章庫 | 下方「私人文章庫」一節；與 X 書籤、Telegram 分享共用同一條流程 |
+
+## 每日 Telegram 導讀
 
 ```mermaid
 flowchart TD
@@ -81,7 +89,49 @@ claude.dev 使用官方 Markdown。其他來源擷取文章頁的正文、程式
 D1 用網址保存永久文章身份，用待處理狀態保存尚未完成的工作。
 處理鎖避免一般並行重複，但 Telegram 發送和 D1 寫入分開，仍有少數重複發送的可能。
 舊的 `alert_message_id` 保留供遷移相容，新版不再寫入它。
-部落格 digest 以 D1 待處理清單與每次上限控制工作量。X 收藏學習另外使用 Cloudflare Queues 喚醒持續保存的任務，不套用部落格導讀的篇幅與相關性規則。
+部落格 digest 以 D1 待處理清單與每次上限控制工作量。
+
+## 私人文章庫
+
+官方文章、X 書籤、Telegram 與網站分享進同一個文章庫，共用來源身分、工作狀態、搜尋、筆記與來源追問。規格見 [統一整理規格](specs/unified-learning.md)，設定見 [設定與使用](learning-setup.md)。
+
+```mermaid
+flowchart TD
+  CRON["Cron<br/>0 0 * * *：官方、書籤完整核對、作者重查<br/>*/10：書籤局部檢查<br/>*/5：維護"] --> WORKER["Cloudflare Worker"]
+  TGIN["Telegram webhook<br/>只收允許的 chat"] --> WORKER
+  WEB["網站 /learning<br/>RUN_TOKEN 登入，貼連結"] --> WORKER
+  WORKER --> ITEM[("D1<br/>來源、文章、工作、帳本")]
+  WORKER -->|"持續保存的任務"| QUEUE["Cloudflare Queue"]
+  QUEUE --> FETCH["取得原文<br/>X API 或網頁擷取"]
+  FETCH --> MEDIA[("R2<br/>圖片與影片")]
+  FETCH --> EVIDENCE["Gemini Flash<br/>解析圖片與影片，保存可查核證據"]
+  EVIDENCE --> JOB["文字工作"]
+  JOB --> SWITCH{"文字模型<br/>管理頁設定"}
+  SWITCH -->|"gemini（預設）"| GEMINI["Gemini 直接寫作"]
+  SWITCH -->|"local"| WAIT["工作等待領取"]
+  RUNNER["Mac 執行器<br/>主動連出"] -->|"claim / heartbeat"| WAIT
+  RUNNER --> OLLAMA["Ollama Gemma<br/>只聽 127.0.0.1"]
+  OLLAMA -->|"complete / fail"| ITEM
+  GEMINI --> ITEM
+  ITEM --> LIB["文章庫<br/>閱讀、筆記、追問"]
+  ITEM --> NOTIFY["Telegram 通知<br/>精簡介紹＋連結"]
+```
+
+| 平台 | 責任 |
+| --- | --- |
+| Worker | 排程、收件、登入、網站、Queue 消費、費用帳本、執行器工作領取 API |
+| Queue | 喚醒持續保存的任務，單次處理一個訊息 |
+| R2 | 保存圖片與影片，供證據解析與閱讀頁播放 |
+| Gemini Flash | 只負責理解圖片與影片，保存證據；預設也負責文字寫作 |
+| Mac 執行器 | 主動領取文字工作，呼叫本機 Ollama，回報結果。細節見 [runner/README.md](../cloud-digest/runner/README.md) |
+| D1 | 保存來源、文章、筆記版本、工作狀態、通知狀態與費用帳本 |
+
+兩個行為決定了工作會不會消失或被誤用：
+
+- 切到 `local` 後，Mac 離線時工作保持「等待本機」，不會自動改用雲端文字模型。
+- 執行器使用 `LEARNING_RUNNER_TOKEN`，與網站的 `RUN_TOKEN` 分開。網站登入憑證不能呼叫執行器端點。
+
+## 與 RAG 服務的關係
 
 選用的 Python RAG 問答服務仍獨立運作，沒有同步這個 D1 資料庫。
 
