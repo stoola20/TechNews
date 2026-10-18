@@ -7,18 +7,40 @@ html,body{height:100%}
 body.app{display:flex;flex-direction:column}
 .top form{display:flex;gap:8px;flex:1 1 360px;max-width:560px}.top form input{flex:1;min-width:0}
 .layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr)}
-#library{border-right:1px solid var(--line);overflow:auto;padding:16px;background:var(--paper)}
+#library{border-right:1px solid var(--line);overflow:auto;padding:0 16px 16px;background:var(--paper)}
 .reader-wrap{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
 #reader{flex:1;min-height:0;overflow:auto;padding:24px clamp(16px,4vw,48px) calc(var(--dock-h,64px) + 40px);scroll-padding-bottom:calc(var(--dock-h,64px) + 32px);outline:none}
-.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;margin:12px 0}.filters label{display:block;margin-bottom:4px}.filters select{width:100%}
-.filters .check{grid-column:1/-1;display:flex;align-items:center;gap:8px;min-height:44px;font-weight:600}.filters .check input{min-height:auto;width:20px;height:20px}
-#search{width:100%;margin-top:4px}
-#list{list-style:none;margin:0;padding:0}
-#list a{display:block;padding:12px;margin:0 -12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;border-radius:6px}
-#list a:hover{background:#f4f8f7}#list a[aria-current=page]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
-#list strong{display:block;line-height:1.5;overflow-wrap:anywhere}#list .unread strong:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:2px}
-.preview{display:block;color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
-.pager{display:flex;gap:8px;justify-content:space-between;margin-top:12px}
+/* 列表頂端（搜尋、排序、篩選）捲動時固定；列表依日期分組，每篇只留閱讀需要的資訊。 */
+.list-head{position:sticky;top:0;z-index:3;background:var(--paper);margin:0 -16px;padding:12px 16px 0;border-bottom:1px solid var(--line)}
+#search{width:100%}
+.tools{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;margin:6px 0}
+.tools label{display:flex;align-items:center;gap:6px;min-height:44px;font-size:14px}.tools input[type=checkbox]{min-height:auto;width:20px;height:20px}
+.tools select{min-height:36px;padding:4px 8px;font-size:14px}
+#manage-toggle{min-height:36px;padding:4px 10px;font-size:14px;border-color:transparent;background:none;color:var(--muted);text-decoration:underline}
+#manage-toggle.active{color:var(--accent);font-weight:700}
+#manage{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;padding:4px 0 12px}#manage[hidden]{display:none}#manage label{display:block;margin-bottom:4px;font-size:13px}#manage select{width:100%}
+#list{padding:0 0 8px}
+.day{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:16px 0 2px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.02em}
+.day-items{list-style:none;margin:0;padding:0}
+.day-items a{display:grid;grid-template-columns:8px minmax(0,1fr);gap:0 10px;padding:9px 10px;margin:0 -10px;color:var(--ink);text-decoration:none;border-radius:6px}
+.day-items a:hover{background:#f4f8f7}.day-items a[aria-current=page]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
+.topic-dot{width:8px;height:8px;border-radius:50%;margin-top:8px;background:var(--line)}
+.day-items strong{font-size:15px;line-height:1.45;font-weight:400;color:#33504c;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.day-items .unread strong{font-weight:700;color:var(--ink)}
+.item-meta{grid-column:2;display:flex;flex-wrap:wrap;gap:0 6px;font-size:12px;line-height:1.6;color:var(--muted);margin-top:2px}
+.item-meta .sep:before{content:"·"}
+.item-meta .state{font-weight:700}.item-meta .state.warn{color:var(--warn)}.item-meta .state.wait{color:#22408a}
+.preview{grid-column:2;display:block;color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
+#more{width:100%;margin-top:8px;color:var(--muted)}#more[hidden]{display:none}
+.chips{display:flex;gap:6px;overflow-x:auto;margin:0 -16px;padding:2px 16px 10px;scrollbar-width:thin}
+.chips button{flex:none;min-height:36px;padding:4px 12px;border-radius:999px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.chips small{opacity:.75;font-variant-numeric:tabular-nums}
+.chips .topic-dot{margin:0}
+.topic-row{display:flex;flex-wrap:wrap;align-items:center;gap:0 4px;margin-bottom:4px}
+.topic-row .linkish{min-height:32px;padding:2px 8px;border:0;background:none;color:var(--accent);text-decoration:underline;font-size:13px;margin-bottom:6px}
+.topic-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:4px 0 12px}.topic-form label{display:block;font-size:13px;margin-bottom:4px}.topic-form select{min-height:40px}
+.topic-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin:0 6px 6px 0;color:var(--ink)}.topic-tag .topic-dot{margin:0}
 .reader-bar{display:none;margin-bottom:12px}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
 .meta{color:var(--muted);font-size:14px;line-height:1.7}
@@ -56,7 +78,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 @media(prefers-reduced-motion:reduce){#dock.open .dock-body{animation:none}}
 @media(max-width:959px){
   body.app{display:block;height:auto}.layout{display:block}
-  #library{border-right:0;overflow:visible}
+  #library{border-right:0;overflow:visible}.list-head{top:0}
   .reader-wrap{display:block}#reader{overflow:visible;padding:16px 16px calc(var(--dock-h,64px) + 24px)}
   html{scroll-padding-bottom:calc(var(--dock-h,64px) + 16px)}
   body[data-view=reader] #library{display:none}body[data-view=list] .reader-wrap{display:none}
@@ -75,15 +97,23 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 ${LOGIN}
 <main id="app" class="layout hidden">
 <aside id="library" aria-label="文章列表">
-  <form id="search-form" role="search"><label for="search">搜尋標題、正文與保存的原文</label><input id="search" type="search" placeholder="按 / 快速搜尋"></form>
-  <div class="filters">
-    <label class="check"><input type="checkbox" id="unread"> 只看未讀</label>
+  <div class="list-head">
+  <form id="search-form" role="search"><label class="sr" for="search">搜尋標題、正文與保存的原文</label><input id="search" type="search" placeholder="搜尋標題、正文與原文（按 / ）"></form>
+  <div class="tools">
+    <label><input type="checkbox" id="unread"> 只看未讀</label>
+    <label>排序 <select id="sort"><option value="published">發表時間</option><option value="added">加入時間</option></select></label>
+    <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage">管理篩選</button>
+  </div>
+  <div id="manage" hidden>
     <div><label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select></div>
     <div><label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select></div>
   </div>
-  <p id="list-summary" class="muted" aria-live="polite"></p>
-  <ul id="list"></ul>
-  <div class="pager"><button id="previous">上一頁</button><button id="next">下一頁</button></div>
+  <div id="topics" class="chips" role="group" aria-label="主題"></div>
+  </div>
+  <p id="list-summary" class="sr" aria-live="polite"></p>
+  <div id="list"></div>
+  <div id="list-end" aria-hidden="true"></div>
+  <button type="button" id="more" hidden>載入更多</button>
 </aside>
 <div class="reader-wrap">
 <div id="reader" tabindex="-1" aria-label="閱讀區">
@@ -113,47 +143,86 @@ ${LOGIN}
 </main>
 <script>
 ${HELPERS}
-let view={q:'',unread:false,origin:'',state:'',page:0,article:null},listKey=null,listItems=[],current=null,openSeq=0,pollTimer=null,statusTimer=null;
+let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',article:null},listKey=null,listItems=[],topicData={topics:[],unclassified:0,total:0},hasMore=false,loadingMore=false,current=null,openSeq=0,pollTimer=null,statusTimer=null;
 const narrow=matchMedia('(max-width: 959px)');
-function readView(){const p=new URLSearchParams(location.search);return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',page:Math.max(0,parseInt(p.get('page')||'0',10)||0),article:p.get('article')};}
-function urlFor(v){const p=new URLSearchParams();if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.page)p.set('page',String(v.page));if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
+function readView(){const p=new URLSearchParams(location.search);return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',article:p.get('article')};}
+function urlFor(v){const p=new URLSearchParams();if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
 function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTop;}
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
 function navigate(next,fromList){history.replaceState({...(history.state||{}),listScroll:listScroll()},'',location.href);view={...view,...next};history.pushState({fromList:!!fromList},'',urlFor(view));return apply();}
-function syncControls(){$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;}
+function syncControls(){$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;$('manage-toggle').classList.toggle('active',!!(view.origin||view.state));}
 async function apply(){
   syncControls();
-  const key=JSON.stringify([view.q,view.unread,view.origin,view.state,view.page]);
+  const key=JSON.stringify([view.q,view.unread,view.origin,view.state,view.sort,view.topic]);
   if(key!==listKey){listKey=key;await loadList();}
   document.body.dataset.view=view.article?'reader':'list';
   if(view.article){if(view.article!==(current&&current.id))await openArticle(view.article);}else clearArticle();
   markSelected();
 }
 window.addEventListener('popstate',e=>{view=readView();run(async()=>{await apply();if(!view.article)restoreScroll(e.state&&e.state.listScroll);});});
-function describeFilters(){const parts=[];if(view.q)parts.push('搜尋「'+view.q+'」');if(view.unread)parts.push('未讀');if(view.origin)parts.push(ORIGINS[view.origin]);if(view.state)parts.push($('state').selectedOptions[0].textContent);return parts.join('・');}
+function describeFilters(){const parts=[];if(view.q)parts.push('搜尋「'+view.q+'」');if(view.unread)parts.push('未讀');if(view.origin)parts.push(ORIGINS[view.origin]);if(view.state)parts.push($('state').selectedOptions[0].textContent);if(view.topic)parts.push(view.topic==='unclassified'?'未分類':(topicById(view.topic)||{name:view.topic}).name);return parts.join('・');}
+// 每批 50 篇，捲到底自動接著載入；篩選或排序改變時從第一批重新載入。
+function filterQuery(){const p=new URLSearchParams();if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);return p;}
+function listQuery(offset){const p=filterQuery();p.set('sort',view.sort);if(view.topic)p.set('topic',view.topic);p.set('offset',String(offset));return p;}
 async function loadList(){
-  const p=new URLSearchParams();if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);p.set('offset',String(view.page*50));
-  const items=await api('items?'+p.toString());
-  listItems=items;$('list').replaceChildren(...items.map(renderItem));
-  if(!items.length)$('list').append(el('li',{class:'empty',text:'沒有符合的文章。'}));
-  $('list-summary').textContent='第 '+(view.page+1)+' 頁，'+items.length+' 篇'+(describeFilters()?'（'+describeFilters()+'）':'');
-  $('previous').disabled=view.page===0;$('next').disabled=items.length<50;
+  const key=listKey,[items,topics]=await Promise.all([api('items?'+listQuery(0).toString()),api('topics?'+filterQuery().toString())]);
+  if(key!==listKey)return;
+  topicData=topics;renderTopics();
+  listItems=items;hasMore=items.length===50;renderList();
 }
-function badges(i){
-  const out=[el('span',{class:'badge '+stateTone(i.status),text:stateLabel(i),'data-role':'state'})];
-  if(i.edition==='legacy_digest')out.push(el('span',{class:'badge',text:'既有導讀'}));
-  for(const o of (i.origins||'').split(',').filter(Boolean))out.push(el('span',{class:'badge',text:ORIGINS[o]||o}));
-  return out;
+// 主題 chip：全部、各主題、未分類，附篇數；單選，與搜尋、未讀、管理篩選並用。
+function topicById(id){return topicData.topics.find(t=>t.id===id);}
+function topicColor(id){const t=topicById(id);return t?t.color:'';}
+function topicNames(i){return [i.topic_primary,i.topic_secondary].map(topicById).filter(Boolean).map(t=>t.name);}
+function chip(value,label,count,color){
+  const b=el('button',{type:'button','aria-pressed':String(view.topic===value),'data-topic':value},[color?el('span',{class:'topic-dot',style:'background:'+color,'aria-hidden':'true'}):null,document.createTextNode(label),el('small',{text:String(count)})]);
+  b.onclick=()=>run(()=>navigate({topic:view.topic===value&&value?'':value,article:null}));
+  return b;
 }
+function renderTopics(){
+  $('topics').replaceChildren(chip('','全部',topicData.total),...topicData.topics.map(t=>chip(t.id,t.name,t.count,t.color)),...(topicData.unclassified?[chip('unclassified','未分類',topicData.unclassified)]:[]));
+  const pressed=$('topics').querySelector('[aria-pressed=true]');if(pressed)pressed.scrollIntoView({block:'nearest',inline:'nearest'});
+}
+async function loadMore(){
+  if(!hasMore||loadingMore)return;
+  loadingMore=true;const key=listKey;
+  try{
+    const items=await api('items?'+listQuery(listItems.length).toString());
+    if(key!==listKey)return;
+    const seen=new Set(listItems.map(i=>i.id));
+    listItems=listItems.concat(items.filter(i=>!seen.has(i.id)));hasMore=items.length===50;renderList();
+  }finally{loadingMore=false;}
+}
+// 日期依台灣時間顯示；沒有原文發表時間時明示是加入時間，避免誤認。
+const WEEKDAYS=['日','一','二','三','四','五','六'];
+function twDate(iso){const d=new Date(Date.parse(iso)+8*3600e3);return {year:d.getUTCFullYear(),month:d.getUTCMonth()+1,day:d.getUTCDate(),week:d.getUTCDay()};}
+function shortDate(iso){const d=twDate(iso);return d.month+'/'+d.day;}
+function itemDate(i){return i.published_at?shortDate(i.published_at):'日期未知・加入於 '+shortDate(i.created_at);}
+function groupTime(i){return view.sort==='added'?i.created_at:(i.published_at||i.created_at);}
+function dayLabel(iso){const d=twDate(iso),year=twDate(new Date().toISOString()).year;return (d.year!==year?d.year+' 年 ':'')+d.month+' 月 '+d.day+' 日（週'+WEEKDAYS[d.week]+'）';}
+function renderList(){
+  const groups=[];
+  for(const i of listItems){const label=dayLabel(groupTime(i)),last=groups[groups.length-1];if(last&&last.label===label)last.items.push(i);else groups.push({label,items:[i]});}
+  $('list').replaceChildren(...groups.map(g=>el('section',{'aria-label':g.label},[el('h3',{class:'day'},[el('span',{text:g.label}),el('span',{text:g.items.length+' 篇'})]),el('ul',{class:'day-items'},g.items.map(renderItem))])));
+  if(!listItems.length)$('list').append(el('p',{class:'empty',text:'沒有符合的文章。'}));
+  $('list-summary').textContent='已載入 '+listItems.length+' 篇'+(describeFilters()?'（'+describeFilters()+'）':'');
+  $('more').hidden=!hasMore;
+  markSelected();
+}
+// 已完成的文章不顯示狀態；未完成或有問題（含部分完成）才附在資訊列後面。
+function stateNode(i){return i.status==='ready'?null:el('span',{class:'state '+stateTone(i.status),text:stateLabel(i),'data-role':'state'});}
 function renderItem(i){
-  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('strong',{text:i.title||(i.preview||'').slice(0,80)||i.url}),...badges(i)]);
+  const names=topicNames(i);
+  const meta=el('span',{class:'item-meta'},[names.length?el('span',{text:names.join('、')}):null,names.length?el('span',{class:'sep','aria-hidden':'true'}):null,i.publisher?el('span',{text:i.publisher}):null,i.publisher?el('span',{class:'sep','aria-hidden':'true'}):null,el('span',{text:itemDate(i)})]);
+  const state=stateNode(i);if(state)meta.append(el('span',{class:'sep','aria-hidden':'true'}),state);
+  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'topic-dot','aria-hidden':'true',style:topicColor(i.topic_primary)?'background:'+topicColor(i.topic_primary):''}),el('strong',{text:i.title||(i.preview||'').slice(0,80)||i.url}),meta]);
   if(!i.read_at)a.classList.add('unread');
   if(i.status==='awaiting_backfill'&&i.preview)a.append(el('span',{class:'preview',text:i.preview}));
   a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:i.id},true));};
   return el('li',{},[a]);
 }
-function markSelected(){for(const a of document.querySelectorAll('#list a'))if(current&&a.dataset.id===current.id)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
+function markSelected(){for(const a of document.querySelectorAll('#list a[data-id]'))if(current&&a.dataset.id===current.id)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
 function clearArticle(){current=null;openSeq++;$('article').replaceChildren(el('div',{class:'empty'},[el('h1',{style:'font-size:22px',text:'選一篇文章開始閱讀'}),el('p',{text:'官方文章、X 書籤與分享都在左側列表。處理狀態會自動更新。'})]));notes.close();questions.open(null);}
 async function openArticle(id){
   const seq=++openSeq;
@@ -170,12 +239,43 @@ async function openArticle(id){
 }
 async function refreshArticle(){if(!current)return;const seq=openSeq,result=await api('items/'+current.id);if(seq!==openSeq||result.item.id!==current.id)return;current=result.item;renderArticle(result);notes.sync(current);}
 function provenance(a){if(!a)return '';if(a.legacy)return '搬移前的官方短導讀'+(a.model?'（'+a.model+'）':'，未保存模型資訊');if(a.provider==='ollama')return '本機 '+(a.model||'Gemma')+' 整理';if(a.provider==='gemini')return 'Gemini '+(a.model||'')+' 整理';if(a.provider==='demo')return '示範資料';return a.model||'';}
+// 閱讀頁主題：顯示主要與次要主題，可手動修改；手動設定的主題不會被自動分類覆寫。
+function topicRow(item){
+  const tags=[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean);
+  const row=el('div',{class:'topic-row',id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag'},[el('span',{class:'topic-dot',style:'background:'+t.color,'aria-hidden':'true'}),document.createTextNode(t.name)])):[el('span',{class:'topic-tag',text:'未分類'})]);
+  if(item.topic_source==='manual')row.append(el('span',{class:'muted',text:'手動設定'}));
+  const edit=el('button',{type:'button',class:'linkish','aria-expanded':'false',text:'修改主題'});
+  edit.onclick=()=>{const open=!row.nextSibling||!row.nextSibling.classList.contains('topic-form');if(open)row.after(topicForm(item,edit));else row.nextSibling.remove();edit.setAttribute('aria-expanded',String(open));if(open)row.nextSibling.querySelector('select').focus();};
+  row.append(edit);
+  if(item.topic_source==='manual'){const auto=el('button',{type:'button',class:'linkish',text:'改回自動分類'});auto.onclick=e=>run(()=>saveTopics(item.id,{auto:true},'已改回自動分類，幾分鐘內會重新分類。'),e.currentTarget,'處理中…');row.append(auto);}
+  return row;
+}
+function topicForm(item,edit){
+  const option=(t,selected)=>el('option',{value:t.id,...(selected?{selected:''}:{})},[document.createTextNode(t.name)]);
+  const primary=el('select',{id:'topic-primary'},topicData.topics.map(t=>option(t,t.id===item.topic_primary)));
+  const secondary=el('select',{id:'topic-secondary'},[el('option',{value:'',text:'無'}),...topicData.topics.map(t=>option(t,t.id===item.topic_secondary))]);
+  const save=el('button',{class:'primary',text:'保存主題'}),cancel=el('button',{type:'button',text:'取消'});
+  const form=el('form',{class:'topic-form'},[el('div',{},[el('label',{for:'topic-primary',text:'主要主題'}),primary]),el('div',{},[el('label',{for:'topic-secondary',text:'次要主題'}),secondary]),save,cancel]);
+  cancel.onclick=()=>{form.remove();edit.setAttribute('aria-expanded','false');edit.focus();};
+  form.onsubmit=e=>{e.preventDefault();run(()=>saveTopics(item.id,{primary:primary.value,secondary:secondary.value||null},'主題已更新，之後不會被自動分類覆寫。'),save,'保存中…');};
+  return form;
+}
+async function saveTopics(id,value,done){
+  const result=await api('items/'+id+'/topics','PUT',value);
+  const listed=listItems.find(i=>i.id===id);if(listed)Object.assign(listed,result);
+  topicData=await api('topics?'+filterQuery().toString());renderTopics();renderList();
+  await refreshArticle();message(done);
+}
 function renderArticle(result){
   const item=result.item,box=$('article'),article=JSON.parse(item.article_json||'{}'),gaps=JSON.parse(item.gaps_json||'[]');
   const nodes=[];
   nodes.push(el('h1',{id:'article-title',tabindex:'-1',text:item.title||(result.sources.find(s=>s.relation==='primary')||{content:''}).content.slice(0,100)||'處理中的來源'}));
   const origins=[...new Set((result.intakes||[]).map(i=>ORIGINS[i.origin]||i.origin))];
-  nodes.push(el('p',{class:'meta'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' 更新於 '+when(item.updated_at)+(origins.length?'・收件：'+origins.join('、'):'')+(provenance(article)?'・'+provenance(article):'')+'・'),safeLink(item.url,'開啟原始來源')]));
+  // 文章資訊：發布者與時間在前；收件入口、既有導讀與整理模型等管理資訊放在第二行。
+  const fullDate=iso=>{const d=twDate(iso);return d.year+'/'+d.month+'/'+d.day;};
+  nodes.push(topicRow(item));
+  nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
+  nodes.push(el('p',{class:'meta'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
   if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
   if(item.status==='waiting_local')nodes.push(el('p',{class:'notice',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
   if(item.status==='budget_paused')nodes.push(el('p',{class:'notice',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
@@ -269,7 +369,12 @@ async function updateListItem(id){const [s]=await api('items/states?ids='+id);if
 function applyState(s){
   const i=listItems.find(x=>x.id===s.id);if(i)Object.assign(i,s);
   const a=document.querySelector('#list a[data-id="'+s.id+'"]');
-  if(a&&i){const badge=a.querySelector('[data-role=state]');badge.className='badge '+stateTone(i.status);badge.textContent=stateLabel(i);a.classList.toggle('unread',!i.read_at);}
+  if(a&&i){
+    const meta=a.querySelector('.item-meta'),old=meta.querySelector('[data-role=state]'),next=stateNode(i);
+    if(old){old.previousSibling.remove();old.remove();}
+    if(next)meta.append(el('span',{class:'sep','aria-hidden':'true'}),next);
+    a.classList.toggle('unread',!i.read_at);
+  }
 }
 // 所有入口與追問共用的進度刷新：只更新狀態徽章；目前文章變更時只重繪文章區，不動筆記。
 async function poll(){
@@ -441,12 +546,15 @@ async function loadHistory(){
 function pollQuestion(id,quiet){clearTimeout(questionTimer);watching=id;const scope=scopeId();questionTimer=setTimeout(async()=>{if(watching!==id||scope!==scopeId())return;if(document.hidden){pollQuestion(id,quiet);return;}try{const q=await api('questions/'+id);if(watching!==id||scope!==scopeId())return;if(!quiet)renderQuestion(q);if(['waiting_local','generating'].includes(q.status))pollQuestion(id,quiet);else{watching=null;await loadHistory();}}catch(e){message('提問進度更新失敗：'+e.message,true);}},5000);}
 $('ask-form').onsubmit=e=>{e.preventDefault();run(async()=>{const scoped=document.querySelector('input[name=scope]:checked').value==='article';if(scoped&&!current)throw Error('請先選一篇文章，或改為整個文章庫。');$('answer').textContent='正在保存問題並檢索來源…';const q=await api('ask','POST',{question:$('question').value,item_id:scoped?current.id:null});renderQuestion(q);if(['waiting_local','generating'].includes(q.status))pollQuestion(q.id);await loadHistory();},e.submitter||e.target.querySelector('button'),'送出中…');};
 for(const radio of document.querySelectorAll('input[name=scope]'))radio.onchange=()=>{watching=null;questions.forcedAll=false;quickHint();run(loadHistory);};
-$('search-form').onsubmit=e=>{e.preventDefault();run(()=>navigate({q:$('search').value.trim(),page:0,article:null}));};
-$('unread').onchange=()=>run(()=>navigate({unread:$('unread').checked,page:0}));
-$('origin').onchange=()=>run(()=>navigate({origin:$('origin').value,page:0}));
-$('state').onchange=()=>run(()=>navigate({state:$('state').value,page:0}));
-$('previous').onclick=e=>run(()=>navigate({page:Math.max(0,view.page-1)}),e.currentTarget,'載入中…');
-$('next').onclick=e=>run(()=>navigate({page:view.page+1}),e.currentTarget,'載入中…');
+$('search-form').onsubmit=e=>{e.preventDefault();run(()=>navigate({q:$('search').value.trim(),article:null}));};
+$('unread').onchange=()=>run(()=>navigate({unread:$('unread').checked}));
+$('origin').onchange=()=>run(()=>navigate({origin:$('origin').value}));
+$('state').onchange=()=>run(()=>navigate({state:$('state').value}));
+$('sort').onchange=()=>run(()=>navigate({sort:$('sort').value}));
+$('more').onclick=e=>run(loadMore,e.currentTarget,'載入中…');
+$('manage-toggle').onclick=e=>{const open=$('manage').hidden;$('manage').hidden=!open;e.currentTarget.setAttribute('aria-expanded',String(open));};
+// 列表底部出現在畫面中就載入下一批；不支援時保留「載入更多」按鈕。
+if('IntersectionObserver' in window)new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting))run(loadMore);},{rootMargin:'200px'}).observe($('list-end'));
 $('back').onclick=()=>{if(history.state&&history.state.fromList)history.back();else run(()=>navigate({article:null}));};
 $('collect-form').onsubmit=e=>{e.preventDefault();run(async()=>{const r=await api('collect','POST',{url:$('url').value});$('url').value='';message('已收到並保存連結。完成後會透過 Telegram 通知。');listKey=null;await navigate({article:r.id});},e.submitter||e.target.querySelector('button'),'加入中…');};
 document.addEventListener('keydown',e=>{

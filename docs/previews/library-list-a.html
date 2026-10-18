@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>設計稿 A・寬鬆時間軸</title>
+<style>
+:root{--bg:#f3f6f5;--paper:#fff;--ink:#183a37;--muted:#4f615e;--line:#d3e0dd;--accent:#0f766e;--soft:#e6f3ef;--focus:#b45309;--warn-bg:#fff4df;--warn:#8b440a;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg)}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{display:flex;flex-direction:column;background:var(--bg)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+input,select{border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:44px;background:#fff}
+.top{display:flex;gap:16px;align-items:center;padding:10px 20px;min-height:60px;background:var(--ink);color:#fff}
+.top b{font-size:18px;margin-right:auto}.pill{font-size:13px;padding:4px 10px;border-radius:999px;background:#2b524e}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(320px,400px) minmax(0,1fr)}
+#library{border-right:1px solid var(--line);background:var(--paper);overflow:auto;padding:16px 16px 32px}
+#search{width:100%}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:12px 0 8px}
+.check{display:flex;align-items:center;gap:8px;min-height:44px;font-weight:600}.check input{min-height:auto;width:20px;height:20px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px;background:var(--bg)}
+.seg button{min-height:36px;border:0;border-radius:999px;background:none;padding:4px 12px;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed=true]{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
+.chips button{min-height:36px;padding:4px 12px;border-radius:999px;font-size:14px}
+.chips button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+.chips small{opacity:.75;margin-left:4px;font-variant-numeric:tabular-nums}
+details.manage{border:1px solid var(--line);border-radius:8px;padding:0 12px;margin-bottom:8px}
+details.manage summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--muted);font-size:14px}
+details.manage .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding-bottom:12px}details.manage label{font-size:13px;display:block;margin-bottom:4px}details.manage select{width:100%}
+h3.day{position:sticky;top:-16px;z-index:1;margin:0 -16px;padding:10px 16px 6px;background:var(--paper);font-size:13px;color:var(--muted);border-bottom:1px solid var(--line);font-weight:700}
+ul{list-style:none;margin:0;padding:0}
+.item{display:block;padding:12px;margin:0 -12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;border-radius:6px}
+.item:hover{background:#f4f8f7}.item[aria-current]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
+.item strong{display:block;line-height:1.5;font-size:16px}
+.item.unread strong:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:2px}
+.meta{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;margin-top:6px;font-size:13px;color:var(--muted)}
+.topic{font-size:12px;padding:2px 8px;border-radius:5px;background:var(--soft);color:var(--ink);font-weight:600}
+.state{font-size:12px;padding:2px 8px;border-radius:5px;background:var(--warn-bg);color:var(--warn)}
+.more{width:100%;margin-top:12px;color:var(--muted)}
+#reader{overflow:auto;padding:28px clamp(16px,4vw,56px)}
+#reader h1{font-size:28px;line-height:1.45;margin:0 0 8px}.rmeta{color:var(--muted);font-size:14px;line-height:1.8}
+.rmeta .topic{margin-right:4px}.fake{height:14px;border-radius:4px;background:#e4ecea;margin:14px 0;max-width:72ch}
+.note{margin-top:32px;padding:12px 14px;border-left:4px solid var(--focus);background:var(--warn-bg);border-radius:4px;font-size:14px;max-width:72ch;line-height:1.7}
+@media (max-width:760px){.layout{grid-template-columns:minmax(0,1fr)}#library{min-width:0}#reader{display:none}.chips{flex-wrap:nowrap;overflow-x:auto;margin:4px -16px 12px;padding:0 16px}.chips button{flex:none}}
+</style></head><body>
+<header class="top"><b>TechNews 文章庫</b><span class="pill">設計稿 A・寬鬆時間軸</span></header>
+<main class="layout">
+<aside id="library" aria-label="文章列表">
+  <input id="search" type="search" placeholder="搜尋標題、正文與原文">
+  <div class="row">
+    <label class="check"><input type="checkbox" id="unread"> 只看未讀</label>
+    <div class="seg" role="group" aria-label="排序"><button aria-pressed="true" data-sort="published">發表時間</button><button aria-pressed="false" data-sort="added">加入時間</button></div>
+  </div>
+  <div class="chips" id="chips" role="group" aria-label="主題"></div>
+  <details class="manage"><summary>管理篩選（收件入口、處理狀態）</summary><div class="grid">
+    <div><label>收件入口</label><select><option>全部入口</option></select></div>
+    <div><label>處理狀態</label><select><option>全部（不含已略過）</option></select></div>
+  </div></details>
+  <div id="list"></div>
+  <button class="more">捲到底自動載入更多…</button>
+</aside>
+<section id="reader">
+  <h1 id="title"></h1>
+  <div class="rmeta" id="rmeta"></div>
+  <div class="fake"></div><div class="fake" style="width:92%"></div><div class="fake" style="width:84%"></div><div class="fake"></div><div class="fake" style="width:60%"></div>
+  <p class="note">閱讀頁的文章資訊區顯示：主題（可手動修改）、發布者、原文發表時間、加入時間、收件入口、版本。收件入口與「既有導讀」從列表移到這裡。</p>
+</section>
+</main>
+<script>
+// 設計稿共用的合成資料；標題、帳號與時間皆為虛構範例。
+const TOPICS=['模型發布與能力','AI Coding 工具','Agent 架構與工程實踐','產品功能更新','iOS／Apple 開發','安全、治理與政策','企業導入案例'];
+const ITEMS=[
+  {id:'a1',title:'範例模型 Nova 3 推出百萬 token 上下文與更低延遲的推論 API',topic:'模型發布與能力',publisher:'OpenAI News',published:'2026-03-16T19:00:00Z',added:'2026-03-17T00:00:00Z',unread:true,origins:'官方來源'},
+  {id:'a2',title:'用 Hook 攔截 Agent 工具呼叫：在不改模型的情況下降低重複讀檔',topic:'Agent 架構與工程實踐',topic2:'AI Coding 工具',publisher:'X @example_dev',published:'2026-03-16T13:31:00Z',added:'2026-03-16T17:01:00Z',unread:true,origins:'Telegram 分享'},
+  {id:'a3',title:'App Review 指南更新：隱藏功能與外部購買連結的新規範',topic:'iOS／Apple 開發',publisher:'Apple Developer',published:'2026-03-16T20:05:00Z',added:'2026-03-17T00:00:08Z',unread:false,origins:'官方來源'},
+  {id:'a4',title:'Code Review 代理正式推出：審查分級、權限與團隊導入流程',topic:'AI Coding 工具',publisher:'X @example_tools',published:'2026-03-15T22:51:00Z',added:'2026-03-16T07:16:00Z',unread:true,origins:'Telegram 分享、網站加入'},
+  {id:'a5',title:'跨模型供應商的容錯設計：從重試策略到降級回應',topic:'Agent 架構與工程實踐',publisher:'OpenAI Developers',published:null,added:'2026-03-17T00:00:07Z',unread:true,origins:'官方來源（既有導讀）'},
+  {id:'a6',title:'語音模式更新：新聲線與更準確的口音辨識',topic:'產品功能更新',publisher:'X @example_app',published:'2026-03-15T18:19:00Z',added:'2026-03-16T16:59:00Z',unread:false,origins:'網站加入'},
+  {id:'a7',title:'第三方安全評估機構取得模型的員工級存取權限',topic:'安全、治理與政策',publisher:'Anthropic News',published:'2026-03-15T17:20:00Z',added:'2026-03-16T01:01:00Z',unread:true,origins:'官方來源'},
+  {id:'a8',title:'一家銀行如何用內部平台治理多個模型的調度與稽核',topic:'企業導入案例',publisher:'OpenAI News',published:'2026-03-15T19:00:00Z',added:'2026-03-16T01:00:53Z',unread:false,origins:'官方來源'},
+  {id:'a9',title:'Agent 的閒置上下文壓縮：快取如何保存與何時失效',topic:'AI Coding 工具',publisher:'X @example_dev',published:'2026-03-14T21:36:00Z',added:'2026-03-16T01:00:45Z',unread:true,state:'本機生成中',origins:'X 書籤'},
+  {id:'a10',title:'從 Prompting 到 Graph：Agent 架構的重心轉移',topic:'Agent 架構與工程實踐',publisher:'X @example_researcher',published:'2026-02-28T13:53:00Z',added:'2026-03-13T15:16:21Z',unread:false,origins:'書籤回補'},
+  {id:'a11',title:'開發者授權條款更新：新 API 權限與替代 App 的規範',topic:'iOS／Apple 開發',publisher:'Apple Developer',published:'2026-03-13T22:00:00Z',added:'2026-03-14T01:00:17Z',unread:true,origins:'官方來源'},
+  {id:'a12',title:'多模態推論架構解析：影片理解與工具呼叫的整合',topic:'模型發布與能力',publisher:'X @example_ceo',published:'2026-03-13T16:04:00Z',added:'2026-03-15T03:19:00Z',unread:false,state:'來源缺漏',origins:'Telegram 分享'},
+];
+const WEEK=['日','一','二','三','四','五','六'];
+// 以台灣時間顯示日期。
+function tw(iso){return new Date(new Date(iso).getTime()+8*3600e3);}
+function dayLabel(iso){const d=tw(iso);return `${d.getUTCFullYear()} 年 ${d.getUTCMonth()+1} 月 ${d.getUTCDate()} 日（週${WEEK[d.getUTCDay()]}）`;}
+function shortDate(iso){const d=tw(iso);return `${d.getUTCMonth()+1}/${d.getUTCDate()}`;}
+</script>
+<script>
+let topic='',sort='published',current=ITEMS[0].id;
+const $=id=>document.getElementById(id);
+function chips(){
+  const counts={};ITEMS.forEach(i=>[i.topic,i.topic2].filter(Boolean).forEach(t=>counts[t]=(counts[t]||0)+1));
+  $('chips').innerHTML=[['','全部',ITEMS.length],...TOPICS.map(t=>[t,t,counts[t]||0])].map(([v,l,n])=>`<button aria-pressed="${v===topic}" data-topic="${v}">${l}<small>${n}</small></button>`).join('');
+}
+function render(){
+  chips();
+  const items=ITEMS.filter(i=>!topic||i.topic===topic||i.topic2===topic).slice().sort((a,b)=>(sort==='published'?(b.published||b.added).localeCompare(a.published||a.added):b.added.localeCompare(a.added)));
+  const groups=new Map();
+  for(const i of items){const d=sort==='published'?(i.published||i.added):i.added;const k=dayLabel(d);(groups.get(k)||groups.set(k,[]).get(k)).push(i);}
+  $('list').innerHTML=[...groups].map(([day,list])=>`<h3 class="day">${day}</h3><ul>${list.map(i=>`<li><a class="item${i.unread?' unread':''}" href="#" data-id="${i.id}" ${i.id===current?'aria-current="page"':''}><strong>${i.title}</strong><span class="meta"><span class="topic">${i.topic}</span>${i.topic2?`<span class="topic">${i.topic2}</span>`:''}<span>${i.publisher}</span><span>·</span><span>${i.published?shortDate(i.published):'日期未知・加入於 '+shortDate(i.added)}</span>${i.state?`<span class="state">${i.state}</span>`:''}</span></a></li>`).join('')}</ul>`).join('');
+  const c=ITEMS.find(i=>i.id===current);$('title').textContent=c.title;
+  $('rmeta').innerHTML=`<span class="topic">${c.topic}</span>${c.topic2?`<span class="topic">${c.topic2}</span>`:''} ${c.publisher}・發表 ${c.published?shortDate(c.published):'日期未知'}・加入 ${shortDate(c.added)}<br>收件入口：${c.origins}`;
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-topic]');if(t){topic=t.dataset.topic;render();}
+  const s=e.target.closest('[data-sort]');if(s){sort=s.dataset.sort;document.querySelectorAll('[data-sort]').forEach(b=>b.setAttribute('aria-pressed',b===s));render();}
+  const a=e.target.closest('.item');if(a){e.preventDefault();current=a.dataset.id;render();}
+});
+render();
+</script>
+</body></html>

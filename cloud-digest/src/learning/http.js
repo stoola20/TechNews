@@ -4,12 +4,13 @@ import {ADMIN_PAGE} from './admin-page.js';
 import {createLearningService} from './service.js';
 import {equalSecret,authorized,createSession,cookie,mutationAllowed} from './auth.js';
 import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connection,saveConnection,nowIso} from './store.js';
-import {exchange,xRead} from './x.js';
+import {exchange,xRead,bookmarksEnabled,xReads,setXReads} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
-import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
+import {resolveItemId,migrateLibrary,ORIGINS,officialSources,publisherFor} from './library.js';
 import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
+import {topicList,setItemTopics,saveTopicList,reclassifyAll} from './topics.js';
 import {mergeExistingDuplicates} from './linking.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
@@ -59,7 +60,7 @@ export function createLearningHandler(deps={}) {
         const existing=await setting(env,'sync');
         if(existing.user_id!==identity.data.id)await setSetting(env,'sync',{user_id:identity.data.id,baseline_complete:false,running:true,cursor:null,backfill_approved:false});
         else await setSetting(env,'sync',{...existing,requires_action:false,running:true,last_error:null});
-        if(env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});
+        if(env.LEARNING_JOBS&&await bookmarksEnabled(env))await env.LEARNING_JOBS.send({kind:'sync'});
         return new Response(null,{status:303,headers:{location:'/learning','set-cookie':await createSession(env),...JSON_HEADERS}});
       }
       if(path.startsWith('/learning/runner/')&&request.method==='POST'){
@@ -96,7 +97,7 @@ export function createLearningHandler(deps={}) {
       const route=path.replace(/^\/learning\/api\//,'');
       if(route==='status'&&request.method==='GET'){
         const count=await query(env,"SELECT COUNT(*) AS count FROM learning_items WHERE status='awaiting_backfill'").first();
-        return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
+        return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),x_reads:await xReads(env),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
       if(route==='admin/migrate'&&request.method==='POST'){const library=await migrateLibrary(env),linked=await mergeExistingDuplicates(env);return json({...library,merged:library.merged+linked.merged,linked_checked:linked.checked});}
@@ -108,16 +109,24 @@ export function createLearningHandler(deps={}) {
         await recordCost(env,data.category,amount,'adjustment',{note:data.note.trim()});
         return json(await budgetSummary(env,await budget(env)));
       }
+      if(route==='admin/topics'&&request.method==='GET')return json({topics:await topicList(env)});
+      if(route==='admin/topics'&&request.method==='PUT')return json(await saveTopicList(env,await body(request)));
+      if(route==='admin/topics/reclassify'&&request.method==='POST')return json(await reclassifyAll(env));
+      if(route==='admin/x-reads'&&request.method==='PUT')return json(await setXReads(env,await body(request)));
       if(route==='admin/text-provider'&&request.method==='PUT'){await setTextProvider(env,(await body(request)).provider);return json(await runnerStatus(env));}
-      if(route==='items'&&request.method==='GET'){
+      if((route==='items'||route==='topics')&&request.method==='GET'){
         const term=(url.searchParams.get('q') || '').trim();
         const offset=Number(url.searchParams.get('offset') || 0);
         if(term.length>200||!Number.isInteger(offset)||offset<0||offset>1000000)throw new Error('搜尋參數無效');
         // status 為舊參數，等同單一狀態篩選；state 為狀態群組。
         const legacy=url.searchParams.get('status')||'',group=url.searchParams.get('state')||'',origin=url.searchParams.get('origin')||'',unread=url.searchParams.get('unread')==='1';
+        const sort=url.searchParams.get('sort')||'published',topic=url.searchParams.get('topic')||'';
+        if(!['published','added'].includes(sort))throw new Error('排序方式無效');
         if(legacy&&!['awaiting_backfill','ready','partial','needs_attention','filtered'].includes(legacy))throw new Error('文章篩選無效');
         if(group&&!STATE_GROUPS[group])throw new Error('狀態篩選無效');
         if(origin&&!ORIGINS[origin])throw new Error('收件入口篩選無效');
+        const topics=await topicList(env),topicIds=topics.map(t=>t.id);
+        if(topic&&topic!=='unclassified'&&!topicIds.includes(topic))throw new Error('主題篩選無效');
         const statuses=legacy?[legacy]:group?STATE_GROUPS[group]:null;
         const conditions=["status NOT IN ('dismissed','merged')"],args=[];
         if(statuses){conditions.push(`status IN (${statuses.map(()=>'?').join(',')})`);args.push(...statuses);}else conditions.push("status!='filtered'");
@@ -129,10 +138,25 @@ export function createLearningHandler(deps={}) {
           conditions.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\'))");
           args.push(pattern,pattern,pattern,pattern);
         }
-        return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,revision,created_at,updated_at,
+        // 主題篇數依主題以外的條件計算，chip 上的數字和點下去看到的篇數一致；主要與次要主題都計入。
+        if(route==='topics'){
+          const counted=await rows(env,`SELECT topic_primary,topic_secondary FROM learning_items WHERE ${conditions.join(' AND ')}`,...args);
+          const count=id=>counted.filter(r=>r.topic_primary===id||r.topic_secondary===id).length;
+          return json({topics:topics.map(t=>({id:t.id,name:t.name,color:t.color,count:count(t.id)})),unclassified:counted.filter(r=>!topicIds.includes(r.topic_primary)).length,total:counted.length});
+        }
+        if(topic==='unclassified'){conditions.push(`(topic_primary IS NULL OR topic_primary NOT IN (${topicIds.map(()=>'?').join(',')}))`);args.push(...topicIds);}
+        else if(topic){conditions.push('(topic_primary=? OR topic_secondary=?)');args.push(topic,topic);}
+        // 發表時間排序：沒有發表時間的文章以加入時間排入；ID 作為次要排序，分頁才穩定。
+        const order=sort==='added'?'created_at DESC,id DESC':'COALESCE(published_at,created_at) DESC,id DESC';
+        const listed=await rows(env,`SELECT id,url,kind,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,topic_primary,topic_secondary,
           (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
-          (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins
-          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...args,offset));
+          (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins,
+          (SELECT json_extract(k.metadata_json,'$.source_id') FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin='official' AND json_extract(k.metadata_json,'$.source_id') IS NOT NULL LIMIT 1) AS source_id,
+          (SELECT COALESCE(json_extract(e.metadata_json,'$.author_username'),(SELECT json_extract(s.value_json,'$.username') FROM settings s WHERE s.key='learning:author:'||e.author_id))
+            FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' AND learning_items.kind='x' LIMIT 1) AS author_username
+          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY ${order} LIMIT 50 OFFSET ?`,...args,offset);
+        const sources=await officialSources(env);
+        return json(listed.map(({source_id,author_username,...row})=>({...row,publisher:publisherFor({...row,source_id,author_username},sources)})));
       }
       if(route==='items/states'&&request.method==='GET'){
         // 輕量狀態刷新：只回狀態，不重建正文或筆記。
@@ -141,7 +165,7 @@ export function createLearningHandler(deps={}) {
         if(!ids.length)return json([]);
         return json(await rows(env,`SELECT id,status,stage,revision,read_at,last_error,updated_at,note_updated_at FROM learning_items WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids));
       }
-      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source))?$/);
+      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics))?$/);
       if(match){
         const id=await resolveItemId(env,match[1]),current=id&&await item(env,id);
         if(!current||current.status==='dismissed')return json({error:'文章不存在'},404);
@@ -155,6 +179,11 @@ export function createLearningHandler(deps={}) {
           if(!['ready','partial','needs_attention','error'].includes(current.status))return json({error:'這篇目前不能重寫，請等處理完成。'},409);
           await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL,article_json=json_set(COALESCE(article_json,'{}'),'$.input_fingerprint','rewrite-requested'),updated_at=? WHERE id=?",nowIso(),id).run();
           await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/topics'&&request.method==='PUT'){
+          await setItemTopics(env,current,await body(request));
+          const fresh=await item(env,id);
+          return json({id,topic_primary:fresh.topic_primary,topic_secondary:fresh.topic_secondary,topic_source:fresh.topic_source});
         }
         if(match[2]==='/source'&&request.method==='POST'){
           // 手動貼上原文：只接受目前列為缺漏的來源網址，保存後重新整理。
@@ -199,10 +228,15 @@ export function createLearningHandler(deps={}) {
           // 裝飾圖片不顯示；舊資料留下的對應缺漏也一併隱藏，下次整理時會正式移除。
           await skipDecorative(env,id);
           const fresh=await item(env,id);
-          return json({item:{...fresh,body_html:renderMarkdown(fresh.body||'')},requested_id:match[1],sources:await evidence(env,id),
+          const sources=await evidence(env,id),intakes=await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id);
+          const primary=sources.find(s=>s.relation==='primary');
+          const author=fresh.kind==='x'&&primary?JSON.parse(primary.metadata_json||'{}').author_username||(await setting(env,`author:${primary.author_id}`)).username||null:null;
+          const sourceId=intakes.filter(k=>k.origin==='official').map(k=>JSON.parse(k.metadata_json||'{}').source_id).find(Boolean);
+          const publisher=publisherFor({url:fresh.url,source_id:sourceId,author_username:author},await officialSources(env));
+          return json({item:{...fresh,publisher,body_html:renderMarkdown(fresh.body||'')},requested_id:match[1],sources,
           media:await rows(env,"SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=? AND status!='decorative' ORDER BY rowid",id),
           analyses:(await rows(env,'SELECT media_id,model,prompt_version,analysis_json,created_at FROM learning_media_analyses WHERE item_id=? ORDER BY created_at',id)).map(a=>({...a,analysis:JSON.parse(a.analysis_json),analysis_json:undefined})),
-          intakes:await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id),
+          intakes,
           versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
         }
         if(!match[2]&&request.method==='PATCH'){
@@ -234,7 +268,7 @@ export function createLearningHandler(deps={}) {
       if(route==='control'&&request.method==='POST'){
         const data=await body(request);
         if(data.action==='pause')await setSetting(env,'control',{paused:true,reason:'manual',paused_at:nowIso()});
-        else if(data.action==='resume'){await resume(env);await service.recover(env);const sync=await setting(env,'sync');if(sync.running&&env.LEARNING_JOBS)await env.LEARNING_JOBS.send({kind:'sync'});}
+        else if(data.action==='resume'){await resume(env);await service.recover(env);const sync=await setting(env,'sync');if(sync.running&&env.LEARNING_JOBS&&await bookmarksEnabled(env))await env.LEARNING_JOBS.send({kind:'sync'});}
         else throw new Error('未知處理動作');
         return json(await budget(env));
       }

@@ -1,6 +1,7 @@
 import {query,rows,hash,item,nowIso,saveEvidence} from './store.js';
 import {canonicalUrl} from './network.js';
 import {canonicalArticleUrl,getSources} from '../sources.js';
+import {normalizePublished} from './dates.js';
 import {readSettings} from '../settings.js';
 
 // 收件入口標籤。share 為 Telegram 分享，保留舊值以免改寫既有收件紀錄。
@@ -131,4 +132,31 @@ export async function migrateLibrary(env){
   const urls=await reconcileUrls(env,sources);
   const official=await importOfficial(env,sources);
   return {imported:official.imported,merged:official.merged+urls.merged,renamed:urls.renamed};
+}
+
+// 補上文章的原文發表時間：依序用主要來源、收件紀錄、舊官方文章表。只寫資料庫，可重複執行。
+// 三處都查不到的文章每次維護都會再看一次；數量少且只讀 D1，不另記錄。
+export async function backfillPublished(env,limit=200){
+  const candidates=await rows(env,`SELECT i.id,
+      (SELECT group_concat(e.published_at,char(31)) FROM learning_evidence e WHERE e.item_id=i.id AND e.relation='primary' AND e.published_at IS NOT NULL) AS evidence,
+      (SELECT group_concat(json_extract(k.metadata_json,'$.published_at'),char(31)) FROM learning_intakes k WHERE k.item_id=i.id AND json_extract(k.metadata_json,'$.published_at') IS NOT NULL) AS intakes,
+      (SELECT group_concat(a.published_at,char(31)) FROM articles a WHERE a.library_item_id=i.id AND a.published_at IS NOT NULL) AS legacy
+    FROM learning_items i WHERE i.published_at IS NULL AND i.status!='merged' ORDER BY i.created_at DESC LIMIT ?`,limit);
+  let updated=0;
+  for(const row of candidates){
+    const values=[row.evidence,row.intakes,row.legacy].flatMap(v=>v?String(v).split('\x1f'):[]);
+    const published=values.map(normalizePublished).find(Boolean);
+    if(!published)continue;
+    await query(env,'UPDATE learning_items SET published_at=? WHERE id=? AND published_at IS NULL',published,row.id).run();
+    updated++;
+  }
+  return updated;
+}
+
+// 列表顯示的發布者：官方收件用來源名稱，X 文章用作者帳號，其他用網址網域。
+export function publisherFor(row,sources){
+  const source=row.source_id && sources.find(s=>s.id===row.source_id);
+  if(source)return source.name;
+  if(row.author_username)return '@'+row.author_username;
+  try{return new URL(row.url).hostname.replace(/^www\./,'');}catch{return '';}
 }

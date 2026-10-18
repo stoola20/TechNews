@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createLearningHandler} from '../src/learning/http.js';
 import {startFullScan,failureDetail} from '../src/learning/x.js';
 import {saveConnection,setting,setSetting,query,rows,item} from '../src/learning/store.js';
-import {environment,recorder,request,iso,message} from './helpers.js';
+import {environment,recorder,request,iso,message,enableXReads} from './helpers.js';
 
 const post=id=>({id:String(id),text:'收藏 '+id,author_id:'9',conversation_id:String(id),created_at:'2026-10-01T00:00:00Z'});
 // 三頁書籤：第二頁不足 100 筆但仍有 next_token；第一頁包含已知 ID。
@@ -20,8 +20,9 @@ function bookmarks(){
   });
   return {pages,calls,net,setFail(f){fail=f;}};
 }
-async function setup(extra={}){
+async function setup(extra={},{xReads=true}={}){
   const env=environment(extra),x=bookmarks(),handler=createLearningHandler(x.net);
+  if(xReads)await enableXReads(env);
   await saveConnection(env,'x',{user_id:'7',access_token:'a',refresh_token:'r',expires_at:Date.now()+86400000});
   return {env,x,handler};
 }
@@ -122,6 +123,31 @@ test('排程任務：每十分鐘排入局部檢查，08:00 開始完整核對�
   assert.equal((await setting(s.env,'sync')).running,true);
   const status=await (await s.handler.fetch(request('api/status'),s.env)).json();
   assert.equal(status.sync.last_full_completed_at,'2026-10-15T00:10:00.000Z');assert.ok('sync_partial' in status);
+});
+
+test('X 讀取開關預設關閉：排程、續跑、手動同步都不讀 X，也不重排已完成的推文；管理頁打開後恢復',async()=>{
+  const s=await setup({},{xReads:false});
+  await setSetting(s.env,'sync',{baseline_complete:true,running:true,cursor:'p2'});
+  await query(s.env,"INSERT INTO learning_items(id,url,kind,status,revision,recheck_at,rechecked,created_at,updated_at) VALUES('x1','https://x.com/a/status/1','x','ready',1,'2020-01-01',0,?,?)",iso(0),iso(0)).run();
+  await s.handler.scheduled(s.env,{tasks:['bookmark_partial','bookmark_daily','author_recheck','maintenance']});
+  assert.deepEqual(s.env.LEARNING_JOBS.jobs,[]);
+  assert.equal((await item(s.env,'x1')).status,'ready');assert.equal((await item(s.env,'x1')).rechecked,0);
+  assert.deepEqual(await s.handler.service.sync(s.env,'partial'),{disabled:true});
+  assert.deepEqual(await (await s.handler.fetch(request('api/x/sync','POST',{}),s.env)).json(),{disabled:true});
+  assert.equal(s.x.calls.length,0);
+  assert.deepEqual((await (await s.handler.fetch(request('api/status'),s.env)).json()).x_reads,{bookmarks:false,author_recheck:false});
+
+  // 管理頁分別切換；只打開書籤同步時，作者重查仍不執行。
+  assert.equal((await s.handler.fetch(request('api/admin/x-reads','PUT',{bookmarks:'yes'}),s.env)).status,400);
+  assert.deepEqual(await (await s.handler.fetch(request('api/admin/x-reads','PUT',{bookmarks:true}),s.env)).json(),{bookmarks:true,author_recheck:false});
+  await s.handler.scheduled(s.env,{tasks:['bookmark_partial','author_recheck']});
+  // 局部檢查之外，先前保存游標的完整核對也恢復續跑。
+  assert.deepEqual(s.env.LEARNING_JOBS.jobs,[{kind:'sync',scope:'partial'},{kind:'sync'}]);
+  assert.equal((await item(s.env,'x1')).status,'ready');
+  await s.handler.fetch(request('api/admin/x-reads','PUT',{author_recheck:true}),s.env);
+  await s.handler.scheduled(s.env,{tasks:['author_recheck']});
+  assert.equal((await item(s.env,'x1')).status,'queued');
+  assert.deepEqual((await (await s.handler.fetch(request('api/status'),s.env)).json()).x_reads,{bookmarks:true,author_recheck:true});
 });
 
 test('同步失敗時保存並記錄狀態碼、錯誤類型與出錯階段，log 不含 token、帳號 ID 或貼文內容',async t=>{
