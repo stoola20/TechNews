@@ -3,7 +3,7 @@ import {canonicalUrl,apiJson} from './network.js';
 import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia,skipDecorative} from './media.js';
 import {generate} from './gemini.js';
-import {syncBookmarks,registerMedia,startFullScan,saveArticle} from './x.js';
+import {syncBookmarks,registerMedia,startFullScan,saveArticle,failureDetail} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
@@ -194,7 +194,9 @@ export function createLearningService(deps={}) {
       }catch(error){
         if(error.name==='BudgetPaused')message.ack();
         else message.retry({delaySeconds:300});
-        console.log(JSON.stringify({event:'learning_task_failed',kind:message.body.kind,error:error.name==='BudgetPaused'?'budget_paused':'processing_failed'}));
+        // 附上狀態碼、錯誤類型、出錯階段與訊息前段，正式環境才查得出原因。
+        const {at,...detail}=failureDetail(error,error.stage || (message.body.kind==='sync'?'sync':'process'));
+        console.log(JSON.stringify({event:'learning_task_failed',kind:message.body.kind,scope:message.body.scope,error:error.name==='BudgetPaused'?'budget_paused':'processing_failed',...detail}));
       }
     }
   }
