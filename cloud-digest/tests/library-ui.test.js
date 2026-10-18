@@ -100,3 +100,23 @@ test('手動貼上原文：只接受缺漏網址，保存為使用者來源並�
   assert.equal((await rows(env,"SELECT content FROM learning_evidence WHERE item_id=? AND url=?",id,article))[0].content,long);
   assert.equal((await paste(article,long)).status,409);
 });
+
+test('筆記與追問在閱讀區下方可收合的對話框：分頁、展開按鈕、Escape 不觸發返回列表',()=>{
+  const html=LEARNING_PAGE,script=html.match(/<script>([\s\S]*)<\/script>/)[1];
+  const reader=html.indexOf('id="reader"'),dock=html.indexOf('id="dock"');
+  // 筆記與追問不再放在閱讀區最下方，而是閱讀區之後的獨立對話框。
+  assert.ok(reader>0&&dock>reader);
+  for(const id of ['notes-panel','ask-panel','note','ask-form','history'])assert.ok(html.indexOf('id="'+id+'"')>dock,id);
+  assert.equal((html.match(/role="tab"/g)||[]).length,2);
+  assert.equal((html.match(/role="tabpanel"/g)||[]).length,2);
+  assert.match(html,/<button[^>]*id="dock-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="dock-body"[^>]*><span id="dock-toggle-text">展開<\/span>/);
+  assert.match(html,/id="quick-ask"[\s\S]*id="quick-question"/);
+  // 手機版隱藏快速追問、對話框固定在底部且最高約 78vh；桌機展開約 46vh。
+  assert.match(html,/@media\(max-width:959px\)\{[\s\S]*#quick-ask\{display:none\}/);
+  assert.match(html,/#dock\.open\{height:46vh\}/);assert.match(html,/max-height:78vh/);
+  // 閱讀區底部留白跟著對話框高度。
+  assert.match(html,/#reader\{[^}]*padding:[^;}]*var\(--dock-h/);
+  // Escape 先關閉對話框並 return，之後的返回列表也排除對話框內的焦點。
+  assert.ok(script.indexOf("dock.toggle(false,true);return;")<script.indexOf("$('back').click()"));
+  assert.match(script,/!\$\('dock'\)\.contains\(document\.activeElement\)\)\$\('back'\)\.click\(\)/);
+});
