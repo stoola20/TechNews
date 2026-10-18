@@ -91,6 +91,14 @@ export async function postEvidence(env,id,fetcher=fetch) {
   if(!result.data?.id)throw new Error('X 主文不可取得或帳號沒有讀取權限');
   return normalizePost(result.data,result.includes);
 }
+// 同步失敗的診斷只留狀態碼、錯誤類型、出錯階段與訊息前段；長串數字（帳號或貼文 ID）遮掉，
+// 解析錯誤的訊息可能夾帶回應原文，整段不記。
+export function failureDetail(error,stage){
+  const name=error?.name || 'Error';
+  const message=name==='SyntaxError'?'回應解析失敗（原文不記錄）':String(error?.message || '').replace(/\d{8,}/g,'…').slice(0,200);
+  return {stage,status:error?.status ?? null,name,message,at:nowIso()};
+}
+function logFailure(scope,detail){console.log(JSON.stringify({event:'bookmark_sync_failed',scope,...detail}));}
 const FULL_LOCK='learning:sync-lock',PARTIAL_LOCK='learning:sync-lock-partial';
 async function acquireLock(env,key,ms=600000){
   const id=crypto.randomUUID(),until=new Date(Date.now()+ms).toISOString();
@@ -122,15 +130,18 @@ export async function syncBookmarks(env,deps={},scope='full') {
   if(sync.retry_after && sync.retry_after>nowIso())return {...sync,rate_limited:true};
   const lockId=await acquireLock(env,FULL_LOCK);
   if(!lockId)return {busy:true};
+  let stage='x_read';
   try {
     if(!sync.running || !sync.started_at)sync.started_at=sync.started_at && sync.running?sync.started_at:nowIso();
     sync.running=true;sync.last_error=null;sync.retry_after=null;
     if(!sync.cursor)sync.incomplete=false;
     const initial=!sync.baseline_complete;
     for(let page=0;page<5;page++) {
+      stage='x_read';
       const result=await xRead(env,`/users/${account.user_id}/bookmarks`,{...postParameters(env),max_results:100,pagination_token:sync.cursor},100,true,fetcher);
       if(result.data!=null&&!Array.isArray(result.data))throw new Error('X 書籤資料格式不符');
       if(!result.data&&!result.meta&&!result.errors)throw new Error('X 書籤回應缺少資料與分頁資訊');
+      stage='collect';
       for(const post of result.data || []) {
         const source=normalizePost(post,result.includes);
         await deps.collect(env,source.url,initial?'backfill':'bookmark',`bookmark:${post.id}`,{defer:initial&&!sync.backfill_approved,source});
@@ -141,17 +152,19 @@ export async function syncBookmarks(env,deps={},scope='full') {
           if(['tweet','post'].includes(error.resource_type)&&/^\d+$/.test(String(error.resource_id)))await deps.collect(env,`https://x.com/i/status/${error.resource_id}`,initial?'backfill':'bookmark',`bookmark:${error.resource_id}`,{defer:initial&&!sync.backfill_approved});
         }
       }
+      stage='save';
       sync.cursor=result.meta?.next_token || null;
       sync.pages_scanned=(sync.pages_scanned || 0)+1;
       sync.updated_at=nowIso();
       if(!sync.cursor){
-        Object.assign(sync,{baseline_complete:true,running:false,completed_at:nowIso(),last_full_completed_at:sync.incomplete?sync.last_full_completed_at || null:nowIso(),pages_scanned:0});
+        Object.assign(sync,{baseline_complete:true,running:false,last_failure:null,completed_at:nowIso(),last_full_completed_at:sync.incomplete?sync.last_full_completed_at || null:nowIso(),pages_scanned:0});
         await setSetting(env,'sync',sync);return sync;
       }
       await setSetting(env,'sync',sync);
     }
     return sync;
   }catch(error){
+    error.stage=stage;sync.last_failure=failureDetail(error,stage);logFailure('full',sync.last_failure);
     sync.last_error=error.name==='BudgetPaused'?error.message:'X 同步未完成，請檢查授權、費用與 API 設定';
     if(error.status===429){sync.retry_after=new Date(Date.now()+RATE_LIMIT_MS).toISOString();sync.last_error='X 限流，已保存游標，稍後從同一頁續跑。';}
     else if(error.status===400&&sync.cursor){sync.cursor=null;sync.pages_scanned=0;sync.last_error='分頁請求失效，已保存內容會保留，下一次從頭核對。';}
@@ -174,11 +187,14 @@ async function partialCheck(env,deps,account,full,fetcher){
   if(await lockHeld(env,FULL_LOCK))return skip('full_scan_running');
   const lockId=await acquireLock(env,PARTIAL_LOCK,300000);
   if(!lockId)return skip('partial_running');
+  let stage='x_read';
   try{
     let cursor=null,checked=0,added=0;
     for(let page=0;page<pages;page++){
+      stage='x_read';
       const result=await xRead(env,`/users/${account.user_id}/bookmarks`,{...postParameters(env),max_results:size,pagination_token:cursor},size,true,fetcher);
       if(result.data!=null&&!Array.isArray(result.data))throw new Error('X 書籤資料格式不符');
+      stage='collect';
       for(const post of result.data || []){
         checked++;
         if(!(await query(env,'SELECT 1 FROM learning_intakes WHERE receipt=?',`bookmark:${post.id}`).first()))added++;
@@ -188,10 +204,12 @@ async function partialCheck(env,deps,account,full,fetcher){
       cursor=result.meta?.next_token || null;
       if(!cursor)break;
     }
-    Object.assign(state,{last_completed_at:nowIso(),checked,added,skipped:null,last_error:null,retry_after:null});
+    stage='save';
+    Object.assign(state,{last_completed_at:nowIso(),checked,added,skipped:null,last_error:null,last_failure:null,retry_after:null});
     await setSetting(env,'sync-partial',state);
     return state;
   }catch(error){
+    error.stage=stage;state.last_failure=failureDetail(error,stage);logFailure('partial',state.last_failure);
     state.last_error=error.name==='BudgetPaused'?'費用暫停，局部檢查未執行':'局部檢查未完成，請查看 X 授權或設定';
     if(error.status===429){state.retry_after=new Date(Date.now()+RATE_LIMIT_MS).toISOString();state.last_error='X 限流，稍後再檢查';}
     else if([401,403].includes(error.status)){full.requires_action=true;full.last_error='X 授權或 API 設定需處理，已停止自動檢查。';await setSetting(env,'sync',full);}
