@@ -1,3 +1,4 @@
+import { normalizePublished } from './dates.js';
 export const nowIso = () => new Date().toISOString();
 export const query = (env, sql, ...args) => env.DB.prepare(sql).bind(...args);
 export async function rows(env, sql, ...args) { return (await query(env, sql, ...args).all()).results; }
@@ -20,6 +21,9 @@ export async function saveEvidence(env, id, value) {
     VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,metadata_json=excluded.metadata_json,status=excluded.status,fetched_at=excluded.fetched_at
     WHERE json_extract(learning_evidence.metadata_json,'$.provided_by') IS NOT 'user' OR json_extract(excluded.metadata_json,'$.provided_by')='user'`,
     key,id,value.url,value.relation,value.author_id || null,value.published_at || null,value.content || '',JSON.stringify(value.metadata || {}),value.status || 'available',nowIso()).run();
+  // 主要來源的發表時間正規化後記在文章上，列表依此排序；解析不了時保留原值。
+  const published = value.relation === 'primary' ? normalizePublished(value.published_at) : null;
+  if (published) await query(env, 'UPDATE learning_items SET published_at=? WHERE id=?', published, id).run();
   return key;
 }
 export async function lock(env, id) {

@@ -3,8 +3,9 @@ import {canonicalUrl,apiJson} from './network.js';
 import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia,skipDecorative} from './media.js';
 import {generate} from './gemini.js';
-import {syncBookmarks,registerMedia,startFullScan,saveArticle} from './x.js';
-import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
+import {syncBookmarks,registerMedia,startFullScan,saveArticle,failureDetail,bookmarksEnabled,authorRecheckEnabled} from './x.js';
+import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion,backfillPublished} from './library.js';
+import {classifyPending} from './topics.js';
 import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
@@ -162,24 +163,27 @@ export function createLearningService(deps={}) {
   // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
   async function scheduled(env,options=false){
     const tasks=Array.isArray(options?.tasks)?options.tasks:options===true?['bookmark_daily','author_recheck']:[];
-    const daily=tasks.includes('bookmark_daily');
+    const bookmarks=await bookmarksEnabled(env),daily=bookmarks&&tasks.includes('bookmark_daily');
     if(tasks.includes('official'))try{await official(env);}catch(error){console.log(JSON.stringify({event:'official_discovery_failed',error:error.message}));}
     if(daily){
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action){await startFullScan(env);await env.LEARNING_JOBS.send({kind:'sync',scope:'full'});}
     }
-    if(tasks.includes('bookmark_partial')){
+    if(bookmarks&&tasks.includes('bookmark_partial')){
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync',scope:'partial'});
     }
     // 作者補充二十四小時後重查一次；來源沒變時沿用既有結果，不重新生成。
-    if(tasks.includes('author_recheck'))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
+    if(tasks.includes('author_recheck')&&await authorRecheckEnabled(env))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
       await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
     }
     try{await migrateLibrary(env);await mergeExistingDuplicates(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
+    try{await backfillPublished(env);}catch(error){console.log(JSON.stringify({event:'published_backfill_failed',error:error.message}));}
+    // 主題分類用 Workers AI，不經過 Mac、不記入預算；新文章與既有文章回補共用這一步。
+    if(tasks.includes('maintenance'))try{await classifyPending(env,deps);}catch(error){console.log(JSON.stringify({event:'topic_classification_failed',error:error.message}));}
     // 舊資料裡只因外部網頁裝飾圖片而標成來源缺漏的文章，改回正確狀態。
     for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='partial' AND gaps_json LIKE '%媒體%' LIMIT 50"))await skipDecorative(env,row.id);
     await recover(env);
     const syncState=await setting(env,'sync');
-    if(syncState.running&&env.LEARNING_JOBS&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync'});
+    if(bookmarks&&syncState.running&&env.LEARNING_JOBS&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync'});
     await expireMedia(env);
     await query(env,'DELETE FROM learning_sessions WHERE expires_at<?',nowIso()).run();
     await flushReceipts(env);
@@ -194,7 +198,9 @@ export function createLearningService(deps={}) {
       }catch(error){
         if(error.name==='BudgetPaused')message.ack();
         else message.retry({delaySeconds:300});
-        console.log(JSON.stringify({event:'learning_task_failed',kind:message.body.kind,error:error.name==='BudgetPaused'?'budget_paused':'processing_failed'}));
+        // 附上狀態碼、錯誤類型、出錯階段與訊息前段，正式環境才查得出原因。
+        const {at,...detail}=failureDetail(error,error.stage || (message.body.kind==='sync'?'sync':'process'));
+        console.log(JSON.stringify({event:'learning_task_failed',kind:message.body.kind,scope:message.body.scope,error:error.name==='BudgetPaused'?'budget_paused':'processing_failed',...detail}));
       }
     }
   }

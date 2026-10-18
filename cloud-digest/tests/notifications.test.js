@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createLearningHandler} from '../src/learning/http.js';
 import {setTextProvider,claim} from '../src/learning/local.js';
 import {item,rows,query,saveConnection} from '../src/learning/store.js';
-import {environment,recorder,request,message} from './helpers.js';
+import {environment,recorder,request,message,enableXReads} from './helpers.js';
 
 const html=`<html><h1>文章</h1><article>${'<p>背景原文與機制說明。</p>'.repeat(30)}</article></html>`;
 function setup({telegramFails=()=>false,replies=()=>[]}={}){
@@ -68,7 +68,7 @@ test('新收件立即回覆狀態；通知失敗只重送已保存內容，不�
 
 test('作者 24 小時重查：沒有變更不生成也不通知；真正新增補充時更新同一篇、保留舊版與筆記並發更新通知',async()=>{
   let replyList=[];
-  const s=setup({replies:()=>replyList});await setTextProvider(s.env,'local');
+  const s=setup({replies:()=>replyList});await setTextProvider(s.env,'local');await enableXReads(s.env);
   await saveConnection(s.env,'x',{user_id:'7',access_token:'a',refresh_token:'r',expires_at:Date.now()+86400000});
   const {id}=await (await s.handler.fetch(request('api/collect','POST',{url:'https://x.com/author9/status/500'}),s.env)).json();
   await process(s,id);await runJob(s);await s.handler.service.flush(s.env);
