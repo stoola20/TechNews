@@ -162,7 +162,7 @@ export function createLearningService(deps={}) {
   // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
   async function scheduled(env,options=false){
     const tasks=Array.isArray(options?.tasks)?options.tasks:options===true?['bookmark_daily','author_recheck']:[];
-    const bookmarks=bookmarksEnabled(env),daily=bookmarks&&tasks.includes('bookmark_daily');
+    const bookmarks=await bookmarksEnabled(env),daily=bookmarks&&tasks.includes('bookmark_daily');
     if(tasks.includes('official'))try{await official(env);}catch(error){console.log(JSON.stringify({event:'official_discovery_failed',error:error.message}));}
     if(daily){
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action){await startFullScan(env);await env.LEARNING_JOBS.send({kind:'sync',scope:'full'});}
@@ -171,7 +171,7 @@ export function createLearningService(deps={}) {
       if(env.LEARNING_JOBS&&env.X_CLIENT_ID&&env.X_CLIENT_SECRET&&await connection(env,'x')&&!(await setting(env,'sync')).requires_action&&!(await budget(env)).paused)await env.LEARNING_JOBS.send({kind:'sync',scope:'partial'});
     }
     // 作者補充二十四小時後重查一次；來源沒變時沿用既有結果，不重新生成。
-    if(authorRecheckEnabled(env)&&tasks.includes('author_recheck'))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
+    if(tasks.includes('author_recheck')&&await authorRecheckEnabled(env))for(const row of await rows(env,"SELECT id FROM learning_items WHERE kind='x' AND recheck_at<=? AND rechecked=0 AND status IN ('ready','partial') LIMIT 100",nowIso())){
       await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
     }
     try{await migrateLibrary(env);await mergeExistingDuplicates(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}

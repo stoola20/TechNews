@@ -192,7 +192,7 @@ test('通知失敗重用完整教材，不再次呼叫模型',async()=>{
 });
 
 test('書籤全分頁、首次回補確認、已知 ID 不提前停止與中斷續跑',async()=>{
-  const env=environment();await connect(env);let page2Fails=true,forbidden=false,partialErrors=false;
+  const env=environment();await connect(env);await setSetting(env,'x-reads',{bookmarks:true,author_recheck:true});let page2Fails=true,forbidden=false,partialErrors=false;
   const net=network({fetch(url){
     if(url.pathname==='/2/users/7/bookmarks'){
       const cursor=url.searchParams.get('pagination_token');
@@ -332,7 +332,7 @@ test('缺少影片時間點或模型輸出未完成，不保存為完整教材',
 });
 
 test('作者補充到期只重查一次，更新同一教材與通知',async()=>{
-  const env=environment();await connect(env);let count=0;
+  const env=environment();await connect(env);await setSetting(env,'x-reads',{bookmarks:true,author_recheck:true});let count=0;
   const net=network({fetch(url){
     if(url.pathname==='/2/tweets/445')return Response.json({data:{id:'445',author_id:'9',text:'版本公告',conversation_id:'445'}});
     if(url.pathname==='/2/tweets/search/all')return Response.json({data:++count===1?[]:[{id:'446',author_id:'9',text:'新增補充：某版本不支援'}],meta:{}});

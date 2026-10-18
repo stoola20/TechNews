@@ -120,13 +120,27 @@ export async function startFullScan(env){
   return sync;
 }
 
-// X 讀取費用高：可只保留手動分享時抓推文，關閉書籤掃描與作者補充重查。未設定時維持開啟。
-export function bookmarksEnabled(env){return env.X_BOOKMARKS_ENABLED!=='false';}
-export function authorRecheckEnabled(env){return env.X_AUTHOR_RECHECK_ENABLED!=='false';}
+// X 讀取費用高：書籤掃描與作者補充重查由管理頁切換，存在 settings。未設定時兩者都關閉，只在手動分享時讀 X。
+export async function xReads(env){
+  const saved=await setting(env,'x-reads',{});
+  return {bookmarks:saved.bookmarks===true,author_recheck:saved.author_recheck===true};
+}
+export async function setXReads(env,value){
+  const next={...await xReads(env)};
+  for(const key of ['bookmarks','author_recheck']){
+    if(!(key in (value||{})))continue;
+    if(typeof value[key]!=='boolean')throw new Error('X 讀取開關必須是 true 或 false');
+    next[key]=value[key];
+  }
+  await setSetting(env,'x-reads',next);
+  return next;
+}
+export async function bookmarksEnabled(env){return (await xReads(env)).bookmarks;}
+export async function authorRecheckEnabled(env){return (await xReads(env)).author_recheck;}
 
 export async function syncBookmarks(env,deps={},scope='full') {
   // 所有入口（排程、續跑、手動按鈕、授權回呼、佇列訊息）都經過這裡，停用時不呼叫 X。
-  if(!bookmarksEnabled(env))return {disabled:true};
+  if(!await bookmarksEnabled(env))return {disabled:true};
   const fetcher=deps.fetcher || fetch;
   const account=await connection(env,'x');
   if(!account)throw new Error('尚未連接 X');

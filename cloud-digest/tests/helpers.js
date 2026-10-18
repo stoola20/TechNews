@@ -33,3 +33,7 @@ export function recorder(handler=async()=>null){
 export function request(path,method='GET',data=null,headers={}){return new Request('https://learning.example.org/learning/'+path,{method,headers:{authorization:'Bearer private-test-token','content-type':'application/json',...headers},...(data?{body:JSON.stringify(data)}:{})});}
 export function message(body){return {body,acks:0,retries:0,ack(){this.acks++;},retry(options){this.retries++;this.retryOptions=options;}};}
 export const iso=offset=>new Date(Date.now()+offset).toISOString();
+// X 書籤同步與作者重查預設關閉；測試同步行為時先打開。
+export async function enableXReads(env,value={bookmarks:true,author_recheck:true}){
+  await env.DB.prepare("INSERT OR REPLACE INTO settings(key,value_json,updated_at) VALUES('learning:x-reads',?,?)").bind(JSON.stringify(value),new Date().toISOString()).run();
+}
