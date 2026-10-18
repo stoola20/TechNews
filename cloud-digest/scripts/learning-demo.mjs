@@ -54,8 +54,10 @@ for(const [key,title,status,gaps,error] of states){
   for(let n=1;n<=60;n++){
     const id=('t'+String(n).padStart(3,'0')).padEnd(32,'0').replace(/t/,'f'),published=new Date(base-(n*7+3)*3600e3).toISOString();
     const url='https://'+hosts[n%3]+'/posts/'+n,created=new Date(base-(n%5)*3600e3).toISOString();
-    await DB.prepare("INSERT INTO learning_items(id,url,kind,title,status,body,article_json,revision,read_at,published_at,created_at,updated_at) VALUES(?,?,'web',?,'ready','## 示範\n\n時間軸示範內容。','{}',1,?,?,?,?)")
-      .bind(id,url,'時間軸示範文章 '+n+'：'+['模型更新與 API 變更','Agent 工具的工程實踐','平台政策與審查規範'][n%3],n%4?time:null,n%11?published:null,created,created).run();
+    // 主題依序輪替，每 9 篇留一篇未分類，每 4 篇加一個次要主題。
+    const topics=['models','ai-coding','agent-engineering','product-updates','apple','safety-policy','enterprise'],primary=n%9?topics[n%7]:null,secondary=primary&&n%4===0?topics[(n+2)%7]:null;
+    await DB.prepare("INSERT INTO learning_items(id,url,kind,title,status,body,article_json,revision,read_at,published_at,topic_primary,topic_secondary,topic_source,topic_revision,created_at,updated_at) VALUES(?,?,'web',?,'ready','## 示範\n\n時間軸示範內容。','{}',1,?,?,?,?,?,1,?,?)")
+      .bind(id,url,'時間軸示範文章 '+n+'：'+['模型更新與 API 變更','Agent 工具的工程實踐','平台政策與審查規範'][n%3],n%4?time:null,n%11?published:null,primary,secondary,primary?'model':null,created,created).run();
   }
 }
 jobs.length=0;

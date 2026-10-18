@@ -32,6 +32,12 @@ body.app{display:flex;flex-direction:column}
 .item-meta .state{font-weight:700}.item-meta .state.warn{color:var(--warn)}.item-meta .state.wait{color:#22408a}
 .preview{grid-column:2;display:block;color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
 #more{width:100%;margin-top:8px;color:var(--muted)}#more[hidden]{display:none}
+.chips{display:flex;gap:6px;overflow-x:auto;margin:0 -16px;padding:2px 16px 10px;scrollbar-width:thin}
+.chips button{flex:none;min-height:36px;padding:4px 12px;border-radius:999px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.chips small{opacity:.75;font-variant-numeric:tabular-nums}
+.chips .topic-dot{margin:0}
+.topic-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin:0 6px 6px 0;color:var(--ink)}.topic-tag .topic-dot{margin:0}
 .reader-bar{display:none;margin-bottom:12px}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
 .meta{color:var(--muted);font-size:14px;line-height:1.7}
@@ -99,6 +105,7 @@ ${LOGIN}
     <div><label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select></div>
     <div><label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select></div>
   </div>
+  <div id="topics" class="chips" role="group" aria-label="主題"></div>
   </div>
   <p id="list-summary" class="sr" aria-live="polite"></p>
   <div id="list"></div>
@@ -133,10 +140,10 @@ ${LOGIN}
 </main>
 <script>
 ${HELPERS}
-let view={q:'',unread:false,origin:'',state:'',sort:'published',article:null},listKey=null,listItems=[],hasMore=false,loadingMore=false,current=null,openSeq=0,pollTimer=null,statusTimer=null;
+let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',article:null},listKey=null,listItems=[],topicData={topics:[],unclassified:0,total:0},hasMore=false,loadingMore=false,current=null,openSeq=0,pollTimer=null,statusTimer=null;
 const narrow=matchMedia('(max-width: 959px)');
-function readView(){const p=new URLSearchParams(location.search);return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',article:p.get('article')};}
-function urlFor(v){const p=new URLSearchParams();if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
+function readView(){const p=new URLSearchParams(location.search);return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',article:p.get('article')};}
+function urlFor(v){const p=new URLSearchParams();if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
 function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTop;}
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
@@ -144,20 +151,35 @@ function navigate(next,fromList){history.replaceState({...(history.state||{}),li
 function syncControls(){$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;$('manage-toggle').classList.toggle('active',!!(view.origin||view.state));}
 async function apply(){
   syncControls();
-  const key=JSON.stringify([view.q,view.unread,view.origin,view.state,view.sort]);
+  const key=JSON.stringify([view.q,view.unread,view.origin,view.state,view.sort,view.topic]);
   if(key!==listKey){listKey=key;await loadList();}
   document.body.dataset.view=view.article?'reader':'list';
   if(view.article){if(view.article!==(current&&current.id))await openArticle(view.article);}else clearArticle();
   markSelected();
 }
 window.addEventListener('popstate',e=>{view=readView();run(async()=>{await apply();if(!view.article)restoreScroll(e.state&&e.state.listScroll);});});
-function describeFilters(){const parts=[];if(view.q)parts.push('搜尋「'+view.q+'」');if(view.unread)parts.push('未讀');if(view.origin)parts.push(ORIGINS[view.origin]);if(view.state)parts.push($('state').selectedOptions[0].textContent);return parts.join('・');}
+function describeFilters(){const parts=[];if(view.q)parts.push('搜尋「'+view.q+'」');if(view.unread)parts.push('未讀');if(view.origin)parts.push(ORIGINS[view.origin]);if(view.state)parts.push($('state').selectedOptions[0].textContent);if(view.topic)parts.push(view.topic==='unclassified'?'未分類':(topicById(view.topic)||{name:view.topic}).name);return parts.join('・');}
 // 每批 50 篇，捲到底自動接著載入；篩選或排序改變時從第一批重新載入。
-function listQuery(offset){const p=new URLSearchParams();if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);p.set('sort',view.sort);p.set('offset',String(offset));return p;}
+function filterQuery(){const p=new URLSearchParams();if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);return p;}
+function listQuery(offset){const p=filterQuery();p.set('sort',view.sort);if(view.topic)p.set('topic',view.topic);p.set('offset',String(offset));return p;}
 async function loadList(){
-  const key=listKey,items=await api('items?'+listQuery(0).toString());
+  const key=listKey,[items,topics]=await Promise.all([api('items?'+listQuery(0).toString()),api('topics?'+filterQuery().toString())]);
   if(key!==listKey)return;
+  topicData=topics;renderTopics();
   listItems=items;hasMore=items.length===50;renderList();
+}
+// 主題 chip：全部、各主題、未分類，附篇數；單選，與搜尋、未讀、管理篩選並用。
+function topicById(id){return topicData.topics.find(t=>t.id===id);}
+function topicColor(id){const t=topicById(id);return t?t.color:'';}
+function topicNames(i){return [i.topic_primary,i.topic_secondary].map(topicById).filter(Boolean).map(t=>t.name);}
+function chip(value,label,count,color){
+  const b=el('button',{type:'button','aria-pressed':String(view.topic===value),'data-topic':value},[color?el('span',{class:'topic-dot',style:'background:'+color,'aria-hidden':'true'}):null,document.createTextNode(label),el('small',{text:String(count)})]);
+  b.onclick=()=>run(()=>navigate({topic:view.topic===value&&value?'':value,article:null}));
+  return b;
+}
+function renderTopics(){
+  $('topics').replaceChildren(chip('','全部',topicData.total),...topicData.topics.map(t=>chip(t.id,t.name,t.count,t.color)),...(topicData.unclassified?[chip('unclassified','未分類',topicData.unclassified)]:[]));
+  const pressed=$('topics').querySelector('[aria-pressed=true]');if(pressed)pressed.scrollIntoView({block:'nearest',inline:'nearest'});
 }
 async function loadMore(){
   if(!hasMore||loadingMore)return;
@@ -188,9 +210,10 @@ function renderList(){
 // 已完成的文章不顯示狀態；未完成或有問題（含部分完成）才附在資訊列後面。
 function stateNode(i){return i.status==='ready'?null:el('span',{class:'state '+stateTone(i.status),text:stateLabel(i),'data-role':'state'});}
 function renderItem(i){
-  const meta=el('span',{class:'item-meta'},[i.publisher?el('span',{text:i.publisher}):null,i.publisher?el('span',{class:'sep','aria-hidden':'true'}):null,el('span',{text:itemDate(i)})]);
+  const names=topicNames(i);
+  const meta=el('span',{class:'item-meta'},[names.length?el('span',{text:names.join('、')}):null,names.length?el('span',{class:'sep','aria-hidden':'true'}):null,i.publisher?el('span',{text:i.publisher}):null,i.publisher?el('span',{class:'sep','aria-hidden':'true'}):null,el('span',{text:itemDate(i)})]);
   const state=stateNode(i);if(state)meta.append(el('span',{class:'sep','aria-hidden':'true'}),state);
-  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'topic-dot','aria-hidden':'true'}),el('strong',{text:i.title||(i.preview||'').slice(0,80)||i.url}),meta]);
+  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'topic-dot','aria-hidden':'true',style:topicColor(i.topic_primary)?'background:'+topicColor(i.topic_primary):''}),el('strong',{text:i.title||(i.preview||'').slice(0,80)||i.url}),meta]);
   if(!i.read_at)a.classList.add('unread');
   if(i.status==='awaiting_backfill'&&i.preview)a.append(el('span',{class:'preview',text:i.preview}));
   a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:i.id},true));};
@@ -220,6 +243,8 @@ function renderArticle(result){
   const origins=[...new Set((result.intakes||[]).map(i=>ORIGINS[i.origin]||i.origin))];
   // 文章資訊：發布者與時間在前；收件入口、既有導讀與整理模型等管理資訊放在第二行。
   const fullDate=iso=>{const d=twDate(iso);return d.year+'/'+d.month+'/'+d.day;};
+  const tags=[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean);
+  nodes.push(el('div',{id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag'},[el('span',{class:'topic-dot',style:'background:'+t.color,'aria-hidden':'true'}),document.createTextNode(t.name)])):[el('span',{class:'topic-tag',text:'未分類'})]));
   nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
   nodes.push(el('p',{class:'meta'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
   if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));

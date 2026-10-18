@@ -10,6 +10,7 @@ import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary,ORIGINS,officialSources,publisherFor} from './library.js';
 import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
+import {topicList} from './topics.js';
 import {mergeExistingDuplicates} from './linking.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
@@ -110,17 +111,19 @@ export function createLearningHandler(deps={}) {
       }
       if(route==='admin/x-reads'&&request.method==='PUT')return json(await setXReads(env,await body(request)));
       if(route==='admin/text-provider'&&request.method==='PUT'){await setTextProvider(env,(await body(request)).provider);return json(await runnerStatus(env));}
-      if(route==='items'&&request.method==='GET'){
+      if((route==='items'||route==='topics')&&request.method==='GET'){
         const term=(url.searchParams.get('q') || '').trim();
         const offset=Number(url.searchParams.get('offset') || 0);
         if(term.length>200||!Number.isInteger(offset)||offset<0||offset>1000000)throw new Error('搜尋參數無效');
         // status 為舊參數，等同單一狀態篩選；state 為狀態群組。
         const legacy=url.searchParams.get('status')||'',group=url.searchParams.get('state')||'',origin=url.searchParams.get('origin')||'',unread=url.searchParams.get('unread')==='1';
-        const sort=url.searchParams.get('sort')||'published';
+        const sort=url.searchParams.get('sort')||'published',topic=url.searchParams.get('topic')||'';
         if(!['published','added'].includes(sort))throw new Error('排序方式無效');
         if(legacy&&!['awaiting_backfill','ready','partial','needs_attention','filtered'].includes(legacy))throw new Error('文章篩選無效');
         if(group&&!STATE_GROUPS[group])throw new Error('狀態篩選無效');
         if(origin&&!ORIGINS[origin])throw new Error('收件入口篩選無效');
+        const topics=await topicList(env),topicIds=topics.map(t=>t.id);
+        if(topic&&topic!=='unclassified'&&!topicIds.includes(topic))throw new Error('主題篩選無效');
         const statuses=legacy?[legacy]:group?STATE_GROUPS[group]:null;
         const conditions=["status NOT IN ('dismissed','merged')"],args=[];
         if(statuses){conditions.push(`status IN (${statuses.map(()=>'?').join(',')})`);args.push(...statuses);}else conditions.push("status!='filtered'");
@@ -132,9 +135,17 @@ export function createLearningHandler(deps={}) {
           conditions.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\'))");
           args.push(pattern,pattern,pattern,pattern);
         }
+        // 主題篇數依主題以外的條件計算，chip 上的數字和點下去看到的篇數一致；主要與次要主題都計入。
+        if(route==='topics'){
+          const counted=await rows(env,`SELECT topic_primary,topic_secondary FROM learning_items WHERE ${conditions.join(' AND ')}`,...args);
+          const count=id=>counted.filter(r=>r.topic_primary===id||r.topic_secondary===id).length;
+          return json({topics:topics.map(t=>({id:t.id,name:t.name,color:t.color,count:count(t.id)})),unclassified:counted.filter(r=>!topicIds.includes(r.topic_primary)).length,total:counted.length});
+        }
+        if(topic==='unclassified'){conditions.push(`(topic_primary IS NULL OR topic_primary NOT IN (${topicIds.map(()=>'?').join(',')}))`);args.push(...topicIds);}
+        else if(topic){conditions.push('(topic_primary=? OR topic_secondary=?)');args.push(topic,topic);}
         // 發表時間排序：沒有發表時間的文章以加入時間排入；ID 作為次要排序，分頁才穩定。
         const order=sort==='added'?'created_at DESC,id DESC':'COALESCE(published_at,created_at) DESC,id DESC';
-        const listed=await rows(env,`SELECT id,url,kind,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,
+        const listed=await rows(env,`SELECT id,url,kind,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,topic_primary,topic_secondary,
           (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
           (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins,
           (SELECT json_extract(k.metadata_json,'$.source_id') FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin='official' AND json_extract(k.metadata_json,'$.source_id') IS NOT NULL LIMIT 1) AS source_id,

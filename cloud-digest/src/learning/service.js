@@ -5,6 +5,7 @@ import {prepareMedia,expireMedia,skipDecorative} from './media.js';
 import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia,startFullScan,saveArticle,failureDetail,bookmarksEnabled,authorRecheckEnabled} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion,backfillPublished} from './library.js';
+import {classifyPending} from './topics.js';
 import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
@@ -176,6 +177,8 @@ export function createLearningService(deps={}) {
     }
     try{await migrateLibrary(env);await mergeExistingDuplicates(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
     try{await backfillPublished(env);}catch(error){console.log(JSON.stringify({event:'published_backfill_failed',error:error.message}));}
+    // 主題分類用 Workers AI，不經過 Mac、不記入預算；新文章與既有文章回補共用這一步。
+    if(tasks.includes('maintenance'))try{await classifyPending(env,deps);}catch(error){console.log(JSON.stringify({event:'topic_classification_failed',error:error.message}));}
     // 舊資料裡只因外部網頁裝飾圖片而標成來源缺漏的文章，改回正確狀態。
     for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='partial' AND gaps_json LIKE '%媒體%' LIMIT 50"))await skipDecorative(env,row.id);
     await recover(env);
