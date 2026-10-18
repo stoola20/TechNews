@@ -7,7 +7,11 @@ main{max-width:1000px;margin:24px auto;padding:0 20px}h1{font-size:24px}h2{font-
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}dt{color:var(--muted);font-size:14px}dd{margin:0;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow:auto}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.switches{display:grid;gap:4px}.switch{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600}.switch input{min-height:auto;width:20px;height:20px;flex:none}.pre{white-space:pre-line;line-height:1.7}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.switches{display:grid;gap:4px}
+.wide{grid-column:1/-1}
+.topic-edit{display:grid;grid-template-columns:44px minmax(8em,14em) minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.topic-edit input[type=color]{width:44px;height:44px;padding:2px;min-height:auto}.topic-edit input[type=text]{width:100%;min-width:0}
+@media(max-width:640px){.topic-edit{grid-template-columns:44px minmax(0,1fr) auto}.topic-edit .desc{grid-column:1/-1}}.switch{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600}.switch input{min-height:auto;width:20px;height:20px;flex:none}.pre{white-space:pre-line;line-height:1.7}
 @media(max-width:640px){main{padding:0 12px}}
 </style></head><body>
 <header class="top"><a class="brand" href="/learning">TechNews 文章庫</a><nav><a href="/learning">回到文章庫</a><button id="logout" class="hidden">登出</button></nav></header>
@@ -29,6 +33,10 @@ ${LOGIN}
 <p class="muted">兩項都會產生 X 讀取費用，預設關閉。手動分享 X 連結不受影響。</p><p id="sync-state" class="pre"></p><p id="setup" class="muted"></p>
 <div class="actions"><button id="connect">連接 X</button><button id="sync">開始或續跑完整核對</button><button id="backfill">整理全部待回補書籤</button></div>
 <p class="muted">每 10 分鐘局部檢查列表最前面幾頁；每天 08:00 完整核對。新收藏的舊貼文可能要等完整核對才會出現。</p></section>
+<section class="panel wide" aria-labelledby="topics-title"><h2 id="topics-title">主題表</h2>
+<p class="muted">分類模型依名稱與說明從這份表中選主題。改名、說明與顏色不影響已分類的文章；刪除主題時，受影響的文章會重新分類。新增主題後可按「重新分類全部」，手動設定的文章不受影響。</p>
+<div id="topic-rows"></div>
+<div class="actions"><button id="topic-add" type="button">新增主題</button><button id="topic-save" class="primary">保存主題表</button><button id="topic-reclassify" type="button">重新分類全部</button></div></section>
 <section class="panel" aria-labelledby="ops-title"><h2 id="ops-title">維運</h2><p class="muted">重新執行舊資料搬移：只寫資料庫，不呼叫模型、不讀外部來源、不發通知，可重複執行。</p><div class="actions"><button id="migrate">搬移舊官方導讀</button></div><p id="migrate-result" class="muted"></p></section>
 </div></main>
 <script>
@@ -61,7 +69,34 @@ for(const [id,key,label] of [['x-bookmarks','bookmarks','書籤同步'],['x-auth
 $('sync').onclick=e=>run(async()=>{const r=await api('x/sync','POST',{});await load();message(r.disabled?'書籤同步已停用，沒有讀取 X。':'已啟動完整核對，進度會保存。');},e.currentTarget,'同步中…');
 $('backfill').onclick=async e=>{const button=e.currentTarget;if(!await askConfirm('這會整理全部等待回補的書籤，並產生模型與讀取費用。若想逐篇決定，請到文章庫篩選「等待確認回補」。要繼續嗎？'))return;run(async()=>{await api('x/backfill','POST',{});await load();message('已確認回補，工作會依可用預算處理。');},button,'送出中…');};
 $('migrate').onclick=e=>run(async()=>{const r=await api('admin/migrate','POST',{});$('migrate-result').textContent='新增 '+r.imported+' 篇、合併 '+r.merged+' 篇、更新網址 '+r.renamed+' 篇。';},e.currentTarget,'搬移中…');
+// 主題表編輯：既有主題保留識別碼，新主題由伺服器產生識別碼。
+let savedTopics=[];
+function topicRow(t){
+  const n=document.querySelectorAll('.topic-edit').length+1;
+  const color=el('input',{type:'color',value:t.color||'#64748b','aria-label':'第 '+n+' 個主題顏色'});
+  const name=el('input',{type:'text',value:t.name||'',maxlength:'30',placeholder:'主題名稱','aria-label':'第 '+n+' 個主題名稱'});
+  const desc=el('input',{type:'text',class:'desc',value:t.description||'',maxlength:'300',placeholder:'給分類模型的說明','aria-label':'第 '+n+' 個主題說明'});
+  const remove=el('button',{type:'button',class:'danger',text:'刪除'});
+  const row=el('div',{class:'topic-edit','data-id':t.id||''},[color,name,desc,remove]);
+  remove.onclick=()=>{if(document.querySelectorAll('.topic-edit').length<=1){message('至少保留 1 個主題。',true);return;}row.remove();};
+  return row;
+}
+function renderTopicRows(list){savedTopics=list;$('topic-rows').replaceChildren(...list.map(topicRow));}
+async function loadTopics(){renderTopicRows((await api('admin/topics')).topics);}
+$('topic-add').onclick=()=>{const row=topicRow({});$('topic-rows').append(row);row.querySelector('input[type=text]').focus();};
+$('topic-save').onclick=async e=>{
+  const button=e.currentTarget;
+  const topics=[...document.querySelectorAll('.topic-edit')].map(r=>{const [color,name,desc]=r.querySelectorAll('input');return {...(r.dataset.id?{id:r.dataset.id}:{}),name:name.value,description:desc.value,color:color.value};});
+  const removed=savedTopics.filter(t=>!topics.some(x=>x.id===t.id));
+  if(removed.length&&!await askConfirm('將刪除「'+removed.map(t=>t.name).join('」「')+'」。以它為主要主題的文章會清除主題（含手動設定）並重新分類，次要主題會移除。要繼續嗎？'))return;
+  run(async()=>{const r=await api('admin/topics','PUT',{topics});renderTopicRows(r.topics);message('主題表已保存'+(r.removed.length?'，受影響的文章會在接下來幾輪維護排程重新分類。':'。'));},button,'保存中…');
+};
+$('topic-reclassify').onclick=async e=>{
+  const button=e.currentTarget;
+  if(!await askConfirm('所有非手動設定的文章會在接下來的維護排程中重新分類（每 5 分鐘最多 10 篇），期間保留目前主題。要繼續嗎？'))return;
+  run(async()=>{const r=await api('admin/topics/reclassify','POST',{});message('已排入 '+r.queued+' 篇重新分類。');},button,'處理中…');
+};
 bindLogin(boot);
-async function boot(){await load();showApp();}
+async function boot(){await load();await loadTopics();showApp();}
 run(boot);
 </script></body></html>`;

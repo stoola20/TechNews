@@ -10,7 +10,7 @@ import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary,ORIGINS,officialSources,publisherFor} from './library.js';
 import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
-import {topicList,setItemTopics} from './topics.js';
+import {topicList,setItemTopics,saveTopicList,reclassifyAll} from './topics.js';
 import {mergeExistingDuplicates} from './linking.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
@@ -109,6 +109,9 @@ export function createLearningHandler(deps={}) {
         await recordCost(env,data.category,amount,'adjustment',{note:data.note.trim()});
         return json(await budgetSummary(env,await budget(env)));
       }
+      if(route==='admin/topics'&&request.method==='GET')return json({topics:await topicList(env)});
+      if(route==='admin/topics'&&request.method==='PUT')return json(await saveTopicList(env,await body(request)));
+      if(route==='admin/topics/reclassify'&&request.method==='POST')return json(await reclassifyAll(env));
       if(route==='admin/x-reads'&&request.method==='PUT')return json(await setXReads(env,await body(request)));
       if(route==='admin/text-provider'&&request.method==='PUT'){await setTextProvider(env,(await body(request)).provider);return json(await runnerStatus(env));}
       if((route==='items'||route==='topics')&&request.method==='GET'){

@@ -122,3 +122,40 @@ test('閱讀頁手動設定主題：驗證主題表、內容更新也不被自�
   assert.deepEqual([row.topic_primary,row.topic_source,row.topic_revision],['models','model',3]);
   assert.equal((await handler.fetch(request('api/items/'+id('9')+'/topics','PUT',{primary:'apple'}),env)).status,404);
 });
+
+test('管理頁維護主題表：改名不動文章、刪除只重分受影響文章、新增產生識別碼；重新分類全部不動手動設定',async()=>{
+  const env=environment(),handler=createLearningHandler(recorder());
+  await add(env,id('1'),{topic:'models',secondary:'apple',source:'model',topicRevision:1});
+  await add(env,id('2'),{topic:'apple',source:'manual',topicRevision:1});
+  await add(env,id('3'),{topic:'ai-coding',secondary:'apple',source:'model',topicRevision:1});
+  await add(env,id('4'),{topic:'ai-coding',source:'manual',topicRevision:1});
+  const save=topics=>handler.fetch(request('api/admin/topics','PUT',{topics}),env);
+  const current=(await (await handler.fetch(request('api/admin/topics'),env)).json()).topics;
+  assert.deepEqual(current.map(t=>t.id),DEFAULT_TOPICS.map(t=>t.id));
+  // 驗證：空表、名稱重複、顏色格式、不存在的識別碼都拒絕，主題表不變。
+  for(const bad of [[],[{name:'甲',color:'#000000'},{name:'甲',color:'#111111'}],[{name:'甲',color:'red'}],[{id:'unknown',name:'甲',color:'#000000'}]])assert.equal((await save(bad)).status,400);
+  assert.equal((await (await handler.fetch(request('api/admin/topics'),env)).json()).topics.length,7);
+
+  const next=current.filter(t=>t.id!=='apple').map(t=>t.id==='models'?{...t,name:'模型',color:'#123456'}:t).concat([{name:'開發者活動',description:'WWDC、DevDay',color:'#abcdef'}]);
+  const saved=await (await save(next)).json();
+  assert.deepEqual(saved.removed,['apple']);
+  const added=saved.topics.find(t=>t.name==='開發者活動');
+  assert.match(added.id,/^t-[0-9a-f]{8}$/);
+  assert.equal(saved.topics.find(t=>t.id==='models').name,'模型');
+  const rows=Object.fromEntries(await Promise.all([1,2,3,4].map(async n=>[n,await item(env,id(String(n)))])));
+  assert.deepEqual([rows[1].topic_primary,rows[1].topic_secondary,rows[1].topic_revision],['models',null,1]);
+  assert.deepEqual([rows[2].topic_primary,rows[2].topic_source,rows[2].topic_revision],[null,null,null]);
+  assert.deepEqual([rows[3].topic_primary,rows[3].topic_secondary],['ai-coding',null]);
+  // 主題 API 與列表跟著新表。
+  const counts=await (await handler.fetch(request('api/topics'),env)).json();
+  assert.equal(counts.topics.find(t=>t.id==='models').name,'模型');assert.equal(counts.unclassified,1);
+  assert.equal((await handler.fetch(request('api/items?topic='+added.id),env)).status,200);
+
+  assert.deepEqual(await (await handler.fetch(request('api/admin/topics/reclassify','POST',{}),env)).json(),{queued:3});
+  assert.equal((await item(env,id('1'))).topic_revision,null);assert.equal((await item(env,id('1'))).topic_primary,'models');
+  assert.equal((await item(env,id('4'))).topic_revision,1);
+  env.AI=ai(()=>({primary:added.id}));
+  await classifyPending(env);
+  assert.equal((await item(env,id('1'))).topic_primary,added.id);
+  assert.equal((await item(env,id('4'))).topic_primary,'ai-coding');
+});

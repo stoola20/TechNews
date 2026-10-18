@@ -4,9 +4,15 @@
 
 **Blocked by:** 04：主題表、Workers AI 自動分類與主題篩選
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `PUT admin/topics` 驗證至少 1 個主題、名稱不重複、既有識別碼不可修改
-- [ ] 刪除主要主題的文章清除主題與手動標記並回到待分類；只刪次要主題的文章移除次要主題
-- [ ] `POST admin/topics/reclassify` 只重設非手動文章
-- [ ] 刪除與重新分類全部使用頁內確認對話框
+- [x] `PUT admin/topics` 驗證至少 1 個主題、名稱不重複、既有識別碼不可修改
+- [x] 刪除主要主題的文章清除主題與手動標記並回到待分類；只刪次要主題的文章移除次要主題
+- [x] `POST admin/topics/reclassify` 只重設非手動文章
+- [x] 刪除與重新分類全部使用頁內確認對話框
+
+## 實作紀錄
+
+- `GET／PUT api/admin/topics`：最多 20 個主題；新主題不帶識別碼，由伺服器產生 `t-` 開頭的識別碼。
+- `POST api/admin/topics/reclassify` 只清除非手動文章的分類 revision，保留目前主題直到新結果出來。
+- 驗證：`tests/topics.test.js` 主題表案例；內建瀏覽器在管理頁改名、新增並保存，刪除時出現頁內確認對話框，文章庫的主題 API 反映新名稱。

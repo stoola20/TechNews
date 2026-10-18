@@ -1,4 +1,4 @@
-import {query,rows,setting,nowIso} from './store.js';
+import {query,rows,setting,setSetting,nowIso,hash} from './store.js';
 
 // 固定主題表：識別碼建立後不變，名稱、說明與顏色可在管理頁修改。說明給分類模型參考。
 export const DEFAULT_TOPICS=[
@@ -82,4 +82,38 @@ export async function setItemTopics(env,row,value){
   if(!ids.includes(value?.primary))throw new Error('主要主題無效');
   if(secondary!==null && (!ids.includes(secondary) || secondary===value.primary))throw new Error('次要主題無效');
   await query(env,"UPDATE learning_items SET topic_primary=?,topic_secondary=?,topic_source='manual',topic_revision=revision,topic_attempts=0,topic_next_at=NULL WHERE id=?",value.primary,secondary,row.id).run();
+}
+
+// 取代主題表：既有識別碼不變（改名、說明、顏色不影響文章）；刪除的主題只讓受影響的文章回到待分類。
+export async function saveTopicList(env,value){
+  const list=value?.topics;
+  if(!Array.isArray(list) || !list.length || list.length>20)throw new Error('主題表需要 1 到 20 個主題');
+  const current=await topicList(env),names=new Set(),topics=[];
+  for(const raw of list){
+    const name=typeof raw?.name==='string'?raw.name.trim():'',description=typeof raw?.description==='string'?raw.description.trim():'',color=raw?.color;
+    if(!name || name.length>30)throw new Error('主題名稱需要 1 到 30 個字');
+    if(names.has(name))throw new Error(`主題名稱重複：${name}`);
+    if(description.length>300)throw new Error('主題說明最多 300 個字');
+    if(typeof color!=='string' || !/^#[0-9a-f]{6}$/i.test(color))throw new Error('主題顏色格式需為 #RRGGBB');
+    let id=raw.id;
+    if(id!==undefined && id!==null && id!==''){
+      if(!current.some(t=>t.id===id))throw new Error('主題識別碼不存在；新主題不要帶識別碼');
+    }else id='t-'+(await hash(name+':'+nowIso()+':'+Math.random())).slice(0,8);
+    if(topics.some(t=>t.id===id))throw new Error('主題識別碼重複');
+    names.add(name);topics.push({id,name,description,color:color.toLowerCase()});
+  }
+  const removed=current.map(t=>t.id).filter(id=>!topics.some(t=>t.id===id));
+  await setSetting(env,'topics',{topics,updated_at:nowIso()});
+  if(removed.length){
+    const marks=removed.map(()=>'?').join(',');
+    await query(env,`UPDATE learning_items SET topic_primary=NULL,topic_secondary=NULL,topic_source=NULL,topic_revision=NULL,topic_attempts=0,topic_next_at=NULL WHERE topic_primary IN (${marks})`,...removed).run();
+    await query(env,`UPDATE learning_items SET topic_secondary=NULL WHERE topic_secondary IN (${marks})`,...removed).run();
+  }
+  return {topics,removed};
+}
+
+// 重新分類全部：手動設定的文章不動，其他文章保留目前主題直到新結果出來。
+export async function reclassifyAll(env){
+  const result=await query(env,"UPDATE learning_items SET topic_revision=NULL,topic_attempts=0,topic_next_at=NULL WHERE topic_source IS NOT 'manual' AND status NOT IN ('merged','dismissed')").run();
+  return {queued:result.meta.changes};
 }
