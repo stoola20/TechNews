@@ -4,7 +4,7 @@ import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia,skipDecorative} from './media.js';
 import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia,startFullScan,saveArticle,failureDetail,bookmarksEnabled,authorRecheckEnabled} from './x.js';
-import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
+import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion,backfillPublished} from './library.js';
 import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
@@ -175,6 +175,7 @@ export function createLearningService(deps={}) {
       await resetIncomplete(env,row.id,true);await query(env,"UPDATE learning_items SET status='queued' WHERE id=?",row.id).run();
     }
     try{await migrateLibrary(env);await mergeExistingDuplicates(env);}catch(error){console.log(JSON.stringify({event:'library_migration_failed',error:error.message}));}
+    try{await backfillPublished(env);}catch(error){console.log(JSON.stringify({event:'published_backfill_failed',error:error.message}));}
     // 舊資料裡只因外部網頁裝飾圖片而標成來源缺漏的文章，改回正確狀態。
     for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='partial' AND gaps_json LIKE '%媒體%' LIMIT 50"))await skipDecorative(env,row.id);
     await recover(env);

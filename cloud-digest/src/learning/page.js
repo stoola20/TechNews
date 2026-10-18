@@ -17,6 +17,7 @@ body.app{display:flex;flex-direction:column}
 #list a{display:block;padding:12px;margin:0 -12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;border-radius:6px}
 #list a:hover{background:#f4f8f7}#list a[aria-current=page]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
 #list strong{display:block;line-height:1.5;overflow-wrap:anywhere}#list .unread strong:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:2px}
+.date{display:block;color:var(--muted);font-size:13px;margin-top:4px}
 .preview{display:block;color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
 .pager{display:flex;gap:8px;justify-content:space-between;margin-top:12px}
 .reader-bar{display:none;margin-bottom:12px}
@@ -78,6 +79,7 @@ ${LOGIN}
   <form id="search-form" role="search"><label for="search">搜尋標題、正文與保存的原文</label><input id="search" type="search" placeholder="按 / 快速搜尋"></form>
   <div class="filters">
     <label class="check"><input type="checkbox" id="unread"> 只看未讀</label>
+    <div><label for="sort">排序</label><select id="sort"><option value="published">原文發表時間</option><option value="added">加入時間</option></select></div>
     <div><label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select></div>
     <div><label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select></div>
   </div>
@@ -113,18 +115,18 @@ ${LOGIN}
 </main>
 <script>
 ${HELPERS}
-let view={q:'',unread:false,origin:'',state:'',page:0,article:null},listKey=null,listItems=[],current=null,openSeq=0,pollTimer=null,statusTimer=null;
+let view={q:'',unread:false,origin:'',state:'',sort:'published',page:0,article:null},listKey=null,listItems=[],current=null,openSeq=0,pollTimer=null,statusTimer=null;
 const narrow=matchMedia('(max-width: 959px)');
-function readView(){const p=new URLSearchParams(location.search);return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',page:Math.max(0,parseInt(p.get('page')||'0',10)||0),article:p.get('article')};}
-function urlFor(v){const p=new URLSearchParams();if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.page)p.set('page',String(v.page));if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
+function readView(){const p=new URLSearchParams(location.search);return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',page:Math.max(0,parseInt(p.get('page')||'0',10)||0),article:p.get('article')};}
+function urlFor(v){const p=new URLSearchParams();if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.page)p.set('page',String(v.page));if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
 function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTop;}
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
 function navigate(next,fromList){history.replaceState({...(history.state||{}),listScroll:listScroll()},'',location.href);view={...view,...next};history.pushState({fromList:!!fromList},'',urlFor(view));return apply();}
-function syncControls(){$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;}
+function syncControls(){$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;}
 async function apply(){
   syncControls();
-  const key=JSON.stringify([view.q,view.unread,view.origin,view.state,view.page]);
+  const key=JSON.stringify([view.q,view.unread,view.origin,view.state,view.sort,view.page]);
   if(key!==listKey){listKey=key;await loadList();}
   document.body.dataset.view=view.article?'reader':'list';
   if(view.article){if(view.article!==(current&&current.id))await openArticle(view.article);}else clearArticle();
@@ -133,7 +135,7 @@ async function apply(){
 window.addEventListener('popstate',e=>{view=readView();run(async()=>{await apply();if(!view.article)restoreScroll(e.state&&e.state.listScroll);});});
 function describeFilters(){const parts=[];if(view.q)parts.push('搜尋「'+view.q+'」');if(view.unread)parts.push('未讀');if(view.origin)parts.push(ORIGINS[view.origin]);if(view.state)parts.push($('state').selectedOptions[0].textContent);return parts.join('・');}
 async function loadList(){
-  const p=new URLSearchParams();if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);p.set('offset',String(view.page*50));
+  const p=new URLSearchParams();if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);p.set('sort',view.sort);p.set('offset',String(view.page*50));
   const items=await api('items?'+p.toString());
   listItems=items;$('list').replaceChildren(...items.map(renderItem));
   if(!items.length)$('list').append(el('li',{class:'empty',text:'沒有符合的文章。'}));
@@ -146,8 +148,12 @@ function badges(i){
   for(const o of (i.origins||'').split(',').filter(Boolean))out.push(el('span',{class:'badge',text:ORIGINS[o]||o}));
   return out;
 }
+// 日期依台灣時間顯示；沒有原文發表時間時明示是加入時間，避免誤認。
+function twDate(iso){const d=new Date(Date.parse(iso)+8*3600e3);return {year:d.getUTCFullYear(),month:d.getUTCMonth()+1,day:d.getUTCDate(),week:d.getUTCDay()};}
+function shortDate(iso){const d=twDate(iso);return d.month+'/'+d.day;}
+function itemDate(i){return i.published_at?shortDate(i.published_at):'日期未知・加入於 '+shortDate(i.created_at);}
 function renderItem(i){
-  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('strong',{text:i.title||(i.preview||'').slice(0,80)||i.url}),...badges(i)]);
+  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('strong',{text:i.title||(i.preview||'').slice(0,80)||i.url}),el('span',{class:'date',text:itemDate(i)}),...badges(i)]);
   if(!i.read_at)a.classList.add('unread');
   if(i.status==='awaiting_backfill'&&i.preview)a.append(el('span',{class:'preview',text:i.preview}));
   a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:i.id},true));};
@@ -445,6 +451,7 @@ $('search-form').onsubmit=e=>{e.preventDefault();run(()=>navigate({q:$('search')
 $('unread').onchange=()=>run(()=>navigate({unread:$('unread').checked,page:0}));
 $('origin').onchange=()=>run(()=>navigate({origin:$('origin').value,page:0}));
 $('state').onchange=()=>run(()=>navigate({state:$('state').value,page:0}));
+$('sort').onchange=()=>run(()=>navigate({sort:$('sort').value,page:0}));
 $('previous').onclick=e=>run(()=>navigate({page:Math.max(0,view.page-1)}),e.currentTarget,'載入中…');
 $('next').onclick=e=>run(()=>navigate({page:view.page+1}),e.currentTarget,'載入中…');
 $('back').onclick=()=>{if(history.state&&history.state.fromList)history.back();else run(()=>navigate({article:null}));};

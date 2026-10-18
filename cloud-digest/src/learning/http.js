@@ -116,6 +116,8 @@ export function createLearningHandler(deps={}) {
         if(term.length>200||!Number.isInteger(offset)||offset<0||offset>1000000)throw new Error('搜尋參數無效');
         // status 為舊參數，等同單一狀態篩選；state 為狀態群組。
         const legacy=url.searchParams.get('status')||'',group=url.searchParams.get('state')||'',origin=url.searchParams.get('origin')||'',unread=url.searchParams.get('unread')==='1';
+        const sort=url.searchParams.get('sort')||'published';
+        if(!['published','added'].includes(sort))throw new Error('排序方式無效');
         if(legacy&&!['awaiting_backfill','ready','partial','needs_attention','filtered'].includes(legacy))throw new Error('文章篩選無效');
         if(group&&!STATE_GROUPS[group])throw new Error('狀態篩選無效');
         if(origin&&!ORIGINS[origin])throw new Error('收件入口篩選無效');
@@ -130,10 +132,12 @@ export function createLearningHandler(deps={}) {
           conditions.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\'))");
           args.push(pattern,pattern,pattern,pattern);
         }
-        return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,revision,created_at,updated_at,
+        // 發表時間排序：沒有發表時間的文章以加入時間排入；ID 作為次要排序，分頁才穩定。
+        const order=sort==='added'?'created_at DESC,id DESC':'COALESCE(published_at,created_at) DESC,id DESC';
+        return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,
           (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
           (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins
-          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT 50 OFFSET ?`,...args,offset));
+          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY ${order} LIMIT 50 OFFSET ?`,...args,offset));
       }
       if(route==='items/states'&&request.method==='GET'){
         // 輕量狀態刷新：只回狀態，不重建正文或筆記。

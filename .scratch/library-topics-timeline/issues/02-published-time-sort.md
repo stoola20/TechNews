@@ -4,9 +4,17 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 保存主要來源時，把 RFC 2822（含時區縮寫）、ISO 8601、`YYYY-MM-DD` 轉成 UTC ISO 寫入文章；無法解析時為空值
-- [ ] 維護排程冪等回補：依序使用主要來源、收件 metadata、舊官方文章表
-- [ ] 列表 API 支援 `sort=published|added`，預設 `published`，次要排序為文章 ID；回傳發表時間與加入時間
-- [ ] 列表頁有排序下拉並保存在網址；每篇顯示發表日期或「日期未知・加入於 M/D」（台灣時間）
+- [x] 保存主要來源時，把 RFC 2822（含時區縮寫）、ISO 8601、`YYYY-MM-DD` 轉成 UTC ISO 寫入文章；無法解析時為空值
+- [x] 維護排程冪等回補：依序使用主要來源、收件 metadata、舊官方文章表
+- [x] 列表 API 支援 `sort=published|added`，預設 `published`，次要排序為文章 ID；回傳發表時間與加入時間
+- [x] 列表頁有排序下拉並保存在網址；每篇顯示發表日期或「日期未知・加入於 M/D」（台灣時間）
+
+## 實作紀錄
+
+- 新增 migration：文章的 `published_at` 欄位與排序索引。
+- 解析只接受帶時區的 RFC 2822、ISO 8601 與只有日期的寫法；沒有時區的 ISO 時間視為 UTC，英文長日期（例如 `October 5, 2026`）會依執行環境時區解讀，所以不接受。
+- 保存主要來源時寫入文章；維護排程每輪回補最多 200 篇。
+- 列表頁先加入排序下拉與日期顯示，完整版面在 ticket 03 改版。
+- 驗證：`tests/library-order.test.js`。
