@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Script} from 'node:vm';
 import {createLearningHandler} from '../src/learning/http.js';
 import {setTextProvider} from '../src/learning/local.js';
-import {query,rows,item} from '../src/learning/store.js';
+import {query,rows,item,saveEvidence} from '../src/learning/store.js';
 import {LEARNING_PAGE} from '../src/learning/page.js';
 import {ADMIN_PAGE} from '../src/learning/admin-page.js';
 import {environment,recorder,request} from './helpers.js';
@@ -55,7 +55,48 @@ test('只重寫文字不重抓來源；重送通知只用保存內容；頁面�
   const sent=net.calls.filter(c=>c.url.includes('api.telegram.org'));
   assert.equal(sent.length,1);assert.match(JSON.parse(sent[0].options.body).text,/介紹/);
   assert.equal((await handler.fetch(request('api/items/'+'7'.repeat(32)+'/renotify','POST',{}),env)).status,409);
-  for(const page of [LEARNING_PAGE,ADMIN_PAGE])new Script(page.match(/<script>([\s\S]*)<\/script>/)[1]);
+  for(const page of [LEARNING_PAGE,ADMIN_PAGE]){
+    const script=page.match(/<script>([\s\S]*)<\/script>/)[1];new Script(script);
+    // App 內建瀏覽器會擋原生 confirm()，所有確認都要走頁內對話框。
+    assert.doesNotMatch(script,/(^|[^.\w])confirm\(/);assert.match(script,/askConfirm\(/);
+  }
   const admin=await handler.fetch(new Request('https://learning.example.org/learning/admin'),env);
   assert.equal(admin.status,200);assert.match(admin.headers.get('content-security-policy'),/frame-ancestors 'none'/);
+});
+
+test('外部網頁的裝飾圖片不顯示，對應缺漏一併隱藏；X 貼文媒體照常顯示',async()=>{
+  const env=environment(),handler=createLearningHandler(recorder()),id='9'.repeat(32);
+  await query(env,"INSERT INTO learning_items(id,url,kind,title,status,body,article_json,gaps_json,revision,created_at,updated_at) VALUES(?,?,'x','文章','partial','正文','{}',?,1,?,?)",id,'https://x.com/i/status/9',
+    JSON.stringify([{id:'logo',url:'https://cdn.example.org/brand/logo.svg',error:'媒體格式不支援'},{id:'nourl',url:'',error:'來源未提供可取得的完整媒體 URL'},{url:'https://example.org/missing',error:'直接外連文章無法取得'}]),now,now).run();
+  await query(env,"INSERT INTO learning_evidence(id,item_id,url,relation,content,fetched_at) VALUES('post',?,'https://x.com/i/status/9','primary','主文',?),('page',?,'https://example.org/page','external','外部',?)",id,now,id,now).run();
+  for(const [mid,evidence,url,status] of [['video','post','https://video.example.org/a.mp4','ready'],['logo','page','https://cdn.example.org/brand/logo.svg','needs_attention'],['nourl','page','','needs_attention'],['thumb','page','https://img.example.org/a=s120','ready'],['diagram','page','https://example.org/diagram.png','ready']])
+    await query(env,"INSERT INTO learning_media(id,item_id,evidence_id,url,type,status,updated_at) VALUES(?,?,?,?,?,?,?)",mid,id,evidence,url,mid==='video'?'video':'photo',status,now).run();
+  const result=await (await handler.fetch(request('api/items/'+id),env)).json();
+  assert.deepEqual(result.media.map(m=>m.id),['video','diagram']);
+  assert.deepEqual(JSON.parse(result.item.gaps_json).map(g=>g.error),['直接外連文章無法取得']);
+  assert.equal(result.item.status,'partial');
+  assert.equal((await rows(env,"SELECT id FROM learning_media WHERE status='decorative' ORDER BY id")).map(r=>r.id).join(','),'logo,nourl,thumb');
+  // 只剩裝飾圖片缺漏的文章改回已完成。
+  await query(env,"UPDATE learning_items SET gaps_json=?,status='partial' WHERE id=?",JSON.stringify([{id:'logo2',url:'https://cdn.example.org/brand/logo2.svg',error:'媒體格式不支援'}]),id).run();
+  await query(env,"INSERT INTO learning_media(id,item_id,evidence_id,url,type,status,updated_at) VALUES('logo2',?,'page','https://cdn.example.org/brand/logo2.svg','photo','needs_attention',?)",id,now).run();
+  assert.equal((await (await handler.fetch(request('api/items/'+id),env)).json()).item.status,'ready');
+});
+
+test('手動貼上原文：只接受缺漏網址，保存為使用者來源並重新排入整理，之後自動補取不覆蓋',async()=>{
+  const env=environment(),handler=createLearningHandler(recorder()),id='8'.repeat(32),article='https://example.org/long-article';
+  await query(env,"INSERT INTO learning_items(id,url,kind,title,status,body,article_json,gaps_json,revision,created_at,updated_at) VALUES(?,?,'x','文章','partial','正文','{}',?,1,?,?)",id,'https://x.com/i/status/8',JSON.stringify([{url:article,error:'直接外連文章無法取得'}]),now,now).run();
+  await saveEvidence(env,id,{url:article,relation:'external',status:'missing',metadata:{error:'直接外連文章無法取得'}});
+  const paste=(url,content)=>handler.fetch(request('api/items/'+id+'/source','POST',{url,content}),env);
+  assert.equal((await paste('https://example.org/other','長度足夠的原文內容。'.repeat(5))).status,409);
+  assert.equal((await paste(article,'太短')).status,400);
+  const long='使用者貼上的長文原文。'.repeat(3000);
+  assert.equal((await paste(article,long)).status,202);
+  const saved=(await rows(env,"SELECT * FROM learning_evidence WHERE item_id=? AND url=?",id,article))[0];
+  assert.equal(saved.status,'available');assert.equal(saved.content,long);assert.equal(JSON.parse(saved.metadata_json).provided_by,'user');
+  assert.equal((await item(env,id)).status,'queued');
+  // 補取缺漏再次失敗或取得較短內容，都不能覆蓋使用者貼上的原文。
+  await saveEvidence(env,id,{url:article,relation:'external',status:'missing',metadata:{error:'直接外連文章無法取得'}});
+  await saveEvidence(env,id,{url:article,relation:'external',content:'自動取得的片段',metadata:{}});
+  assert.equal((await rows(env,"SELECT content FROM learning_evidence WHERE item_id=? AND url=?",id,article))[0].content,long);
+  assert.equal((await paste(article,long)).status,409);
 });

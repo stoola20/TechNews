@@ -27,7 +27,9 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 .source{margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}.source summary{min-height:32px;cursor:pointer}
 .source .text{white-space:pre-wrap;line-height:1.75;max-height:420px;overflow:auto;font-size:15px;margin-top:8px}
 .analysis{border-left:3px solid var(--line);padding-left:14px;margin:12px 0 20px}.stamp{min-height:32px;padding:2px 8px;font-variant-numeric:tabular-nums;margin-right:6px}mark{background:#fde68a;color:inherit;outline:none}#answer-sources li{margin:8px 0}
-#media img,#media video{max-width:100%;max-height:440px;display:block;margin:12px 0;border-radius:6px}
+#media img,#media video{max-width:100%;max-height:440px;display:block;margin:12px 0 8px;border-radius:6px}
+.gap{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0}.gap button{min-height:36px;padding:4px 12px}
+.media-item{margin:0 0 28px}.obs{display:flex;gap:8px;align-items:baseline;margin:6px 0;line-height:1.7}.obs .stamp{flex:none;margin:0}
 #ask-scope{display:flex;gap:16px;flex-wrap:wrap}#ask-scope label{display:flex;align-items:center;gap:8px;min-height:44px}#ask-scope input{min-height:auto;width:18px;height:18px}
 #answer{margin-top:16px}#history details{border-bottom:1px solid var(--line);padding:4px 0}#history summary{min-height:44px;cursor:pointer;padding:10px 0}
 .empty{padding:48px 0;color:var(--muted)}
@@ -122,23 +124,22 @@ async function openArticle(id){
   if(seq!==openSeq)return;
   current=result.item;
   if(current.id!==id){view.article=current.id;history.replaceState(history.state,'',urlFor(view));}
-  renderArticle(result);notes.open(current);questions.open(current);markSelected();
+  renderArticle(result);applyState(current);notes.open(current);questions.open(current);markSelected();
   const title=$('article-title');if(title)title.focus({preventScroll:true});
   $('reader').scrollTop=0;if(narrow.matches)window.scrollTo(0,0);
 }
 async function refreshArticle(){if(!current)return;const seq=openSeq,result=await api('items/'+current.id);if(seq!==openSeq||result.item.id!==current.id)return;current=result.item;renderArticle(result);notes.sync(current);}
 function provenance(a){if(!a)return '';if(a.legacy)return '搬移前的官方短導讀'+(a.model?'（'+a.model+'）':'，未保存模型資訊');if(a.provider==='ollama')return '本機 '+(a.model||'Gemma')+' 整理';if(a.provider==='gemini')return 'Gemini '+(a.model||'')+' 整理';if(a.provider==='demo')return '示範資料';return a.model||'';}
-function confirmAction(text){return confirm(text);}
 function renderArticle(result){
   const item=result.item,box=$('article'),article=JSON.parse(item.article_json||'{}'),gaps=JSON.parse(item.gaps_json||'[]');
   const nodes=[];
   nodes.push(el('h1',{id:'article-title',tabindex:'-1',text:item.title||(result.sources.find(s=>s.relation==='primary')||{content:''}).content.slice(0,100)||'處理中的來源'}));
   const origins=[...new Set((result.intakes||[]).map(i=>ORIGINS[i.origin]||i.origin))];
   nodes.push(el('p',{class:'meta'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' 更新於 '+when(item.updated_at)+(origins.length?'・收件：'+origins.join('、'):'')+(provenance(article)?'・'+provenance(article):'')+'・'),safeLink(item.url,'開啟原始來源')]));
-  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材。'}));
+  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
   if(item.status==='waiting_local')nodes.push(el('p',{class:'notice',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
   if(item.status==='budget_paused')nodes.push(el('p',{class:'notice',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
-  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>el('div',{text:'・'+(g.error||'來源缺漏')+(g.url?'（'+g.url+'）':'')})),item.last_error?el('div',{text:'・'+item.last_error}):null]));
+  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]));
   nodes.push(actions(item));
   if(item.status==='awaiting_backfill'){
     nodes.push(el('p',{class:'notice',text:'這篇尚未呼叫模型。先閱讀同步時保存的原文，或開啟原始來源查看最新內容，再決定是否整理。'}));
@@ -146,39 +147,55 @@ function renderArticle(result){
     nodes.push(el('section',{class:'block'},[el('h2',{text:'保存的原文'}),...(originals.length?originals.map(sourceBlock):[el('p',{text:'尚未保存原文，請先開啟上方原始來源。'})])]));
   }
   if(item.body){const content=el('div',{class:'article-body'});content.innerHTML=current.body_html;nodes.push(el('section',{class:'block','aria-labelledby':'body-title'},[el('h2',{id:'body-title',class:'sr',text:'教材'}),el('span',{class:'label',text:'教材（'+(provenance(article)||'模型整理')+'；標示「補充例子」的段落是模型額外加的教學例子）'}),content]));}
-  if(item.status!=='awaiting_backfill'&&result.sources.length)nodes.push(el('section',{class:'block'},[el('h2',{text:'原始來源與片段'}),el('p',{class:'muted',text:'以下是系統保存的原文，與上方模型整理的內容分開。'}),...result.sources.map(sourceBlock)]));
   const media=mediaBlock(result);if(media)nodes.push(media);
   if((result.versions||[]).length)nodes.push(el('section',{class:'block'},[el('h2',{text:'舊版本'}),el('ul',{},result.versions.map(v=>el('li',{text:when(v.created_at)+'・'+(v.edition==='legacy_digest'?'既有導讀':'版本 '+v.revision)+(v.title?'・'+v.title:'')})))]));
+  // 原始來源放在整頁最下方，閱讀教材時不被打斷。
+  if(item.status!=='awaiting_backfill'&&result.sources.length)nodes.push(el('section',{class:'block'},[el('h2',{text:'原始來源與片段'}),el('p',{class:'muted',text:'以下是系統保存的原文，與上方模型整理的內容分開。'}),...result.sources.map(sourceBlock)]));
   box.replaceChildren(...nodes);
+}
+// 自動取不到的文章來源，可以手動貼上原文後重新整理。
+function gapLine(item,g,sources){
+  const line=el('div',{class:'gap'},[document.createTextNode('・'+(g.error||'來源缺漏')+(g.url?'（'+g.url+'）':''))]);
+  if(!g.url||!sources.some(s=>s.status==='missing'&&s.url===g.url&&['primary','external'].includes(s.relation)))return line;
+  const paste=el('button',{type:'button',text:'貼上原文'});
+  paste.onclick=async()=>{const text=await askText('貼上這個來源的原文','把原文完整貼上，保存後會用 '+textModelName()+' 重新整理。之後的自動補取不會覆蓋你貼上的內容。');if(!text)return;
+    run(async()=>{await api('items/'+item.id+'/source','POST',{url:g.url,content:text});message('已保存原文並排入整理。');await refreshArticle();await updateListItem(item.id);},paste,'保存中…');};
+  line.append(paste);return line;
 }
 function sourceBlock(s){
   const d=el('details',{class:'source','data-evidence':s.id},[el('summary',{},[el('strong',{text:RELATIONS[s.relation]||s.relation}),document.createTextNode((s.published_at?'・'+when(s.published_at):'')+(s.status!=='available'?'・無法取得':''))])]);
   d.append(el('p',{},[safeLink(s.url,'開啟這則原文')]));
   if(s.content)d.append(el('div',{class:'text',text:s.content}));
   else{const m=JSON.parse(s.metadata_json||'{}');d.append(el('p',{class:'muted',text:m.error||'沒有保存內容'}));}
+  if(JSON.parse(s.metadata_json||'{}').provided_by==='user')d.querySelector('summary').append(document.createTextNode('・你貼上的原文'));
   return d;
 }
 function seekButton(stamp,player){const b=el('button',{type:'button',class:'stamp',text:stamp});if(!player){b.disabled=true;b.title='原始媒體已不可播放，保留解析與原始連結';return b;}b.setAttribute('aria-label','跳到 '+stamp);b.onclick=()=>{const p=stamp.split(':').map(Number);player.currentTime=p[0]*60+p[1];player.focus();player.play().catch(()=>{});};return b;}
+function observationLine(stamp,text,player){return el('p',{class:'obs'},[stamp?seekButton(stamp,player):null,el('span',{text})]);}
 function renderAnalysis(a,player){
-  const d=a.analysis,wrap=el('div',{class:'analysis'},[el('span',{class:'label',text:'媒體證據（模型觀察：'+a.model+'）'}),el('p',{class:'muted',text:'涵蓋範圍：'+(d.coverage.from?d.coverage.from+'–'+d.coverage.to+'，':'')+d.coverage.summary})]);
-  wrap.append(el('p',{style:'white-space:pre-wrap',text:'畫面文字（OCR）：'+({text:'',partial:'（部分可辨識）',none:'沒有可辨識文字',unreadable:'無法辨識'}[d.ocr.status]||'')+(d.ocr.text?'\n'+d.ocr.text:'')}));
-  if(d.speech.status!=='not_applicable'){wrap.append(el('p',{text:'語音：'+({transcribed:'已轉錄',partial:'部分可辨識',none:'沒有語音',unclear:'聽不清楚'}[d.speech.status]||d.speech.status)}));for(const s of d.speech.segments)wrap.append(el('p',{},[seekButton(s.start,player),document.createTextNode('– '+s.end+' '+s.text)]));}
-  for(const o of d.visual)wrap.append(el('p',{},[o.timestamp?seekButton(o.timestamp,player):null,document.createTextNode((o.kind==='inferred'?'推論：':'畫面：')+o.observation)]));
+  const d=a.analysis,wrap=el('div',{class:'analysis'});
+  if(d.coverage.summary)wrap.append(el('p',{class:'muted',text:(d.coverage.from?d.coverage.from+'–'+d.coverage.to+'・':'')+d.coverage.summary}));
+  if(d.ocr.text)wrap.append(el('p',{style:'white-space:pre-wrap',text:'畫面文字：'+(d.ocr.status==='partial'?'（部分可辨識）':'')+'\n'+d.ocr.text}));
+  if(d.speech.status!=='not_applicable')for(const s of d.speech.segments)wrap.append(observationLine(s.start,s.text,player));
+  for(const o of d.visual)wrap.append(observationLine(o.timestamp,(o.kind==='inferred'?'推論：':'')+o.observation,player));
   for(const u of d.unrecognized)wrap.append(el('p',{class:'muted',text:'無法辨識'+(u.timestamp?'（'+u.timestamp+'）':'')+'：'+u.description}));
   return wrap;
 }
+// 每個媒體下方緊接它自己的說明。舊資料的觀察只對應到貼文，放在該貼文最後一個媒體之下。
 function mediaBlock(result){
   const media=result.media||[],analyses=result.analyses||[],old=analyses.length?[]:(JSON.parse(result.item.article_json||'{}').observations||[]);
   if(!media.length&&!old.length)return null;
-  const box=el('section',{class:'block',id:'media'},[el('h2',{text:'媒體與時間點'})]);
+  const box=el('section',{class:'block',id:'media'},[el('h2',{text:'媒體與時間點'})]),last={},placed=new Set();
+  for(const m of media)last[m.evidence_id]=m.id;
   for(const m of media){
-    let player=null;
-    if(m.object_key){const node=el(m.type==='photo'?'img':'video',{src:'/learning/api/media/'+m.id});if(m.type==='photo'){node.alt='來源圖片';node.loading='lazy';}else{node.controls=true;node.preload='metadata';player=node;}box.append(node);}
-    else box.append(el('p',{class:'muted'},[document.createTextNode((m.error||'原始媒體尚未取得或已過保存期限')+' '),safeLink(m.url,'原始媒體連結')]));
-    const a=analyses.find(x=>x.media_id===m.id);if(a)box.append(renderAnalysis(a,player));
+    const item=el('div',{class:'media-item'});let player=null;
+    if(m.object_key){const node=el(m.type==='photo'?'img':'video',{src:'/learning/api/media/'+m.id});if(m.type==='photo'){node.alt='來源圖片';node.loading='lazy';}else{node.controls=true;node.preload='metadata';player=node;}item.append(node);}
+    else item.append(el('p',{class:'muted'},[document.createTextNode((m.error||'原始媒體尚未取得或已過保存期限')+' '),safeLink(m.url,'原始媒體連結')]));
+    const a=analyses.find(x=>x.media_id===m.id);if(a)item.append(renderAnalysis(a,player));
+    for(const o of old)if(o.media_id?o.media_id===m.id:o.source_id===m.evidence_id&&last[m.evidence_id]===m.id){placed.add(o);item.append(observationLine(o.timestamp,o.description,player));}
+    box.append(item);
   }
-  // 舊版教材只保存簡短媒體觀察。
-  for(const o of old)box.append(el('p',{},[el('span',{class:'label',text:'舊版媒體觀察'}),document.createTextNode(' '+(o.timestamp?o.timestamp+'・':'')+o.description)]));
+  for(const o of old)if(!placed.has(o))box.append(observationLine(o.timestamp,o.description,null));
   return box;
 }
 function actions(item){
@@ -190,20 +207,20 @@ function actions(item){
     const start=el('button',{class:'primary',text:'開始整理這篇'});
     start.onclick=()=>run(async()=>{await api('items/'+item.id+'/backfill','POST',{});message('已啟動這篇文章的整理，完成後會通知你。');await refreshArticle();await updateListItem(item.id);},start,'啟動整理…');
     const remove=el('button',{class:'danger',text:'刪除這篇待回補'});
-    remove.onclick=()=>{if(!confirmAction('刪除後，下次同步不會再加入；重新分享原始連結可再次收件。要刪除嗎？'))return;run(async()=>{await api('items/'+item.id,'DELETE');message('已刪除待回補文章。');listKey=null;await navigate({article:null});},remove,'刪除中…');};
+    remove.onclick=async()=>{if(!await askConfirm('刪除後，下次同步不會再加入；重新分享原始連結可再次收件。要刪除嗎？','刪除',true))return;run(async()=>{await api('items/'+item.id,'DELETE');message('已刪除待回補文章。');listKey=null;await navigate({article:null});},remove,'刪除中…');};
     row.append(start,remove);return row;
   }
   const retry=el('button',{text:'補取缺漏並整理'});
-  retry.onclick=()=>{if(!confirmAction('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
+  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
   row.append(retry);
   if(['ready','partial','needs_attention','error'].includes(item.status)){
     const rewrite=el('button',{text:'只重寫文字'});
-    rewrite.onclick=()=>{if(!confirmAction('沿用已保存的來源與媒體解析，只請文字模型重寫，不重新取得來源。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
+    rewrite.onclick=async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
     row.append(rewrite);
   }
   if(['ready','partial'].includes(item.status)&&item.edition==='detailed'){
     const resend=el('button',{text:'重送通知'});
-    resend.onclick=()=>{if(!confirmAction('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},resend,'送出中…');};
+    resend.onclick=async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},resend,'送出中…');};
     row.append(resend);
   }
   return row;
@@ -227,8 +244,10 @@ async function poll(){
     }
   }catch(e){}
 }
+let textModel=null;
+function textModelName(){return !textModel?'目前設定的文字模型':textModel.provider==='local'?'本機 '+textModel.model:/gemini/i.test(textModel.model)?textModel.model:'Gemini '+textModel.model;}
 async function runnerStatus(){
-  try{const s=await api('status'),l=s.local,b=s.budget;
+  try{const s=await api('status'),l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};
     const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');
     $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
   }catch(e){}
@@ -349,7 +368,7 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){poll();runnerStatus();}});
 bindLogin(boot);
 async function boot(){
-  await api('status');showApp();view=readView();listKey=null;await apply();runnerStatus();
+  await api('status');showApp();await runnerStatus();view=readView();listKey=null;await apply();
   clearInterval(pollTimer);clearInterval(statusTimer);pollTimer=setInterval(poll,8000);statusTimer=setInterval(runnerStatus,30000);
 }
 run(boot);

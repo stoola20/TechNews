@@ -1,7 +1,7 @@
 import {apiJson} from './network.js';
 import {query,rows,hash,nowIso,reserve,settle,uncertain} from './store.js';
 import {tokenCost} from './gemini.js';
-import {prepareMedia} from './media.js';
+import {prepareMedia,skipDecorative} from './media.js';
 
 export const MEDIA_PROMPT_VERSION='media-evidence-v1';
 export const mediaModel=env=>env.LEARNING_MEDIA_MODEL || env.LEARNING_MODEL || 'gemini-3.8-flash';
@@ -90,13 +90,15 @@ export async function analyzeMedia(env,asset,fetcher=fetch){
 // 準備本機寫作需要的媒體證據：已保存且仍有效的解析直接重用，不重新呼叫 Flash。
 export async function mediaEvidence(env,itemId,deps={}){
   const fetcher=deps.fetcher || fetch;
-  let assets=await rows(env,'SELECT * FROM learning_media WHERE item_id=? ORDER BY id',itemId);
+  await skipDecorative(env,itemId);
+  const list=()=>rows(env,"SELECT * FROM learning_media WHERE item_id=? AND status!='decorative' ORDER BY id",itemId);
+  let assets=await list();
   const missing=[];
   for(const asset of assets)if(!(await savedAnalysis(env,asset)).row && !['needs_attention','expired'].includes(asset.status))missing.push(asset.id);
   if(missing.length){
     const prepared=await (deps.prepareMedia || prepareMedia)(env,itemId,fetcher,{only:missing});
     if(prepared.pending)return {pending:true};
-    assets=await rows(env,'SELECT * FROM learning_media WHERE item_id=? ORDER BY id',itemId);
+    assets=await list();
     for(const asset of assets.filter(a=>missing.includes(a.id)&&a.status==='ready')){
       const {fingerprint}=await savedAnalysis(env,asset);
       try{
@@ -110,7 +112,7 @@ export async function mediaEvidence(env,itemId,deps={}){
         if(attempts<MAX_ATTEMPTS)return {pending:true};
       }
     }
-    assets=await rows(env,'SELECT * FROM learning_media WHERE item_id=? ORDER BY id',itemId);
+    assets=await list();
   }
   const evidence=[],gaps=[];
   for(const asset of assets){

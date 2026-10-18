@@ -1,6 +1,5 @@
 import { getSources, discoverSource, loadArticle, canonicalArticleUrl, readBoundedText, initialSeenUrls } from "./sources.js";
 import { tasksFor } from "./schedule.js";
-import { textProvider } from "./learning/local.js";
 export { initialSeenUrls };
 import { formatFullDigest } from "./format.js";
 import { summarize, modelConfiguration } from "./models.js";
@@ -173,8 +172,8 @@ export default {
     const tasks = tasksFor(controller?.cron);
     if (!tasks.length) { log("schedule_ignored", { cron: controller?.cron || null }); return; }
     const learningEnabled = env.LEARNING_ENABLED === "true";
-    // 正式切換到本機文字模型後，官方文章進入共同文章庫詳細整理；切換前沿用舊的 Telegram 導讀流程。
-    const officialInLibrary = tasks.includes("official") && learningEnabled && (await textProvider(env)) === "local";
+    // 啟用文章庫後，官方文章一律進共同文章庫，用目前的文字模型（Gemini 或本機）詳細整理；未啟用時才走舊的 Telegram 導讀流程。
+    const officialInLibrary = tasks.includes("official") && learningEnabled;
     const results = await Promise.allSettled([
       ...(tasks.includes("official") && !officialInLibrary ? [runDigest(env)] : []),
       ...(learningEnabled ? [learning.scheduled(env, { tasks: officialInLibrary ? tasks : tasks.filter((task) => task !== "official") })] : []),

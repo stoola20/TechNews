@@ -96,3 +96,25 @@ test('相容期間官方流程仍寫入舊表，維護排程把新通知文章�
   await handler.queue({messages:[task]},env);
   assert.equal(task.acks,1);assert.equal(net.calls.filter(c=>c.url.includes('generativelanguage')).length,0);
 });
+
+test('舊導讀重寫：沒有保存原文時重抓官方原文，Gemini 對純文字多回的觀察不會讓重寫失敗',async()=>{
+  const env=environment(),article='# Original title\n\n官方原文：背景、機制、操作與限制。'.repeat(10);
+  const net=recorder(async(url,options)=>{
+    if(url.hostname==='generativelanguage.googleapis.com'){const sourceId=JSON.parse(JSON.parse(options.body).contents[0].parts.at(-1).text).sources[0].id;return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({title:'詳細教材',body:'### 背景\n\n完整解說',intro:'導讀',citations:[sourceId],observations:[{source_id:'invented',timestamp:'',description:'不存在的畫面'}]})}]}}],usageMetadata:{promptTokenCount:100,candidatesTokenCount:100}});}
+    return null;
+  });
+  const handler=createLearningHandler({...net,loadArticle:async(source,entry)=>({...entry,content:article,contentMethod:'article_html'})});
+  await legacyOfficial(env,'https://developers.openai.com/blog/no-content',{content:null,provider:null,model:null});
+  await migrateLibrary(env);
+  const legacy=(await rows(env,"SELECT * FROM learning_items WHERE url='https://developers.openai.com/blog/no-content'"))[0];
+  assert.equal((await rows(env,'SELECT id FROM learning_evidence WHERE item_id=?',legacy.id)).length,0);
+  assert.equal((await handler.fetch(request('api/items/'+legacy.id+'/rewrite','POST',{}),env)).status,202);
+  await handler.service.process(env,legacy.id);
+  const done=await item(env,legacy.id);
+  assert.equal(done.status,'ready',done.last_error);assert.equal(done.edition,'detailed');
+  const json=JSON.parse(done.article_json);
+  assert.equal(json.provider,'gemini');assert.deepEqual(json.observations,[]);
+  assert.doesNotMatch(done.gaps_json,/未保存原文/);
+  const status=await (await handler.fetch(request('api/status'),env)).json();
+  assert.equal(status.local.text_model,'gemini-3.8-flash');
+});

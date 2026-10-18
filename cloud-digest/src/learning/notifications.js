@@ -17,7 +17,8 @@ function baseUrl(env){
 
 export function articleMessage(env,row,kind){
   const article=JSON.parse(row.article_json || '{}'),gaps=JSON.parse(row.gaps_json || '[]');
-  const lines=[`${kind==='update'?'【更新】':''}${row.title.slice(0,120)}`,'',(article.intro || '').slice(0,800)];
+  const lines=[`${kind==='update'?'【更新】':kind==='merged'?'【已在文章庫】':''}${row.title.slice(0,120)}`,'',(article.intro || '').slice(0,800)];
+  if(kind==='merged')lines.push('','你收藏或分享的 X 貼文連到這篇已整理的文章，已把貼文加進同一篇的來源，不重新生成。');
   if(kind==='update')lines.push('','補到新的來源或修復缺漏，已更新同一篇文章；舊版、筆記與已讀狀態都保留。');
   if(gaps.length)lines.push('',`來源有 ${gaps.length} 項缺漏，詳見文章上方說明。`);
   lines.push('',`完整文章：${baseUrl(env)}/learning?article=${row.id}`);

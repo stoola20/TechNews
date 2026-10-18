@@ -389,3 +389,14 @@ test('貼文明列附件但沒有回傳媒體資料時，標示缺漏而不是�
   const id=await handler.service.collect(env,'https://x.com/author/status/889');await handler.service.process(env,id);
   const saved=await item(env,id);assert.equal(saved.status,'partial');assert.match(saved.gaps_json,/完整媒體 URL/);assert.equal((await rows(env,'SELECT * FROM learning_media')).length,1);
 });
+
+test('同一則貼文的多支影片：觀察帶 media_id 各自對應，對不上的 media_id 清空改依貼文分組',async()=>{
+  const env=environment(),sources=[{id:'post',url:'https://example.org',content:'原文'}];
+  const file_json=JSON.stringify({uri:'https://generativelanguage.googleapis.com/v1beta/files/test'});
+  const first={id:'m1',type:'video',evidence_id:'post',mime:'video/mp4',duration_ms:30000,file_json},second={...first,id:'m2'};
+  let prompt='';
+  const response=observations=>async(url,options)=>{prompt=JSON.stringify(JSON.parse(options.body).contents);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({title:'教材',body:'正文',intro:'導讀',citations:['post'],observations})}]}}],usageMetadata:{promptTokenCount:100,candidatesTokenCount:100}});};
+  const result=await generate(env,sources,[first,second],[],null,response([{source_id:'post',media_id:'m1',timestamp:'00:01',description:'第一支'},{source_id:'post',media_id:'m2',timestamp:'00:02',description:'第二支'},{source_id:'post',media_id:'invented',timestamp:'00:03',description:'未知'}]));
+  assert.deepEqual(result.observations.map(o=>o.media_id),['m1','m2','']);
+  assert.match(prompt,/媒體 ID：m1/);assert.match(prompt,/媒體 ID：m2/);
+});

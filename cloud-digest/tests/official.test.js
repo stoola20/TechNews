@@ -91,3 +91,20 @@ test('切換前不把官方文章送進文章庫；08:00 排程在本機模式�
   assert.equal((await rows(s.env,"SELECT id FROM learning_items WHERE status='waiting_local'")).length,8);
   assert.equal(s.net.calls.filter(c=>c.url.includes('generativelanguage')).length,0);
 });
+
+test('Gemini 模式：官方文章也進文章庫詳細整理，不符合讀者關注的略過且不通知',async()=>{
+  const env=environment(),net=recorder(),seen=[];
+  const handler=createLearningHandler({...net,discoverSource:async source=>source.id==='openai_developer_blog'?entries.slice(0,2):[],
+    loadArticle:async(source,entry)=>({...entry,title:'Official '+entry.url.split('-').at(-1),content:longContent,contentMethod:'article_html'}),
+    generate:async(env,sources,media,gaps,question,fetcher,{official}={})=>{seen.push(official);
+      return sources[0].url.endsWith('post-0')?{title:'詳細教材',body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]}:{publish:false,reason:'人物專訪，沒有技術變更',title:'略過的文章'};}});
+  await settings(env);
+  assert.equal((await handler.service.official(env)).queued,2);
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  assert.equal(seen.length,2);assert.equal(seen[0].interests,'AI agents 與開發者工具');
+  const items=await rows(env,"SELECT url,status,edition,article_json FROM learning_items ORDER BY url");
+  assert.deepEqual(items.map(i=>[i.url.split('/').at(-1),i.status]),[['post-0','ready'],['post-1','filtered']]);
+  assert.equal(JSON.parse(items[1].article_json).reason,'人物專訪，沒有技術變更');
+  await handler.service.flush(env);
+  assert.equal(net.calls.filter(c=>c.url.includes('api.telegram.org')).length,1);
+});
