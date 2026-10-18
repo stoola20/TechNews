@@ -87,7 +87,7 @@ runner/install-launchd.sh "$HOME/.config/technews-runner/runner.env"
 
 ## X 長文代抓（選用）
 
-X 長文（`x.com/i/article/...`）要登入才看得到。文章引用 X 長文時，雲端會把它列為缺漏，並排一份代抓工作。執行器用這台 Mac 上一個專用的 Chrome profile 開啟長文頁，擷取正文後回報。登入狀態只留在這個 profile，不會上傳到文章庫。
+X 長文（`x.com/i/article/...`）要登入才看得到。雲端讀取貼文時會先請 X API 附上長文全文；API 沒附上時，才把它列為缺漏並排一份代抓工作。執行器用這台 Mac 上一個專用的 Chrome profile 開啟長文頁，擷取正文後回報。登入狀態只留在這個 profile，不會上傳到文章庫。
 
 - 需要 Google Chrome 與 `playwright-core`（已列在 `package.json` 的選用相依套件，在 `cloud-digest/` 執行 `npm install` 即會安裝）。
 - 代抓不需要 Ollama。Ollama 停止時，執行器仍會領取代抓工作。

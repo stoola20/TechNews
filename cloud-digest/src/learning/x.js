@@ -1,6 +1,7 @@
 import {apiJson} from './network.js';
 import {connection,saveConnection,query,setting,setSetting,reserve,settle,uncertain,nowIso,saveEvidence,hash} from './store.js';
 import {xPricing,ownedEligible,firstReads,rereadRisk,recordCost,utcDay} from './pricing.js';
+import {xArticleUrl} from './local.js';
 
 function clientHeaders(env) {
   if(!env.X_CLIENT_ID || !env.X_CLIENT_SECRET)throw new Error('X_CLIENT_ID／X_CLIENT_SECRET 未設定');
@@ -21,7 +22,8 @@ export async function accessToken(env,fetcher=fetch) {
 }
 export function postParameters(env) {
   const modern=env.X_API_FIELDS_STYLE!=='tweet';
-  return {[modern?'post.fields':'tweet.fields']:`author_id,conversation_id,created_at,entities,attachments,${modern?'note_post,referenced_posts':'note_tweet,referenced_tweets'}`,
+  // article 欄位已實測兩種參數名稱都接受，連到 X 長文的貼文會附上長文全文。
+  return {[modern?'post.fields':'tweet.fields']:`author_id,conversation_id,created_at,entities,attachments,article,${modern?'note_post,referenced_posts':'note_tweet,referenced_tweets'}`,
     expansions:'attachments.media_keys','media.fields':'type,url,preview_image_url,variants,duration_ms,alt_text'};
 }
 export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fetch,token=null) {
@@ -62,10 +64,21 @@ export function normalizePost(post,includes={}) {
     type:m.type,media_key:m.media_key,duration_ms:m.duration_ms,alt_text:m.alt_text,
   }));
   const entities=note?.entities || post.entities;
+  const links=(entities?.urls || []).map(u=>u.unwound_url || u.expanded_url).filter(Boolean);
+  let content=note?.text || post.text || '',article=null;
+  // X 長文：API 直接給全文時，連到的長文網址改用這份正文另存來源；找不到長文網址就接在主文後面。
+  const text=post.article?.plain_text?.trim();
+  if(text){
+    const url=links.map(xArticleUrl).find(Boolean),title=String(post.article.title || '').trim().slice(0,200);
+    if(url)article={url,relation:'external',content:text,metadata:{title,content_method:'x_api'}};
+    else content=[content,title&&`# ${title}`,text].filter(Boolean).join('\n\n');
+  }
   return {url:`https://x.com/i/status/${post.id}`,relation:'primary',author_id:post.author_id,published_at:post.created_at,
-    content:note?.text || post.text || '',metadata:{post_id:post.id,conversation_id:post.conversation_id || post.id,
-      references:post.referenced_posts || post.referenced_tweets || [],media_keys:post.attachments?.media_keys || [],links:(entities?.urls || []).map(u=>u.unwound_url || u.expanded_url).filter(Boolean)},media};
+    content,metadata:{post_id:post.id,conversation_id:post.conversation_id || post.id,
+      references:post.referenced_posts || post.referenced_tweets || [],media_keys:post.attachments?.media_keys || [],links},media,article};
 }
+// 貼文附帶的長文另存成一筆來源；使用者手動貼上的原文由 saveEvidence 保護，不會被覆蓋。
+export async function saveArticle(env,itemId,source){if(source?.article)await saveEvidence(env,itemId,source.article);}
 export async function registerMedia(env,itemId,evidenceId,list) {
   for(const m of list || []) {
     const id=await hash(`${itemId}:${m.media_key || m.url || m.type+evidenceId}`);
