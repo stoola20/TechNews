@@ -7,7 +7,7 @@ import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connectio
 import {exchange,xRead,bookmarksEnabled,xReads,setXReads} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
-import {resolveItemId,migrateLibrary,ORIGINS} from './library.js';
+import {resolveItemId,migrateLibrary,ORIGINS,officialSources,publisherFor} from './library.js';
 import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
 import {mergeExistingDuplicates} from './linking.js';
@@ -134,10 +134,15 @@ export function createLearningHandler(deps={}) {
         }
         // 發表時間排序：沒有發表時間的文章以加入時間排入；ID 作為次要排序，分頁才穩定。
         const order=sort==='added'?'created_at DESC,id DESC':'COALESCE(published_at,created_at) DESC,id DESC';
-        return json(await rows(env,`SELECT id,url,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,
+        const listed=await rows(env,`SELECT id,url,kind,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,
           (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
-          (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins
-          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY ${order} LIMIT 50 OFFSET ?`,...args,offset));
+          (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins,
+          (SELECT json_extract(k.metadata_json,'$.source_id') FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin='official' AND json_extract(k.metadata_json,'$.source_id') IS NOT NULL LIMIT 1) AS source_id,
+          (SELECT COALESCE(json_extract(e.metadata_json,'$.author_username'),(SELECT json_extract(s.value_json,'$.username') FROM settings s WHERE s.key='learning:author:'||e.author_id))
+            FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' AND learning_items.kind='x' LIMIT 1) AS author_username
+          FROM learning_items WHERE ${conditions.join(' AND ')} ORDER BY ${order} LIMIT 50 OFFSET ?`,...args,offset);
+        const sources=await officialSources(env);
+        return json(listed.map(({source_id,author_username,...row})=>({...row,publisher:publisherFor({...row,source_id,author_username},sources)})));
       }
       if(route==='items/states'&&request.method==='GET'){
         // 輕量狀態刷新：只回狀態，不重建正文或筆記。
@@ -204,10 +209,15 @@ export function createLearningHandler(deps={}) {
           // 裝飾圖片不顯示；舊資料留下的對應缺漏也一併隱藏，下次整理時會正式移除。
           await skipDecorative(env,id);
           const fresh=await item(env,id);
-          return json({item:{...fresh,body_html:renderMarkdown(fresh.body||'')},requested_id:match[1],sources:await evidence(env,id),
+          const sources=await evidence(env,id),intakes=await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id);
+          const primary=sources.find(s=>s.relation==='primary');
+          const author=fresh.kind==='x'&&primary?JSON.parse(primary.metadata_json||'{}').author_username||(await setting(env,`author:${primary.author_id}`)).username||null:null;
+          const sourceId=intakes.filter(k=>k.origin==='official').map(k=>JSON.parse(k.metadata_json||'{}').source_id).find(Boolean);
+          const publisher=publisherFor({url:fresh.url,source_id:sourceId,author_username:author},await officialSources(env));
+          return json({item:{...fresh,publisher,body_html:renderMarkdown(fresh.body||'')},requested_id:match[1],sources,
           media:await rows(env,"SELECT id,evidence_id,url,type,duration_ms,status,error,object_key,expires_at FROM learning_media WHERE item_id=? AND status!='decorative' ORDER BY rowid",id),
           analyses:(await rows(env,'SELECT media_id,model,prompt_version,analysis_json,created_at FROM learning_media_analyses WHERE item_id=? ORDER BY created_at',id)).map(a=>({...a,analysis:JSON.parse(a.analysis_json),analysis_json:undefined})),
-          intakes:await rows(env,'SELECT origin,metadata_json,created_at FROM learning_intakes WHERE item_id=? ORDER BY created_at',id),
+          intakes,
           versions:await rows(env,'SELECT id,revision,edition,origin,title,created_at FROM learning_versions WHERE item_id=? ORDER BY created_at DESC',id)});
         }
         if(!match[2]&&request.method==='PATCH'){

@@ -152,3 +152,11 @@ export async function backfillPublished(env,limit=200){
   }
   return updated;
 }
+
+// 列表顯示的發布者：官方收件用來源名稱，X 文章用作者帳號，其他用網址網域。
+export function publisherFor(row,sources){
+  const source=row.source_id && sources.find(s=>s.id===row.source_id);
+  if(source)return source.name;
+  if(row.author_username)return '@'+row.author_username;
+  try{return new URL(row.url).hostname.replace(/^www\./,'');}catch{return '';}
+}

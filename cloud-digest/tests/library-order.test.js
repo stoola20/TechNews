@@ -67,3 +67,21 @@ test('回補發表時間：依序用主要來源、收件紀錄、舊官方文�
   await createLearningHandler(recorder()).scheduled(env,{tasks:['maintenance']});
   assert.equal((await item(env,p)).published_at,'2026-03-02T00:00:00.000Z');
 });
+
+test('列表與文章頁回傳發布者：官方來源名稱、X 作者帳號、其他網站網域',async()=>{
+  const env=environment(),handler=createLearningHandler(recorder());
+  const [official,x1,x2,web]=['1','2','3','4'].map(c=>c.repeat(32));
+  await add(env,official,{created:T(4)});await add(env,web,{created:T(1)});
+  for(const [id,day] of [[x1,3],[x2,2]])await query(env,"INSERT INTO learning_items(id,url,kind,title,status,revision,created_at,updated_at) VALUES(?,?,'x','貼文','ready',1,?,?)",id,'https://x.com/i/status/'+id.slice(0,4),T(day),T(day)).run();
+  await query(env,"INSERT INTO learning_intakes(receipt,item_id,origin,notify_revision,metadata_json,created_at) VALUES('ro',?,'official',1,?,?)",official,JSON.stringify({source_id:'openai_developer_blog'}),T(4)).run();
+  await saveEvidence(env,x1,{url:'https://x.com/i/status/1',relation:'primary',author_id:'9',metadata:{author_username:'example_dev'}});
+  // 舊資料的來源沒有帳號名稱時，改用已快取的作者資料。
+  await saveEvidence(env,x2,{url:'https://x.com/i/status/2',relation:'primary',author_id:'8',metadata:{}});
+  await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('learning:author:8',?,?)",JSON.stringify({username:'example_team'}),T(1)).run();
+  await query(env,"UPDATE learning_items SET url='https://www.example.org/post' WHERE id=?",web).run();
+  const listed=await (await handler.fetch(request('api/items?sort=added'),env)).json();
+  assert.deepEqual(listed.map(i=>i.publisher),['OpenAI Developer Blog','@example_dev','@example_team','example.org']);
+  assert.equal('source_id' in listed[0],false);
+  const detail=await (await handler.fetch(request('api/items/'+x1),env)).json();
+  assert.equal(detail.item.publisher,'@example_dev');
+});

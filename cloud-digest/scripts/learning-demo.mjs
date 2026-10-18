@@ -48,6 +48,16 @@ for(const [key,title,status,gaps,error] of states){
 // 外連文章取不到時，可在文章頁手動貼上原文。
 {const partial=await DB.prepare("SELECT id FROM learning_items WHERE url='https://example.org/state-partial'").first();
   await DB.prepare("INSERT INTO learning_evidence(id,item_id,url,relation,content,metadata_json,status,fetched_at) VALUES('demo-missing',?,'https://example.org/linked-article','external','',?,'missing',?)").bind(partial.id,JSON.stringify({error:'直接外連文章無法取得'}),time).run();}
+// 時間軸示範：不同發表日期、發布者與已讀狀態的文章，數量超過一批（50 篇）以便測試日期分組與捲到底載入更多。
+{
+  const hosts=['blog.example.org','docs.example.com','news.example.net'],base=Date.now();
+  for(let n=1;n<=60;n++){
+    const id=('t'+String(n).padStart(3,'0')).padEnd(32,'0').replace(/t/,'f'),published=new Date(base-(n*7+3)*3600e3).toISOString();
+    const url='https://'+hosts[n%3]+'/posts/'+n,created=new Date(base-(n%5)*3600e3).toISOString();
+    await DB.prepare("INSERT INTO learning_items(id,url,kind,title,status,body,article_json,revision,read_at,published_at,created_at,updated_at) VALUES(?,?,'web',?,'ready','## 示範\n\n時間軸示範內容。','{}',1,?,?,?,?)")
+      .bind(id,url,'時間軸示範文章 '+n+'：'+['模型更新與 API 變更','Agent 工具的工程實踐','平台政策與審查規範'][n%3],n%4?time:null,n%11?published:null,created,created).run();
+  }
+}
 jobs.length=0;
 for(const suffix of ['keep','remove'])await handler.service.collect(env,'https://example.org/awaiting-'+suffix,'backfill','demo:'+suffix,{defer:true,source:{url:'https://example.org/awaiting-'+suffix,relation:'primary',content:'等待你確認的原始收藏 '+suffix+'。\n\n先讀原文，再決定是否使用模型整理。',metadata:{title:'待回補原文'},media:[]}});
 const server=createServer(async(req,res)=>{
