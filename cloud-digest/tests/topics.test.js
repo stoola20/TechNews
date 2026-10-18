@@ -103,3 +103,22 @@ test('主題篩選比對主要與次要主題並可和其他條件並用；主�
   assert.equal(await ids('?topic=unclassified'),'234');
   assert.equal((await handler.fetch(request('api/items?topic=apple'),env)).status,400);
 });
+
+test('閱讀頁手動設定主題：驗證主題表、內容更新也不被自動分類覆寫；改回自動後重新分類',async()=>{
+  const env=environment(),handler=createLearningHandler(recorder());env.AI=ai(()=>({primary:'models'}));
+  await add(env,id('1'),{topic:'models',source:'model',topicRevision:1});
+  const put=body=>handler.fetch(request('api/items/'+id('1')+'/topics','PUT',body),env);
+  assert.equal((await put({primary:'bogus'})).status,400);
+  assert.equal((await put({primary:'apple',secondary:'apple'})).status,400);
+  assert.equal((await put({primary:'apple',secondary:'removed'})).status,400);
+  assert.deepEqual(await (await put({primary:'apple',secondary:'enterprise'})).json(),{id:id('1'),topic_primary:'apple',topic_secondary:'enterprise',topic_source:'manual'});
+  await query(env,'UPDATE learning_items SET revision=3 WHERE id=?',id('1')).run();
+  assert.equal((await classifyPending(env)).checked,0);
+  assert.equal((await item(env,id('1'))).topic_primary,'apple');
+  assert.equal((await (await put({primary:'apple'})).json()).topic_secondary,null);
+  assert.equal((await (await put({auto:true})).json()).topic_source,null);
+  assert.equal((await classifyPending(env)).classified,1);
+  const row=await item(env,id('1'));
+  assert.deepEqual([row.topic_primary,row.topic_source,row.topic_revision],['models','model',3]);
+  assert.equal((await handler.fetch(request('api/items/'+id('9')+'/topics','PUT',{primary:'apple'}),env)).status,404);
+});

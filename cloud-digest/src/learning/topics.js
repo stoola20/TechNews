@@ -71,3 +71,15 @@ export async function classifyPending(env,deps={},limit=BATCH){
   }
   return {classified,checked:candidates.length};
 }
+
+// 手動設定主題後不再被自動分類覆寫；auto=true 交還給下一輪維護排程重新分類。
+export async function setItemTopics(env,row,value){
+  if(value?.auto===true){
+    await query(env,'UPDATE learning_items SET topic_source=NULL,topic_revision=NULL,topic_attempts=0,topic_next_at=NULL WHERE id=?',row.id).run();
+    return;
+  }
+  const ids=(await topicList(env)).map(t=>t.id),secondary=value?.secondary || null;
+  if(!ids.includes(value?.primary))throw new Error('主要主題無效');
+  if(secondary!==null && (!ids.includes(secondary) || secondary===value.primary))throw new Error('次要主題無效');
+  await query(env,"UPDATE learning_items SET topic_primary=?,topic_secondary=?,topic_source='manual',topic_revision=revision,topic_attempts=0,topic_next_at=NULL WHERE id=?",value.primary,secondary,row.id).run();
+}

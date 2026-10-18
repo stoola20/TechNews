@@ -37,6 +37,9 @@ body.app{display:flex;flex-direction:column}
 .chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
 .chips small{opacity:.75;font-variant-numeric:tabular-nums}
 .chips .topic-dot{margin:0}
+.topic-row{display:flex;flex-wrap:wrap;align-items:center;gap:0 4px;margin-bottom:4px}
+.topic-row .linkish{min-height:32px;padding:2px 8px;border:0;background:none;color:var(--accent);text-decoration:underline;font-size:13px;margin-bottom:6px}
+.topic-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:4px 0 12px}.topic-form label{display:block;font-size:13px;margin-bottom:4px}.topic-form select{min-height:40px}
 .topic-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin:0 6px 6px 0;color:var(--ink)}.topic-tag .topic-dot{margin:0}
 .reader-bar{display:none;margin-bottom:12px}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
@@ -236,6 +239,33 @@ async function openArticle(id){
 }
 async function refreshArticle(){if(!current)return;const seq=openSeq,result=await api('items/'+current.id);if(seq!==openSeq||result.item.id!==current.id)return;current=result.item;renderArticle(result);notes.sync(current);}
 function provenance(a){if(!a)return '';if(a.legacy)return '搬移前的官方短導讀'+(a.model?'（'+a.model+'）':'，未保存模型資訊');if(a.provider==='ollama')return '本機 '+(a.model||'Gemma')+' 整理';if(a.provider==='gemini')return 'Gemini '+(a.model||'')+' 整理';if(a.provider==='demo')return '示範資料';return a.model||'';}
+// 閱讀頁主題：顯示主要與次要主題，可手動修改；手動設定的主題不會被自動分類覆寫。
+function topicRow(item){
+  const tags=[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean);
+  const row=el('div',{class:'topic-row',id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag'},[el('span',{class:'topic-dot',style:'background:'+t.color,'aria-hidden':'true'}),document.createTextNode(t.name)])):[el('span',{class:'topic-tag',text:'未分類'})]);
+  if(item.topic_source==='manual')row.append(el('span',{class:'muted',text:'手動設定'}));
+  const edit=el('button',{type:'button',class:'linkish','aria-expanded':'false',text:'修改主題'});
+  edit.onclick=()=>{const open=!row.nextSibling||!row.nextSibling.classList.contains('topic-form');if(open)row.after(topicForm(item,edit));else row.nextSibling.remove();edit.setAttribute('aria-expanded',String(open));if(open)row.nextSibling.querySelector('select').focus();};
+  row.append(edit);
+  if(item.topic_source==='manual'){const auto=el('button',{type:'button',class:'linkish',text:'改回自動分類'});auto.onclick=e=>run(()=>saveTopics(item.id,{auto:true},'已改回自動分類，幾分鐘內會重新分類。'),e.currentTarget,'處理中…');row.append(auto);}
+  return row;
+}
+function topicForm(item,edit){
+  const option=(t,selected)=>el('option',{value:t.id,...(selected?{selected:''}:{})},[document.createTextNode(t.name)]);
+  const primary=el('select',{id:'topic-primary'},topicData.topics.map(t=>option(t,t.id===item.topic_primary)));
+  const secondary=el('select',{id:'topic-secondary'},[el('option',{value:'',text:'無'}),...topicData.topics.map(t=>option(t,t.id===item.topic_secondary))]);
+  const save=el('button',{class:'primary',text:'保存主題'}),cancel=el('button',{type:'button',text:'取消'});
+  const form=el('form',{class:'topic-form'},[el('div',{},[el('label',{for:'topic-primary',text:'主要主題'}),primary]),el('div',{},[el('label',{for:'topic-secondary',text:'次要主題'}),secondary]),save,cancel]);
+  cancel.onclick=()=>{form.remove();edit.setAttribute('aria-expanded','false');edit.focus();};
+  form.onsubmit=e=>{e.preventDefault();run(()=>saveTopics(item.id,{primary:primary.value,secondary:secondary.value||null},'主題已更新，之後不會被自動分類覆寫。'),save,'保存中…');};
+  return form;
+}
+async function saveTopics(id,value,done){
+  const result=await api('items/'+id+'/topics','PUT',value);
+  const listed=listItems.find(i=>i.id===id);if(listed)Object.assign(listed,result);
+  topicData=await api('topics?'+filterQuery().toString());renderTopics();renderList();
+  await refreshArticle();message(done);
+}
 function renderArticle(result){
   const item=result.item,box=$('article'),article=JSON.parse(item.article_json||'{}'),gaps=JSON.parse(item.gaps_json||'[]');
   const nodes=[];
@@ -243,8 +273,7 @@ function renderArticle(result){
   const origins=[...new Set((result.intakes||[]).map(i=>ORIGINS[i.origin]||i.origin))];
   // 文章資訊：發布者與時間在前；收件入口、既有導讀與整理模型等管理資訊放在第二行。
   const fullDate=iso=>{const d=twDate(iso);return d.year+'/'+d.month+'/'+d.day;};
-  const tags=[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean);
-  nodes.push(el('div',{id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag'},[el('span',{class:'topic-dot',style:'background:'+t.color,'aria-hidden':'true'}),document.createTextNode(t.name)])):[el('span',{class:'topic-tag',text:'未分類'})]));
+  nodes.push(topicRow(item));
   nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
   nodes.push(el('p',{class:'meta'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
   if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));

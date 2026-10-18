@@ -10,7 +10,7 @@ import {renderMarkdown} from './markdown.js';
 import {resolveItemId,migrateLibrary,ORIGINS,officialSources,publisherFor} from './library.js';
 import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
-import {topicList} from './topics.js';
+import {topicList,setItemTopics} from './topics.js';
 import {mergeExistingDuplicates} from './linking.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
@@ -162,7 +162,7 @@ export function createLearningHandler(deps={}) {
         if(!ids.length)return json([]);
         return json(await rows(env,`SELECT id,status,stage,revision,read_at,last_error,updated_at,note_updated_at FROM learning_items WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids));
       }
-      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source))?$/);
+      const match=route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics))?$/);
       if(match){
         const id=await resolveItemId(env,match[1]),current=id&&await item(env,id);
         if(!current||current.status==='dismissed')return json({error:'文章不存在'},404);
@@ -176,6 +176,11 @@ export function createLearningHandler(deps={}) {
           if(!['ready','partial','needs_attention','error'].includes(current.status))return json({error:'這篇目前不能重寫，請等處理完成。'},409);
           await query(env,"UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL,article_json=json_set(COALESCE(article_json,'{}'),'$.input_fingerprint','rewrite-requested'),updated_at=? WHERE id=?",nowIso(),id).run();
           await service.enqueue(env,id);return json({ok:true},202);
+        }
+        if(match[2]==='/topics'&&request.method==='PUT'){
+          await setItemTopics(env,current,await body(request));
+          const fresh=await item(env,id);
+          return json({id,topic_primary:fresh.topic_primary,topic_secondary:fresh.topic_secondary,topic_source:fresh.topic_source});
         }
         if(match[2]==='/source'&&request.method==='POST'){
           // 手動貼上原文：只接受目前列為缺漏的來源網址，保存後重新整理。

@@ -4,9 +4,15 @@
 
 **Blocked by:** 04：主題表、Workers AI 自動分類與主題篩選
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `PUT items/:id/topics` 驗證主題屬於主題表、次要主題不同於主要主題
-- [ ] 手動設定後，revision 變更也不會被重新分類
-- [ ] 改回自動後，下一輪維護排程重新分類
-- [ ] 修改後列表與 chip 篇數同步更新；鍵盤可操作
+- [x] `PUT items/:id/topics` 驗證主題屬於主題表、次要主題不同於主要主題
+- [x] 手動設定後，revision 變更也不會被重新分類
+- [x] 改回自動後，下一輪維護排程重新分類
+- [x] 修改後列表與 chip 篇數同步更新；鍵盤可操作
+
+## 實作紀錄
+
+- `PUT api/items/:id/topics`：`{primary, secondary}` 設定手動主題；`{auto:true}` 清除手動標記與分類 revision，下一輪維護排程重新分類。
+- 保存後只更新列表中的那一篇與主題篇數，不重新載入列表，已載入的批次與捲動位置保留。
+- 驗證：`tests/topics.test.js` 手動設定案例；內建瀏覽器在閱讀頁修改主要與次要主題，chip 篇數、列表資訊與閱讀頁同步更新。
