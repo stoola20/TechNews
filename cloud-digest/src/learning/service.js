@@ -3,7 +3,7 @@ import {canonicalUrl,apiJson} from './network.js';
 import {acquireEvidence,resetIncomplete} from './evidence.js';
 import {prepareMedia,expireMedia,skipDecorative} from './media.js';
 import {generate} from './gemini.js';
-import {syncBookmarks,registerMedia,startFullScan} from './x.js';
+import {syncBookmarks,registerMedia,startFullScan,saveArticle} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion} from './library.js';
 import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
@@ -37,7 +37,7 @@ export function createLearningService(deps={}) {
     // 主動分享不受官方主題篩選：先前被官方篩掉的同一篇也要完整整理。
     if(['share','web'].includes(origin))await query(env,"UPDATE learning_items SET status='queued',updated_at=? WHERE id=? AND status IN ('awaiting_backfill','dismissed','filtered')",time,id).run();
     if(options.metadata?.title)await query(env,"UPDATE learning_items SET title=? WHERE id=? AND title=''",options.metadata.title,id).run();
-    if(options.source){const key=await saveEvidence(env,id,options.source);await registerMedia(env,id,key,options.source.media);}
+    if(options.source){const key=await saveEvidence(env,id,options.source);await registerMedia(env,id,key,options.source.media);await saveArticle(env,id,options.source);}
     const current=await item(env,id);
     if(!options.defer && ['queued','error'].includes(current.status))await enqueue(env,id);
     return id;
