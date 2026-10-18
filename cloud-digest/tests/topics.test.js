@@ -16,6 +16,7 @@ function ai(answer=({title})=>({primary:'models',secondary:null}),shape='choices
   return {calls,async run(model,input){
     calls.push({model,input});
     const article=JSON.parse(input.messages[1].content).article,value=JSON.stringify(answer(article));
+    if(shape==='length')return {choices:[{message:{content:'',reasoning_content:'推理中'},finish_reason:'length'}]};
     return shape==='choices'?{choices:[{message:{content:value},finish_reason:'stop'}]}:{response:value};
   }};
 }
@@ -30,6 +31,7 @@ test('維護排程用 Workers AI 分類已完成文章：只送標題與導讀�
   await createLearningHandler(recorder()).scheduled(env,{tasks:['maintenance']});
   assert.equal(env.AI.calls.length,10);
   assert.equal(env.AI.calls[0].model,TOPIC_MODEL);
+  assert.deepEqual(env.AI.calls[0].input.chat_template_kwargs,{enable_thinking:false});
   const sent=JSON.parse(env.AI.calls[0].input.messages[1].content);
   assert.deepEqual(sent.article,{title:'跨主題',intro:'導讀'});
   assert.deepEqual(sent.topics.map(t=>t.id),DEFAULT_TOPICS.map(t=>t.id));
@@ -71,6 +73,10 @@ test('內容更新、主題被刪除時重新分類；模型回傳不在主題�
   // 內容更新後再試一次。
   await query(bad,'UPDATE learning_items SET revision=2 WHERE id=?',id('4')).run();
   assert.equal((await classifyPending(bad)).checked,1);
+  // 輸出被截斷（例如推理用完 token）時記為失敗並延後重試。
+  const cut=environment();cut.AI=ai(()=>({primary:'models'}),'length');await add(cut,id('6'));
+  assert.deepEqual(await classifyPending(cut),{classified:0,checked:1});
+  assert.equal((await item(cut,id('6'))).topic_attempts,1);
   // 沒有 AI binding 時記為失敗，不丟出例外。
   const none=environment();await add(none,id('5'));
   assert.deepEqual(await classifyPending(none),{classified:0,checked:1});
