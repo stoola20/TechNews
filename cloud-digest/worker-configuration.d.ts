@@ -7,11 +7,8 @@ interface __BaseEnv_Env {
 	LEARNING_JOBS: Queue;
 	BROWSER: BrowserRun;
 	AI: Ai;
-	MODEL_PROFILE: "gemma4";
-	MAX_ARTICLES_PER_RUN: "6";
 	MAX_ARTICLE_CHARS: "150000";
-	BACKFILL_DAYS: "14";
-	LEARNING_ENABLED: "false";
+	MAX_ARTICLE_AGE_DAYS: "7";
 	LEARNING_MODEL: "gemini-3.8-flash";
 	LEARNING_MONTHLY_USD: "30";
 	X_API_FIELDS_STYLE: "post";
@@ -27,7 +24,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "MODEL_PROFILE" | "MAX_ARTICLES_PER_RUN" | "MAX_ARTICLE_CHARS" | "BACKFILL_DAYS" | "LEARNING_ENABLED" | "LEARNING_MODEL" | "LEARNING_MONTHLY_USD" | "X_API_FIELDS_STYLE">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "MAX_ARTICLE_CHARS" | "MAX_ARTICLE_AGE_DAYS" | "LEARNING_MODEL" | "LEARNING_MONTHLY_USD" | "X_API_FIELDS_STYLE">> {}
 }
 
 // Begin runtime types

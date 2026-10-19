@@ -1,6 +1,6 @@
-import {STYLE,HELPERS,LOGIN} from './ui.js';
+import { STYLE, HELPERS, LOGIN } from './ui.js';
 
-export const LEARNING_PAGE=String.raw`<!doctype html>
+export const LEARNING_PAGE = String.raw`<!doctype html>
 <html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TechNews · 文章庫</title>
 <style>${STYLE}
 html,body{height:100%}

@@ -1,7 +1,7 @@
 // 文章庫與管理頁共用的樣式與前端小工具（原生 HTML／CSS／JS，不使用前端框架）。
 // 注意：這些字串會放進 String.raw 樣板，前端程式內不要使用反引號或 ${}。
 
-export const STYLE=String.raw`
+export const STYLE = String.raw`
 :root{--bg:#f3f6f5;--paper:#fff;--ink:#183a37;--muted:#4f615e;--line:#d3e0dd;--accent:#0f766e;--accent-ink:#fff;--warn-bg:#fff4df;--warn:#8b440a;--danger:#9f2525;--soft:#e6f3ef;--focus:#b45309;--top:64px;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg)}a{color:var(--accent);overflow-wrap:anywhere}
 button,input,textarea,select{font:inherit;color:inherit}
@@ -40,7 +40,7 @@ dialog.confirm p{margin:0 0 16px;line-height:1.7;white-space:pre-wrap}dialog.con
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.spinner{animation:none}}
 `;
 
-export const HELPERS=String.raw`
+export const HELPERS = String.raw`
 const $=id=>document.getElementById(id);
 const busyButtons=new WeakSet();let activeActions=0;
 function message(text,error){$('feedback').textContent=text||'';$('feedback').classList.toggle('error',!!error);}
@@ -108,4 +108,4 @@ function stateLabel(i){return i.status==='processing'&&STAGES[i.stage]?'處理�
 function stateTone(s){return ['needs_attention','error','partial'].includes(s)?'warn':['waiting_local','generating','queued','processing','budget_paused','paused'].includes(s)?'wait':'done';}
 `;
 
-export const LOGIN=String.raw`<section id="login" class="panel hidden" aria-labelledby="login-title"><h1 id="login-title" style="font-size:22px;margin-top:0">登入私人文章庫</h1><p class="muted">使用網站登入憑證（RUN_TOKEN）。通知連結不包含登入憑證。</p><form id="login-form"><label for="token">登入憑證</label><input id="token" type="password" autocomplete="current-password" required style="width:100%;margin:8px 0 16px"><button class="primary">登入</button></form></section>`;
+export const LOGIN = String.raw`<section id="login" class="panel hidden" aria-labelledby="login-title"><h1 id="login-title" style="font-size:22px;margin-top:0">登入私人文章庫</h1><p class="muted">使用網站登入憑證（RUN_TOKEN）。通知連結不包含登入憑證。</p><form id="login-form"><label for="token">登入憑證</label><input id="token" type="password" autocomplete="current-password" required style="width:100%;margin:8px 0 16px"><button class="primary">登入</button></form></section>`;

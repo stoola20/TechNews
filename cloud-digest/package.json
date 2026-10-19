@@ -6,9 +6,12 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "format": "prettier --write \"src/**/*.js\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"runner/**/*.{js,mjs}\" \"acceptance/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"runner/**/*.{js,mjs}\" \"acceptance/**/*.js\""
   },
   "devDependencies": {
+    "prettier": "3.9.9",
     "wrangler": "^4.137.0"
   },
   "dependencies": {

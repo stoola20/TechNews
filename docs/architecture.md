@@ -1,95 +1,7 @@
 # TechNews 架構
 
-這份文件描述目前 Worker 的架構。部署後，手機設定頁位於 `https://<你的 Worker 網址>/settings`。
+這份文件描述目前 Worker 的架構。官方文章、X 書籤、Telegram 與網站分享都走同一個文章庫流程。
 說明採用 [SimpleEnglish](https://github.com/AminBlg/SimpleEnglish/blob/main/skills/simple-english/SKILL.md) 的短句與明確主詞原則。
-
-系統有兩條流程，由 `wrangler.jsonc` 的 `LEARNING_ENABLED` 決定官方文章走哪一條：
-
-| `LEARNING_ENABLED` | 官方文章 | 說明 |
-| --- | --- | --- |
-| `false` | 每日 Telegram 導讀 | 下方「每日 Telegram 導讀」一節 |
-| `true`（repo 預設） | 私人文章庫 | 下方「私人文章庫」一節；與 X 書籤、Telegram 分享共用同一條流程 |
-
-## 每日 Telegram 導讀
-
-```mermaid
-flowchart TD
-  PHONE["手機瀏覽器 /settings<br/>切換模型、來源與主題"] -->|"RUN_TOKEN 驗證"| SETTINGS["D1 settings<br/>一份執行時 JSON 設定"]
-  CRON["Cron：台北每天 08:00 開始<br/>或手動 POST /run"] --> WORKER["Cloudflare Worker"]
-  SETTINGS --> WORKER
-  SOURCES["7 個官方來源<br/>列表 HTML 或 RSS"] --> DISCOVER["找文章網址<br/>存入 D1 待處理清單"]
-  WORKER --> DISCOVER
-  DISCOVER --> FETCH["抓文章頁／官方 Markdown<br/>需要時用 Browser Run"]
-  FETCH -->|"擷取全部正文<br/>失敗或過大就保留待重試"| MODEL["共用 summarize 介面<br/>相同 input／output"]
-  SETTINGS --> MODEL
-  MODEL --> GEMMA["Workers AI<br/>Google Gemma 4"]
-  MODEL --> NVIDIA["Workers AI<br/>NVIDIA Nemotron 3"]
-  MODEL --> GPT["OpenAI API<br/>GPT-5.6 Terra"]
-  MODEL --> CLAUDE["Anthropic API<br/>Claude Sonnet 5.5"]
-  GEMMA --> RESULT["JSON：相關性、理由<br/>標題、自然段落導讀"]
-  NVIDIA --> RESULT
-  GPT --> RESULT
-  CLAUDE --> RESULT
-  RESULT --> STORE[("D1<br/>正文、導讀、略過原因<br/>模型、錯誤、發送狀態")]
-  RESULT -->|"相關且長度通過"| TG["Telegram Bot API<br/>一則完整文字，開啟通知"]
-  TG -->|"message_id"| STORE
-```
-
-每篇文章只使用選中的一個模型。圖中的四個模型代表切換選項，不是每篇呼叫四次。
-Gemma 4 是預設值。模型失敗時不會自動切換到付費 API。
-
-| 平台 | 責任 | Input | Output |
-| --- | --- | --- | --- |
-| 官方網站 | 提供文章入口與原文 | HTTP GET | RSS、HTML 或 Markdown |
-| Worker | 排程、取正文、排隊、呼叫模型、檢查格式、發訊息 | 設定、網址、文章與處理狀態 | 模型請求、D1 更新、Telegram 文字 |
-| Browser Run | 直接請求失敗時取得渲染後 HTML | 原文網址 | HTML；不保證能通過網站的防機器人措施 |
-| Workers AI | 執行 Gemma 或 Nemotron | 編輯指令＋一篇全文＋關注主題 | 導讀 JSON |
-| OpenAI／Anthropic API | 提供可切換的付費摘要模型 | 同樣的文章資料與編輯規則 | 相同導讀欄位 |
-| D1 | 保存設定、全文與執行進度 | SQL 寫入 | 設定、待處理文章與稽核資料 |
-| Telegram | 顯示一篇完整導讀 | 文字、chat ID、通知設定 | 頻道訊息與訊息 ID |
-
-模型收到的資料包含來源、標題、日期、網址、全部擷取正文與讀者主題。程式要求模型先讀完正文再整理。
-程式不再把 Apple RSS description 當全文，也不再截取正文前 20,000 字元。
-claude.dev 使用官方 Markdown。其他來源擷取文章頁的正文、程式碼文字、表格文字與連結。
-超過 150,000 字串單位的文章會報錯並留待重試，不會偷偷截斷。
-
-「全文」指本次擷取的文章正文。圖片像素、影片、下載檔、互動圖表、付費內容與外連文件不會自動傳給模型。
-程式不能證明網站沒有隱藏、分頁或動態載入的內容，也不能保證模型每個細節都理解正確。
-需要完整處理這些資料時，須另加擷取方式。
-
-模型不會讀到 Bot token、chat ID、RUN_TOKEN 或其他文章歷史。
-設定頁只顯示 API Secret 是否存在，不會回傳金鑰。
-模型回傳欄位如下：
-
-| 欄位 | 用途 |
-| --- | --- |
-| `publish` | 是否符合讀者主題 |
-| `reason` | 保存在 D1 的判斷理由 |
-| `title_zh` | 繁中標題 |
-| `body_zh` | 依文章內容組成的自然段落導讀 |
-
-導讀優先保留具體機制、例子、操作方式、限制與取捨。
-格式不再固定成摘要、五點清單、iOS 推論與關鍵字。
-每則訊息含來源、日期與原文連結。正文可用篇幅扣除這些資料後計算。
-超過 Telegram 4,096 字串單位時，模型會重新編輯一次。仍超長時保留錯誤，不截掉導讀尾端。
-
-`settings` 的 JSON 是唯一的遠端使用者設定。`wrangler.jsonc` 提供首次啟用的預設值與執行上限。
-每次 Cron、`/run` 或 `/preview` 都讀取 D1，因此儲存模型選項後不需要重部署。
-已產生但尚未送出的導讀會重用原模型結果；切換模型主要影響下一篇尚未生成的文章。
-
-| 介面 | 功能 |
-| --- | --- |
-| `GET /settings` | 手機設定頁；登入後才能讀取與修改設定 |
-| `GET /config` | 讀取設定 JSON 與模型選項 |
-| `PUT /config` | 取代設定 JSON；要帶 RUN_TOKEN |
-| `GET /preview?source=...&profile=...&url=...` | 選模型、試讀指定文章；不寫入文章資料、不發訊息 |
-| `POST /run` | 手動執行正式流程 |
-| `GET /health` | 健康檢查 |
-
-D1 用網址保存永久文章身份，用待處理狀態保存尚未完成的工作。
-處理鎖避免一般並行重複，但 Telegram 發送和 D1 寫入分開，仍有少數重複發送的可能。
-舊的 `alert_message_id` 保留供遷移相容，新版不再寫入它。
-部落格 digest 以 D1 待處理清單與每次上限控制工作量。
 
 ## 私人文章庫
 
@@ -113,8 +25,9 @@ flowchart TD
   RUNNER --> OLLAMA["Ollama Gemma<br/>只聽 127.0.0.1"]
   OLLAMA -->|"complete / fail"| ITEM
   GEMINI --> ITEM
+  ITEM --> TOPIC["Workers AI Gemma 4<br/>完成就分類"]
+  TOPIC --> NOTIFY["Telegram 通知<br/>主題標籤＋精簡介紹＋連結"]
   ITEM --> LIB["文章庫<br/>閱讀、筆記、追問"]
-  ITEM --> NOTIFY["Telegram 通知<br/>精簡介紹＋連結"]
 ```
 
 | 平台 | 責任 |
@@ -125,14 +38,48 @@ flowchart TD
 | Gemini Flash | 只負責理解圖片與影片，保存證據；預設也負責文字寫作 |
 | Mac 執行器 | 主動領取文字工作，呼叫本機 Ollama，回報結果。細節見 [runner/README.md](../cloud-digest/runner/README.md) |
 | D1 | 保存來源、文章、筆記版本、工作狀態、通知狀態與費用帳本 |
+| Workers AI | 用 Gemma 4 為完成的文章分主題，不記入預算 |
 
 兩個行為決定了工作會不會消失或被誤用：
 
 - 切到 `local` 後，Mac 離線時工作保持「等待本機」，不會自動改用雲端文字模型。
 - 執行器使用 `LEARNING_RUNNER_TOKEN`，與網站的 `RUN_TOKEN` 分開。網站登入憑證不能呼叫執行器端點。
 
-## 與 RAG 服務的關係
+## 分類時機
 
-選用的 Python RAG 問答服務仍獨立運作，沒有同步這個 D1 資料庫。
+文章寫成已完成或部分完成後，同一個處理流程立刻分類，再建立通知。Gemini 寫作在處理工作內分類；Mac 執行器回報完成時，Worker 在回應後的背景工作裡先分類再送通知。分類失敗不擋通知：通知照常發出、不附主題，失敗次數與延後時間記在文章上。
 
-模型與平台成本、來源策略及 Worker／n8n 比較見 [設計說明](digest-design.md)。
+每 5 分鐘的維護排程仍有分類步驟，只處理重試到期的文章、「重新分類全部」排入的文章，以及尚未分類的既有文章。手動設定的主題不會被自動分類覆寫。
+
+## 維護排程
+
+每 5 分鐘的維護排程只做需要定期做的事：
+
+- 重新排入失敗或卡住的工作、到期的分類重試。
+- 補送已保存的文章通知、來源提醒與 Telegram 收件回覆。
+- 清理過期的媒體與登入 session；書籤同步啟用時續跑完整核對。
+- 清理 30 天前的官方來源執行紀錄與已不在列表上的網址條目。
+
+一次性的舊資料整理（搬移舊官方導讀、合併既有重複、回補發表時間、清掉裝飾圖片造成的缺漏）不在排程裡，改由管理頁「維運」按鈕一次執行，回傳各項筆數，可重複執行。
+
+## 官方來源紀錄
+
+官方發現每次執行，每個來源寫一筆執行紀錄（找到、收件、太舊略過、初次基準、成功或失敗與原因）。列表上的每個網址各記一列決策：
+
+| 決策 | 意思 |
+| --- | --- |
+| 初次基準 | 新來源第一次執行前就已在列表上，不收件；超過 30 天沒有成功檢查（關閉或故障）的來源重新開始時也重新建立基準 |
+| 收件 | 收進文章庫，連到對應文章；管理頁按「仍要收件」的標為手動，之後不會被改回太舊 |
+| 太舊略過 | 發表超過 `MAX_ARTICLE_AGE_DAYS` 天；列表上有日期時在發現時判斷，沒有日期時抓到原文後判斷 |
+
+關閉的來源不發現、不寫執行紀錄。同一來源連續失敗的次數從執行紀錄往回數，剛好第二次時建立一則來源提醒（類型與文章通知分開，不帶文章），第三次以後不重發；成功一次就中斷計數。管理頁「官方來源」區塊讀取這兩份紀錄，也在同一區塊保存想收到的內容與來源清單（D1 `settings` 表的 `digest`）。執行紀錄保留 30 天；網址條目在 30 天內都沒再出現在列表時才清除，仍在列表上的網址不會被當成沒看過。
+
+## 官方文章擷取
+
+claude.dev 使用官方 Markdown。其他來源擷取文章頁的正文、程式碼文字、表格文字與連結；直接請求失敗時改用 Browser Run。
+程式不把 RSS description 當全文。超過 `MAX_ARTICLE_CHARS`（150,000 字串單位）的文章會報錯並留待重試，不會偷偷截斷。
+
+「全文」指本次擷取的文章正文。官方文章的圖片像素、影片、下載檔、互動圖表、付費內容與外連文件不會自動交給模型。
+程式不能證明網站沒有隱藏、分頁或動態載入的內容，也不能保證模型每個細節都理解正確。
+
+官方來源範圍、Workers AI 用量及 Worker／n8n 比較見 [來源策略與平台選擇](source-strategy.md)。

@@ -1,7 +1,6 @@
 .env*
-!.env.example
+# 已移除的 Python 服務在本機留下的設定與快取：保留忽略，避免含帳密的設定檔被誤加入版本控制。
 .db.env*
-!.db.env.example
 .venv/
 __pycache__/
 .pytest_cache/
