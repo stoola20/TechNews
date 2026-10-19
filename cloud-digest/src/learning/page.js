@@ -80,6 +80,9 @@ body.app:not([data-mode=""]) #reader{padding-bottom:40px}body.app:not([data-mode
 kbd{font:12px ui-monospace,SFMono-Regular,monospace;border:1px solid currentColor;border-radius:4px;padding:0 5px;opacity:.75}
 .keys{margin:0 0 12px;padding:12px 16px;border:1px dashed var(--line);border-radius:8px;font-size:14px;line-height:1.9}.keys[hidden]{display:none}
 .done-box{text-align:center;padding:40px 16px}
+.week-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.week-grid .card{padding:16px 18px}
+.week-grid h2{font-size:15px;color:var(--muted);margin:0 0 6px}.week-grid .big{font-size:28px;font-weight:700;margin:0;font-variant-numeric:tabular-nums}
+.week-grid p{margin:4px 0;line-height:1.7}.week-grid ol{margin:4px 0 0;padding-left:1.4em;line-height:1.8}
 /* 精讀問答 */
 :is(#quiz,#review-card) .q{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0;background:var(--paper)}
 :is(#quiz,#review-card) .q h3{font-size:16px;line-height:1.6;margin:0 0 8px}:is(#quiz,#review-card) textarea{min-height:96px}
@@ -203,9 +206,9 @@ const narrow=matchMedia('(max-width: 959px)');
 // 篩選檢視：保留是預設；選擇存在網址，重新整理或返回時維持同一個檢視。
 const VIEWS=[['kept','保留'],['starred','★ 常用'],['pending','待決定'],['all','全部'],['deleted','最近刪除']];
 const TRIAGE_LABEL={pending:'待決定',kept:'保留',starred:'保留 ★',deleted:'最近刪除'};
-const MODE_NAMES=['triage','review'];
-function readView(){const p=new URLSearchParams(location.search),t=p.get('triage'),m=p.get('view');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article'),mode:MODE_NAMES.includes(m)&&!p.get('article')?m:''};}
-function urlFor(v){const p=new URLSearchParams();if(v.mode&&!v.article)p.set('view',v.mode);if(v.triage&&v.triage!=='kept')p.set('triage',v.triage);if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
+const MODE_NAMES=['triage','review','week'];
+function readView(){const p=new URLSearchParams(location.search),t=p.get('triage'),m=p.get('view');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article'),mode:MODE_NAMES.includes(m)&&!p.get('article')?m:'',week:/^\d{4}-\d{2}-\d{2}$/.test(p.get('week')||'')?p.get('week'):''};}
+function urlFor(v){const p=new URLSearchParams();if(v.mode&&!v.article)p.set('view',v.mode);if(v.mode==='week'&&v.week&&!v.article)p.set('week',v.week);if(v.triage&&v.triage!=='kept')p.set('triage',v.triage);if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
 function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTop;}
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
@@ -577,7 +580,28 @@ const reviewMode={
   },
   poll(){clearTimeout(this.timer);this.timer=setTimeout(async()=>{if(view.mode!=='review'||!this.attempt)return;try{this.attempt=await api('attempts/'+this.attempt.id);}catch(e){}this.render();},5000);},
 };
-const MODES={triage:triageMode,review:reviewMode};
+// 每週回顧：台灣時間週一到週日的保留、刪除、作答與複習狀況，可以切換前後週。
+const weekMode={
+  async open(){this.render(await api('stats/week'+(view.week?'?start='+view.week:'')));},
+  render(d){
+    const md=date=>{const [y,m,day]=date.split('-').map(Number);return m+'/'+day;};
+    const go=(week,label)=>{const b=el('button',{type:'button',text:label});if(!week){b.disabled=true;return b;}b.onclick=()=>run(()=>navigate({mode:'week',week,article:null}),b,'載入中…');return b;};
+    const back=el('a',{href:urlFor({...view,mode:'',article:null}),text:'回到列表'});back.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:'',article:null}));};
+    const a=d.answers,pct=a.accuracy==null?'—':Math.round(a.accuracy*100)+'%';
+    const card=(title,big,lines)=>el('section',{class:'card'},[el('h2',{text:title}),el('p',{class:'big',text:big}),...lines]);
+    $('mode').replaceChildren(
+      el('div',{class:'mode-head'},[el('h1',{id:'week-title',tabindex:'-1',text:'每週回顧・'+md(d.start)+'（一）– '+md(d.end)+'（日）'}),el('div',{class:'links'},[go(d.previous,'← 前一週'),go(d.next,'後一週 →'),back])]),
+      el('div',{class:'week-grid'},[
+        card('本週保留',d.kept+' 篇',[el('p',{class:'muted',text:'目前仍保留、保留時間落在本週'})]),
+        card('本週刪除',(d.deleted.manual+d.deleted.expired)+' 篇',[el('p',{text:'手動刪除 '+d.deleted.manual+' 篇・待決定逾期 '+d.deleted.expired+' 篇'})]),
+        card('作答',a.total+' 題・答對率 '+pct,[el('p',{text:'正確 '+a.correct+'・部分正確 '+a.partial+'・錯誤 '+a.incorrect+'（精讀與複習都算）'})]),
+        card('最常答錯的主題',d.missed_topics.length?'':'—',d.missed_topics.length?[el('ol',{},d.missed_topics.map(t=>el('li',{text:t.name+'（'+t.count+' 題）'})))]:[el('p',{class:'muted',text:'本週沒有答錯或部分正確的題目。'})]),
+        card('複習',d.reviews.active+' 題進行中',[el('p',{text:'未來 7 天到期 '+d.reviews.upcoming_7_days+' 題・本週完成 '+d.reviews.completed+' 題'}),el('p',{class:'muted',text:'進行中與未來 7 天是目前的狀態。'})]),
+      ]));
+    $('week-title').focus({preventScroll:true});$('reader').scrollTop=0;
+  },
+};
+const MODES={triage:triageMode,review:reviewMode,week:weekMode};
 // 精讀問答：文末「開始問答」，按下才出題；作答一次送出，批改後顯示判定、回饋、參考答案與出處。
 const VERDICT={correct:'正確',partial:'部分正確',incorrect:'錯誤'};
 const QUIZ_WAIT={queued:'準備出題…',waiting_local:'已保存，等待 Mac 出題。Mac 離線時會一直等待，不會改用雲端模型；可以離開這頁，之後回來看。',generating:'Mac 正在出題…'};
@@ -801,8 +825,9 @@ function renderEntries(s){
   const links=[];
   if(s.triage_pending)links.push(el('a',{href:urlFor({...view,mode:'triage',article:null}),'data-entry':'triage','data-mode':'triage'},[document.createTextNode('待決定'),el('strong',{text:s.triage_pending+' 篇'})]));
   if(s.reviews_today)links.push(el('a',{href:urlFor({...view,mode:'review',article:null}),'data-entry':'review','data-mode':'review'},[document.createTextNode('今日複習'),el('strong',{text:s.reviews_today+' 題'})]));
+  links.push(el('a',{href:urlFor({...view,mode:'week',week:'',article:null}),'data-entry':'week','data-mode':'week'},[document.createTextNode('每週回顧')]));
   $('entry-bar').replaceChildren(...links);$('entry-bar').hidden=!links.length;
-  for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,article:null}));};
+  for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,week:'',article:null}));};
 }
 async function refreshEntries(){try{renderEntries(await api('status'));}catch(e){}}
 async function runnerStatus(){

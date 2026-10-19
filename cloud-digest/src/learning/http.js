@@ -50,6 +50,7 @@ import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
 import { listQuizzes, quizView, attemptView, QuizError } from './quiz.js';
 import { webCheckSummary, setWebCheck } from './web-check.js';
 import { todayReviews, todayCount } from './reviews.js';
+import { weekStats } from './week-stats.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -687,6 +688,8 @@ export function createLearningHandler(deps = {}) {
         }
       }
       if (route === 'reviews/today' && request.method === 'GET') return json(await todayReviews(env));
+      if (route === 'stats/week' && request.method === 'GET')
+        return json(await weekStats(env, url.searchParams.get('start')));
       const reviewMatch = route.match(/^reviews\/([0-9a-f-]{36})\/attempts$/);
       if (reviewMatch && request.method === 'POST') {
         const attempt = await service.review(env, reviewMatch[1], await body(request));

@@ -4,9 +4,9 @@
 
 **Blocked by:** 12：今日複習
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `GET stats/week?start=YYYY-MM-DD`，統計範圍與規格一致，刪除分成手動與逾期
-- [ ] 週界線依台灣時間計算，測試涵蓋跨年週
-- [ ] 查詢走索引
-- [ ] 內建瀏覽器在桌機與手機寬度確認畫面
+- [x] `GET stats/week?start=YYYY-MM-DD`，統計範圍與規格一致，刪除分成手動與逾期
+- [x] 週界線依台灣時間計算，測試涵蓋跨年週
+- [x] 查詢走索引
+- [x] 內建瀏覽器在桌機與手機寬度確認畫面

@@ -171,6 +171,7 @@ export async function expirePending(env, limit = EXPIRE_BATCH) {
 }
 
 // 清除一篇：只留網址作為不再收件的紀錄。正文、來源、媒體、筆記、追問、版本與尚未送出的通知都刪除。
+// 刪除時間與原因保留給每週回顧統計；篩選結果回到待決定，之後手動分享時從頭開始。
 export async function purgeItem(env, id) {
   const assets = await rows(
     env,
@@ -188,7 +189,7 @@ export async function purgeItem(env, id) {
     query(
       env,
       `UPDATE learning_items SET status='dismissed',stage=NULL,title='',body=NULL,article_json=NULL,gaps_json='[]',note='',note_updated_at=NULL,
-      last_error=NULL,read_at=NULL,lease_until=NULL,triage='pending',starred=0,kept_at=NULL,deleted_at=NULL,deleted_reason=NULL,deleted_from=NULL,
+      last_error=NULL,read_at=NULL,lease_until=NULL,triage='pending',starred=0,kept_at=NULL,deleted_from=NULL,
       triage_deadline=NULL,triage_no_expiry=0,updated_at=? WHERE id=? AND triage='deleted' AND deleted_at<=?`,
       nowIso(),
       id,
