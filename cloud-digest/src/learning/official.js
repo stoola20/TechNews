@@ -4,7 +4,7 @@ import {query,rows,nowIso} from './store.js';
 import {publishedBefore,normalizePublished} from './dates.js';
 import {now} from './clock.js';
 
-const DAY=86400000,RETENTION_DAYS=30,CHUNK=90;
+const DAY=86400000,RETENTION_DAYS=30,DETAIL_DAYS=7,CHUNK=90;
 
 async function recordEntry(env,source,entry,at,decision,reason,itemId=null){
   await query(env,`INSERT INTO source_entries(source,url,first_seen_at,last_listed_at,title,published_at,decision,reason,item_id) VALUES(?,?,?,?,?,?,?,?,?)
@@ -66,10 +66,13 @@ export async function officialOverview(env){
   for(const source of getSources(effective)){
     const state=await query(env,'SELECT initialized_at,last_checked_at FROM source_state WHERE source=?',source.id).first();
     const last=await query(env,'SELECT ran_at,found,collected,stale,baseline,ok,error FROM source_runs WHERE source=? ORDER BY ran_at DESC LIMIT 1',source.id).first();
+    const entries=await rows(env,`SELECT url,title,published_at,decision,reason,item_id,manual,first_seen_at FROM source_entries
+      WHERE source=? AND first_seen_at>=? ORDER BY first_seen_at DESC,url LIMIT 200`,source.id,new Date(now()-DETAIL_DAYS*DAY).toISOString());
     sources.push({id:source.id,name:source.name,initialized_at:state?.initialized_at || null,last_checked_at:state?.last_checked_at || null,
-      last_run:last?{...last,ok:!!last.ok}:null,status:!last?'never':last.ok?'ok':'failed'});
+      last_run:last?{...last,ok:!!last.ok}:null,status:!last?'never':last.ok?'ok':'failed',
+      entries:entries.map(e=>({...e,published_at:normalizePublished(e.published_at),manual:!!e.manual}))});
   }
-  return {max_age_days:maxArticleAgeDays(env),retention_days:RETENTION_DAYS,sources};
+  return {max_age_days:maxArticleAgeDays(env),retention_days:RETENTION_DAYS,detail_days:DETAIL_DAYS,sources};
 }
 
 // 紀錄保留 30 天：執行紀錄依時間清除；網址條目只在 30 天內都沒再出現在列表時才刪，避免仍在列表上的舊網址被當成沒看過。
@@ -78,6 +81,18 @@ export async function pruneSourceRecords(env){
   const runs=await query(env,'DELETE FROM source_runs WHERE ran_at<?',cutoff).run();
   const entries=await query(env,'DELETE FROM source_entries WHERE last_listed_at<?',cutoff).run();
   return {runs:runs.meta.changes || 0,entries:entries.meta.changes || 0};
+}
+
+// 「仍要收件」：等同主動分享（不受主題篩選與新鮮度期限），同時保留官方收件，讓原文沿用官方擷取規則。
+// 收件代碼固定，重複按不會新增收件或重複通知。
+export async function collectAnyway(env,collect,sourceId,url){
+  const entry=await query(env,'SELECT * FROM source_entries WHERE source=? AND url=?',sourceId,url).first();
+  if(!entry)throw new Error('找不到這篇來源紀錄');
+  const id=await collect(env,url,'web',`manual-official:${url}`);
+  await query(env,"INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,metadata_json,created_at) VALUES(?,?,'official',?,?)",
+    `official:${url}`,id,JSON.stringify({source_id:sourceId,title:entry.title,published_at:entry.published_at}),nowIso()).run();
+  await query(env,"UPDATE source_entries SET decision='collected',manual=1,item_id=?,reason='手動收件' WHERE source=? AND url=?",id,sourceId,url).run();
+  return {id};
 }
 
 // 抓到原文後才確定太舊的官方文章，對應的網址條目也改成太舊略過。

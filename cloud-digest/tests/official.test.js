@@ -221,3 +221,61 @@ test('紀錄保留 30 天：沒再出現在列表的網址會清掉，仍在列�
   assert.equal((await rows(env,'SELECT id FROM learning_items')).length,2);
   assert.equal(sent(),2);
 });
+
+test('逐篇明細與「仍要收件」：太舊略過的文章照主動分享整理並通知；重複按不會重複收件或通知',async()=>{
+  const env=environment(),net=recorder(),loads=[],generated=[];
+  const feed=[
+    {url:'https://developers.openai.com/blog/fresh',title:'Fresh',publishedAt:daysAgo(1),content:null},
+    {url:'https://developers.openai.com/blog/listed-old',title:'Listed old',publishedAt:daysAgo(40),content:null},
+    {url:'https://developers.openai.com/blog/undated-old',title:'Undated old',publishedAt:null,content:null},
+  ];
+  const published={fresh:daysAgo(1),'listed-old':daysAgo(40),'undated-old':daysAgo(60)};
+  const handler=createLearningHandler({...net,now,discoverSource:async source=>source.id==='openai_developer_blog'?feed:[],
+    loadArticle:async(source,entry)=>{const key=entry.url.split('/').at(-1);loads.push(key);return {...entry,title:'Official '+key,publishedAt:published[key],content:longContent,contentMethod:'article_html'};},
+    // 有官方主題判斷時一律判為不相關：用來確認「仍要收件」不受主題篩選。
+    generate:async(env,sources,media,gaps,question,fetcher,{official}={})=>{generated.push([sources[0].url.split('/').at(-1),!!official]);
+      return official?{publish:false,reason:'不符合關注',title:'略過'}:{title:'詳細教材',body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]};}});
+  await settings(env);
+  await query(env,"INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,'[]')",daysAgo(30),daysAgo(1)).run();
+  const drainAll=async()=>{for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);};
+  const detail=async()=>Object.fromEntries((await (await handler.fetch(request('api/admin/sources'),env)).json()).sources.find(s=>s.id==='openai_developer_blog').entries.map(e=>[e.url.split('/').at(-1),e]));
+  const sent=()=>net.calls.filter(c=>c.url.includes('api.telegram.org')).length;
+  assert.equal((await handler.service.official(env)).queued,2);
+  await drainAll();
+
+  let entries=await detail();
+  assert.deepEqual(Object.keys(entries).sort(),['fresh','listed-old','undated-old']);
+  assert.equal(entries.fresh.decision,'collected');assert.ok(entries.fresh.item_id);assert.equal(entries.fresh.title,'Fresh');
+  assert.equal(entries['listed-old'].decision,'stale');assert.equal(entries['listed-old'].reason,'發表超過 7 天');assert.equal(entries['listed-old'].item_id,null);
+  // 列表沒有日期、抓到原文才判定太舊的那篇也標為太舊略過，並連到文章庫裡篩掉的那一篇。
+  assert.equal(entries['undated-old'].decision,'stale');assert.match(entries['undated-old'].reason,/^發表於/);assert.ok(entries['undated-old'].item_id);
+  assert.equal(sent(),0);
+
+  for(const key of ['listed-old','undated-old'])
+    assert.equal((await handler.fetch(request('api/admin/sources/collect','POST',{source:'openai_developer_blog',url:'https://developers.openai.com/blog/'+key}),env)).status,202);
+  await drainAll();
+  const items=Object.fromEntries((await rows(env,'SELECT id,url,status FROM learning_items')).map(r=>[r.url.split('/').at(-1),r]));
+  assert.equal(items['listed-old'].status,'ready');assert.equal(items['undated-old'].status,'ready');
+  // 原文沿用官方擷取規則；整理時不帶官方主題判斷。
+  assert.ok(loads.includes('listed-old'));
+  assert.deepEqual(generated.filter(([key])=>key!=='fresh').sort(),[['listed-old',false],['undated-old',false]]);
+  await handler.service.flush(env);
+  assert.equal(sent(),2);
+  entries=await detail();
+  for(const key of ['listed-old','undated-old']){
+    assert.equal(entries[key].decision,'collected');assert.equal(entries[key].manual,true);assert.equal(entries[key].item_id,items[key].id);
+  }
+
+  // 重複按：不新增文章、收件或通知。
+  for(const key of ['listed-old','undated-old'])
+    await handler.fetch(request('api/admin/sources/collect','POST',{source:'openai_developer_blog',url:'https://developers.openai.com/blog/'+key}),env);
+  await drainAll();await handler.service.flush(env);
+  assert.equal(sent(),2);
+  assert.equal((await rows(env,'SELECT id FROM learning_items')).length,3);
+  assert.equal((await rows(env,"SELECT receipt FROM learning_intakes WHERE item_id=?",items['listed-old'].id)).length,2);
+  // 下一輪發現：手動收件的條目不被改回太舊，也不再收件。
+  assert.equal((await handler.service.official(env)).queued,0);
+  assert.equal((await detail())['listed-old'].decision,'collected');
+  // 沒有來源紀錄的網址不能用這個入口收件。
+  assert.equal((await handler.fetch(request('api/admin/sources/collect','POST',{source:'openai_developer_blog',url:'https://developers.openai.com/blog/unknown'}),env)).status,400);
+});

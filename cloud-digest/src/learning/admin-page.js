@@ -9,6 +9,8 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}dt{c
 table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow:auto}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.switches{display:grid;gap:4px}
 .wide{grid-column:1/-1}tr.failed td:last-child{color:var(--danger);font-weight:600}
+.entries{margin-top:12px}.entries details{border-top:1px solid var(--line)}.entries summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px;font-weight:600;list-style:none}.entries summary::-webkit-details-marker{display:none}.entries summary::before{content:'▸';color:var(--muted)}.entries details[open] summary::before{content:'▾'}
+.entry{display:grid;grid-template-columns:7em minmax(0,1fr) minmax(10em,auto);gap:4px 12px;align-items:center;padding:6px 0;font-size:14px;border-top:1px solid var(--line)}.entry a{overflow-wrap:anywhere}.entry .why{color:var(--muted)}.entry button{margin-left:8px}
 .topic-edit{display:grid;grid-template-columns:44px minmax(8em,14em) minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
 .topic-edit input[type=color]{width:44px;height:44px;padding:2px;min-height:auto}.topic-edit input[type=text]{width:100%;min-width:0}
 @media(max-width:640px){.topic-edit{grid-template-columns:44px minmax(0,1fr) auto}.topic-edit .desc{grid-column:1/-1}}.switch{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600}.switch input{min-height:auto;width:20px;height:20px;flex:none}.pre{white-space:pre-line;line-height:1.7}
@@ -17,7 +19,8 @@ table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow:
 #sources tr{display:grid;grid-template-columns:repeat(3,1fr);gap:2px 8px;padding:10px 0;border-bottom:1px solid var(--line)}
 #sources td{border:0;padding:0;white-space:normal}#sources td:nth-child(1){grid-column:1/-1;font-weight:600}
 #sources td:nth-child(2),#sources td:nth-child(6){grid-column:1/-1}#sources td:nth-child(2){color:var(--muted);font-size:13px}
-#sources td[data-label]::before{content:attr(data-label)'　';color:var(--muted);font-size:13px}}
+#sources td[data-label]::before{content:attr(data-label)'　';color:var(--muted);font-size:13px}
+.entry{grid-template-columns:minmax(0,1fr)}.entry button{margin:6px 0 0}}
 </style></head><body>
 <header class="top"><a class="brand" href="/learning">TechNews 文章庫</a><nav><a href="/learning">回到文章庫</a><button id="logout" class="hidden">登出</button></nav></header>
 <div id="feedback" role="status" aria-live="polite"></div>
@@ -25,7 +28,7 @@ ${LOGIN}
 <main id="app" class="hidden"><h1>管理</h1>
 <p class="muted">同步、模型分工、預算與故障處理集中在這裡；日常閱讀請回到文章庫。</p>
 <div class="grid">
-<section class="panel wide" aria-labelledby="sources-title"><h2 id="sources-title">官方來源</h2><p id="sources-rule" class="muted"></p><div id="sources"></div></section>
+<section class="panel wide" aria-labelledby="sources-title"><h2 id="sources-title">官方來源</h2><p id="sources-rule" class="muted"></p><div id="sources"></div><div id="source-details" class="entries"></div></section>
 <section class="panel" aria-labelledby="model-title"><h2 id="model-title">模型分工</h2><dl id="models"></dl>
 <p class="muted">「文字模型」負責官方主題判斷、詳細整理、通知介紹與來源追問。切到本機前請先完成代表素材驗收。Mac 離線時工作會等待，不會改用雲端文字模型。</p>
 <div class="actions"><button id="use-local">改用本機 Gemma</button><button id="use-gemini">改回 Gemini</button></div></section>
@@ -105,10 +108,30 @@ $('topic-reclassify').onclick=async e=>{
 const SOURCE_STATUS={ok:'正常',failed:'失敗',never:'尚未執行'};
 async function loadSources(){
   const o=await api('admin/sources');
-  $('sources-rule').textContent='只收 '+o.max_age_days+' 天內發表的文章。每天 08:00 檢查，紀錄保留 '+o.retention_days+' 天。';
+  $('sources-rule').textContent='只收 '+o.max_age_days+' 天內發表的文章。每天 08:00 檢查，紀錄保留 '+o.retention_days+' 天。點下方來源名稱看每篇的處理結果。';
   const cells=s=>{const r=s.last_run;return [s.name,when(r?r.ran_at:s.last_checked_at),r?r.found:'—',r?r.collected:'—',r?r.stale:'—',s.status==='failed'?'失敗：'+(r.error||'原因不明'):SOURCE_STATUS[s.status]];};
   $('sources').replaceChildren(el('table',{},[el('thead',{},[el('tr',{},['來源','最後檢查','找到','收件','太舊略過','狀態'].map(t=>el('th',{text:t})))]),
     el('tbody',{},o.sources.map(s=>el('tr',{'data-source':s.id,class:s.status==='failed'?'failed':''},cells(s).map((v,i)=>el('td',{text:String(v),...([2,3,4].includes(i)?{'data-label':['','','找到','收件','太舊略過'][i]}:{})})))))]));
+  // 逐篇明細：重新整理後保留原本展開的來源。
+  const open=new Set([...document.querySelectorAll('#source-details details[open]')].map(d=>d.dataset.source));
+  $('source-details').replaceChildren(...o.sources.map(s=>{
+    const d=el('details',{'data-source':s.id},[el('summary',{text:s.name+'（最近 '+o.detail_days+' 天首次看到 '+s.entries.length+' 篇）'}),
+      ...(s.entries.length?s.entries.map(e=>entryRow(s,e)):[el('p',{class:'muted',text:'這段期間沒有新看到的文章。'})])]);
+    d.open=open.has(s.id);return d;
+  }));
+}
+// 一篇一列：發表日、標題（連原文）、處理結果；太舊略過的可以「仍要收件」，等同主動分享。
+const DECISION={collected:'收件',baseline:'初次基準',stale:'太舊略過'};
+function entryRow(s,e){
+  const why=el('span',{class:'why'});
+  if(e.decision==='collected'){why.append(e.manual?'手動收件':'收件');if(e.item_id)why.append('・',el('a',{href:'/learning?article='+encodeURIComponent(e.item_id),text:'看文章'}));}
+  else if(e.decision==='stale'){
+    why.append('太舊略過'+(e.reason?'（'+e.reason+'）':''));
+    const b=el('button',{type:'button',text:'仍要收件'});
+    b.onclick=()=>run(async()=>{await api('admin/sources/collect','POST',{source:s.id,url:e.url});await loadSources();message('已收件，整理完成後會通知。');},b,'收件中…');
+    why.append(b);
+  }else why.append(DECISION[e.decision]||e.decision);
+  return el('div',{class:'entry'},[el('span',{class:'muted',text:e.published_at?e.published_at.slice(0,10):'沒有日期'}),safeLink(e.url,e.title||e.url),why]);
 }
 bindLogin(boot);
 async function boot(){await load();await loadSources();await loadTopics();showApp();}
