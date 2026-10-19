@@ -206,6 +206,14 @@ npm test
 
 測試使用 Node 內建 SQLite 套用全部 migration，外部網路與時間都以模擬取代，不需要任何金鑰。
 
+程式排版用 Prettier（單引號、每行最多 120 字元）：`npm run format` 重排，`npm run format:check` 檢查。一次性重排的 commit 記在根目錄的 `.git-blame-ignore-revs`，追查某行程式的來由時加上參數略過它：
+
+```bash
+git blame --ignore-revs-file .git-blame-ignore-revs cloud-digest/src/learning/service.js
+```
+
+想讓每次 `git blame` 都自動略過，可以設定一次 `git config blame.ignoreRevsFile .git-blame-ignore-revs`。
+
 ---
 
 ## 文件地圖
