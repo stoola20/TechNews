@@ -9,12 +9,13 @@ export async function skipDecorative(env,itemId){
   const external=await rows(env,"SELECT m.id,m.url FROM learning_media m JOIN learning_evidence e ON e.id=m.evidence_id WHERE m.item_id=? AND e.relation='external' AND m.status!='decorative'",itemId);
   const marked=external.filter(asset=>!asset.url || decorativeImage(NO_ELEMENT,asset.url)).map(asset=>asset.id);
   for(const id of marked)await query(env,"UPDATE learning_media SET status='decorative',error=NULL,updated_at=? WHERE id=?",nowIso(),id).run();
-  if(!marked.length)return;
+  if(!marked.length)return 0;
   // 已寫進文章的裝飾圖片缺漏一併移除；沒有其他缺漏時，文章改回已完成。
   const item=await query(env,'SELECT gaps_json,status FROM learning_items WHERE id=?',itemId).first();
   const gaps=JSON.parse(item?.gaps_json || '[]'),kept=gaps.filter(g=>!marked.includes(g.id || g.media_id));
-  if(kept.length===gaps.length)return;
+  if(kept.length===gaps.length)return marked.length;
   await query(env,"UPDATE learning_items SET gaps_json=?,status=CASE WHEN status='partial' AND ?=0 THEN 'ready' ELSE status END WHERE id=?",JSON.stringify(kept),kept.length,itemId).run();
+  return marked.length;
 }
 export async function prepareMedia(env,itemId,fetcher=fetch,options={}) {
   await skipDecorative(env,itemId);

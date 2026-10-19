@@ -81,11 +81,15 @@ test('正式網址規則造成重複時合併到已整理文章，舊深層連�
   assert.equal(again.id,'c'.repeat(32));
 });
 
-test('維護排程把已通知的舊官方導讀搬入文章庫，不呼叫模型也不重送通知',async()=>{
+test('「維運」按鈕把已通知的舊官方導讀搬入文章庫，不呼叫模型也不重送通知；維護排程不搬移',async()=>{
   const env=environment(),net=recorder(),handler=createLearningHandler(net);
   const entry={url:'https://developers.openai.com/blog/new-post'};
   await legacyOfficial(env,entry.url);
-  await handler.scheduled(env,false);
+  await handler.scheduled(env,{tasks:['maintenance']});
+  assert.equal((await rows(env,"SELECT id FROM learning_items WHERE url=?",entry.url)).length,0);
+  const ops=()=>handler.fetch(request('api/admin/migrate','POST',{}),env).then(r=>r.json());
+  assert.equal((await ops()).imported,1);
+  assert.equal((await ops()).imported,0);
   const imported=await rows(env,"SELECT * FROM learning_items WHERE url=?",entry.url);
   assert.equal(imported.length,1);assert.equal(imported[0].edition,'legacy_digest');
   assert.equal(net.calls.filter(c=>c.url.includes('api.telegram.org')).length,0);

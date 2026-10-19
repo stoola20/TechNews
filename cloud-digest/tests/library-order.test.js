@@ -62,9 +62,12 @@ test('回補發表時間：依序用主要來源、收件紀錄、舊官方文�
   assert.equal((await item(env,l)).published_at,'2026-03-04T05:00:00.000Z');
   assert.equal((await item(env,none)).published_at,null);
   assert.equal(await backfillPublished(env),0);
-  // 維護排程會執行回補。
+  // 回補只由管理頁「維運」執行，5 分鐘維護排程不重跑。
   await query(env,'UPDATE learning_items SET published_at=NULL WHERE id=?',p).run();
-  await createLearningHandler(recorder()).scheduled(env,{tasks:['maintenance']});
+  const handler=createLearningHandler(recorder());
+  await handler.scheduled(env,{tasks:['maintenance']});
+  assert.equal((await item(env,p)).published_at,null);
+  assert.equal((await (await handler.fetch(request('api/admin/migrate','POST',{}),env)).json()).published,1);
   assert.equal((await item(env,p)).published_at,'2026-03-02T00:00:00.000Z');
 });
 

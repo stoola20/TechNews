@@ -58,7 +58,7 @@ ${LOGIN}
 <p class="muted">分類模型依名稱與說明從這份表中選主題。改名、說明與顏色不影響已分類的文章；刪除主題時，受影響的文章會重新分類。新增主題後可按「重新分類全部」，手動設定的文章不受影響。</p>
 <div id="topic-rows"></div>
 <div class="actions"><button id="topic-add" type="button">新增主題</button><button id="topic-save" class="primary">保存主題表</button><button id="topic-reclassify" type="button">重新分類全部</button></div></section>
-<section class="panel" aria-labelledby="ops-title"><h2 id="ops-title">維運</h2><p class="muted">重新執行舊資料搬移：只寫資料庫，不呼叫模型、不讀外部來源、不發通知，可重複執行。</p><div class="actions"><button id="migrate">搬移舊官方導讀</button></div><p id="migrate-result" class="muted"></p></section>
+<section class="panel" aria-labelledby="ops-title"><h2 id="ops-title">維運</h2><p class="muted">一次執行舊資料整理：搬移舊官方導讀、合併重複文章、補上發表時間、清掉外部網頁裝飾圖片造成的缺漏。只寫資料庫，不呼叫模型、不讀外部來源、不發通知，可重複執行；5 分鐘維護排程不會自動做這些事。</p><div class="actions"><button id="migrate">執行舊資料整理</button></div><p id="migrate-result" class="muted"></p></section>
 </div></main>
 <script>
 ${HELPERS}
@@ -127,7 +127,7 @@ $('connect').onclick=e=>run(async()=>{const r=await api('x/connect','POST',{});l
 for(const [id,key,label] of [['x-bookmarks','bookmarks','書籤同步'],['x-author','author_recheck','作者重查']])$(id).onchange=e=>{const box=e.currentTarget,on=box.checked;run(async()=>{try{await api('admin/x-reads','PUT',{[key]:on});}catch(error){box.checked=!on;throw error;}await load();message(label+(on?'已開啟。':'已關閉。'));});};
 $('sync').onclick=e=>run(async()=>{const r=await api('x/sync','POST',{});await load();message(r.disabled?'書籤同步已停用，沒有讀取 X。':'已啟動完整核對，進度會保存。');},e.currentTarget,'同步中…');
 $('backfill').onclick=async e=>{const button=e.currentTarget;if(!await askConfirm('這會整理全部等待回補的書籤，並產生模型與讀取費用。若想逐篇決定，請到文章庫篩選「等待確認回補」。要繼續嗎？'))return;run(async()=>{await api('x/backfill','POST',{});await load();message('已確認回補，工作會依可用預算處理。');},button,'送出中…');};
-$('migrate').onclick=e=>run(async()=>{const r=await api('admin/migrate','POST',{});$('migrate-result').textContent='新增 '+r.imported+' 篇、合併 '+r.merged+' 篇、更新網址 '+r.renamed+' 篇。';},e.currentTarget,'搬移中…');
+$('migrate').onclick=e=>run(async()=>{const r=await api('admin/migrate','POST',{});$('migrate-result').textContent='搬入舊導讀 '+r.imported+' 篇、合併重複 '+r.merged+' 篇、更新網址 '+r.renamed+' 篇、補上發表時間 '+r.published+' 篇、清掉裝飾圖片缺漏 '+r.decorative+' 張。';},e.currentTarget,'整理中…');
 // 主題表編輯：既有主題保留識別碼，新主題由伺服器產生識別碼。
 let savedTopics=[];
 function topicRow(t){

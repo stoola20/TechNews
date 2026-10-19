@@ -7,7 +7,7 @@ import {rows,query,item,evidence,setting,setSetting,budget,resume,voidCost,hash,
 import {exchange,xRead,bookmarksEnabled,xReads,setXReads} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
-import {resolveItemId,migrateLibrary,ORIGINS,officialSources,publisherFor} from './library.js';
+import {resolveItemId,migrateLibrary,backfillPublished,ORIGINS,officialSources,publisherFor} from './library.js';
 import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
 import {topicList,setItemTopics,saveTopicList,reclassifyAll} from './topics.js';
@@ -102,7 +102,12 @@ export function createLearningHandler(deps={}) {
         return json({budget:await budget(env),sync:await setting(env,'sync'),sync_partial:await setting(env,'sync-partial'),x_reads:await xReads(env),awaiting_backfill:count.count,local:await runnerStatus(env),demo:env.LEARNING_DEMO==='true',configured:{gemini:!!env.GEMINI_API_KEY,x:!!env.X_CLIENT_ID&&!!env.X_CLIENT_SECRET,queue:!!env.LEARNING_JOBS,media:!!env.MEDIA,telegram_input:!!env.TELEGRAM_WEBHOOK_SECRET&&!!env.TELEGRAM_ALLOWED_CHAT_IDS}});
       }
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
-      if(route==='admin/migrate'&&request.method==='POST'){const library=await migrateLibrary(env),linked=await mergeExistingDuplicates(env);return json({...library,merged:library.merged+linked.merged,linked_checked:linked.checked});}
+      // 一次性的舊資料整理只在這裡手動執行，不放進 5 分鐘維護排程；只寫資料庫，可重複執行。
+      if(route==='admin/migrate'&&request.method==='POST'){
+        const library=await migrateLibrary(env),linked=await mergeExistingDuplicates(env),published=await backfillPublished(env,2000);
+        let decorative=0;for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='partial' AND gaps_json LIKE '%媒體%'"))decorative+=await skipDecorative(env,row.id);
+        return json({...library,merged:library.merged+linked.merged,linked_checked:linked.checked,published,decorative});
+      }
       if(route==='budget'&&request.method==='GET')return json(await budgetSummary(env,await budget(env)));
       if(route==='admin/costs/void'&&request.method==='POST'){const data=await body(request);await voidCost(env,data.id,data.note);return json(await budgetSummary(env,await budget(env)));}
       if(route==='admin/budget-adjust'&&request.method==='POST'){
