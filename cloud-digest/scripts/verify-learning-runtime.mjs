@@ -3,7 +3,7 @@ import {readFileSync,readdirSync} from 'node:fs';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 
 // 使用實際 Workers、D1、R2 的本機模擬，不連接任何付費 API。
-const runtime=new Miniflare(convertV4MiniflareOptions({workers:[{name:'learning',modules:true,script:readFileSync(process.argv[2] || '/private/tmp/technews-learning-build/index.js','utf8'),compatibilityDate:'2026-09-23',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'learning-runtime-db'},r2Buckets:['MEDIA'],bindings:{RUN_TOKEN:'runtime-only',LEARNING_RUNNER_TOKEN:'runner-only',LEARNING_ENABLED:'true',LEARNING_MONTHLY_USD:'30',PUBLIC_BASE_URL:'https://example.org'}}]}));
+const runtime=new Miniflare(convertV4MiniflareOptions({workers:[{name:'learning',modules:true,script:readFileSync(process.argv[2] || '/private/tmp/technews-learning-build/index.js','utf8'),compatibilityDate:'2026-09-23',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'learning-runtime-db'},r2Buckets:['MEDIA'],bindings:{RUN_TOKEN:'runtime-only',LEARNING_RUNNER_TOKEN:'runner-only',LEARNING_MONTHLY_USD:'30',PUBLIC_BASE_URL:'https://example.org'}}]}));
 try{
   const db=await runtime.getD1Database('DB');
   for(const name of readdirSync(new URL('../migrations',import.meta.url)).filter(n=>n.endsWith('.sql')).sort()){

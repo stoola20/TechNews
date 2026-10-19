@@ -29,7 +29,6 @@ export function createLearningHandler(deps={}) {
     if(!path.startsWith('/learning'))return null;
     if(path==='/learning/admin'&&request.method==='GET')return new Response(ADMIN_PAGE,{headers:{'content-type':'text/html; charset=utf-8',...JSON_HEADERS,'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
     if(path==='/learning'&&request.method==='GET')return new Response(LEARNING_PAGE,{headers:{'content-type':'text/html; charset=utf-8',...JSON_HEADERS,'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
-    if(env.LEARNING_ENABLED!=='true')return json({error:'學習流程尚未啟用，請先完成設定。'},503);
     try {
       if(path==='/learning/telegram'&&request.method==='POST'){
         if(!equalSecret(request.headers.get('x-telegram-bot-api-secret-token'),env.TELEGRAM_WEBHOOK_SECRET))return json({error:'Not found'},404);

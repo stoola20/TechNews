@@ -25,15 +25,25 @@ async function complete(s,job,output){
 }
 async function drain(s){for(const row of await rows(s.env,"SELECT id FROM learning_items WHERE status='queued'"))await s.handler.queue({messages:[message({kind:'article',id:row.id})]},s.env);}
 
-test('排程任務明確分流：08:00 開始官方整理，五分鐘維護與舊 Cron 字串都不觸發官方流程',async()=>{
+test('Worker 只剩文章庫：08:00 排程走文章庫的官方發現，舊導讀端點回 404',async()=>{
   assert.deepEqual(tasksFor('0 0 * * *'),['official','bookmark_daily','author_recheck']);
   assert.deepEqual(tasksFor('*/5 * * * *'),['maintenance']);
   assert.deepEqual(tasksFor('0 1 * * *'),[]);
-  const env={...environment(),TELEGRAM_BOT_TOKEN:undefined,LEARNING_ENABLED:'false'};
-  await worker.scheduled({cron:'0 1 * * *'},env);
-  await worker.scheduled({cron:'*/5 * * * *'},env);
-  // 切換前：08:00 仍走舊官方導讀（此處沒有 Telegram 設定，因此可觀察到它被啟動）。
-  await assert.rejects(worker.scheduled({cron:'0 0 * * *'},env),/Telegram secrets missing/);
+  const env=environment(),auth={authorization:'Bearer private-test-token'};
+  for(const [path,method] of [['/settings','GET'],['/config','GET'],['/config','PUT'],['/run','POST'],['/preview?source=openai_developer_blog','GET']])
+    assert.equal((await worker.fetch(new Request('https://worker.example.org'+path,{method,headers:auth}),env)).status,404,path);
+  assert.equal((await worker.fetch(new Request('https://worker.example.org/health'),env)).status,200);
+  // 預設的官方發現在呼叫當下讀取全域 fetch：換成只記錄網址的假網路，觀察排程實際做了什麼。
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async url=>{calls.push(String(url));return new Response('',{status:404});};
+  try{
+    await worker.scheduled({cron:'0 1 * * *'},env);
+    assert.equal(calls.length,0);
+    await worker.scheduled({cron:'0 0 * * *'},env);
+  }finally{globalThis.fetch=original;}
+  assert.ok(calls.some(u=>u.startsWith('https://developers.openai.com/blog')));
+  assert.ok(!calls.some(u=>u.includes('api.telegram.org')));
+  assert.equal((await rows(env,'SELECT source_url FROM articles')).length,0);
 });
 
 test('官方文章全部排入共同文章庫，由 Mac 詳細整理；積壓不受單次上限，重複日次事件不重複生成',async()=>{

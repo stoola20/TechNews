@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SOURCES, discoverBlogLinks, parseAppleFeed, extractArticle, htmlToText } from "../src/sources.js";
+import { SOURCES, discoverBlogLinks, parseAppleFeed, extractArticle, htmlToText, initialSeenUrls } from "../src/sources.js";
 
 test("discovers only canonical blog article URLs", () => {
   const html = '<a href="/blog/one">One</a><a href="/blog/one?x=1">Again</a><a href="/blog/topic/codex">Topic</a><a href="https://other.test/blog/x">Wrong</a>';
@@ -58,4 +58,10 @@ test("canonicalizes legacy Claude URLs and discovers official additional sources
   assert.equal(canonicalArticleUrl('https://evil.test/index/x', SOURCES[3]), null);
   assert.equal(parseFeed('<item><link>https://openai.com/index/devday-2026-recap</link><title>DevDay</title><category>Company</category><description>Teaser</description></item>', SOURCES[3])[0].title, 'DevDay');
   assert.equal(getSources().length, 7);
+});
+
+test("new sources backfill recent articles but checkpoint older entries", () => {
+  assert.deepEqual(initialSeenUrls([{ url: "new", publishedAt: "2026-10-01" }, { url: "old", publishedAt: "2026-01-01" }], Date.parse("2026-10-07")), ["old"]);
+  // 沒有日期時只處理列表第一篇，其餘列為基準。
+  assert.deepEqual(initialSeenUrls([{ url: "first", publishedAt: null }, { url: "second", publishedAt: null }], Date.parse("2026-10-07")), ["second"]);
 });

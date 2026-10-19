@@ -22,8 +22,7 @@ ${LOGIN}
 <div class="grid">
 <section class="panel" aria-labelledby="model-title"><h2 id="model-title">模型分工</h2><dl id="models"></dl>
 <p class="muted">「文字模型」負責官方主題判斷、詳細整理、通知介紹與來源追問。切到本機前請先完成代表素材驗收。Mac 離線時工作會等待，不會改用雲端文字模型。</p>
-<div class="actions"><button id="use-local">改用本機 Gemma</button><button id="use-gemini">改回 Gemini（切換前路徑）</button></div>
-<p class="muted">舊的 <a href="/settings">官方導讀設定頁</a> 只控制切換前的官方 Telegram 導讀模型與主題關注；主題關注也會用在本機的官方主題判斷。</p></section>
+<div class="actions"><button id="use-local">改用本機 Gemma</button><button id="use-gemini">改回 Gemini</button></div></section>
 <section class="panel" aria-labelledby="runner-title"><h2 id="runner-title">Mac 執行器</h2><dl id="runner"></dl><div id="queue"></div></section>
 <section class="panel" aria-labelledby="budget-title"><h2 id="budget-title">本月預算（台灣曆月）</h2><p id="budget-state"></p><dl id="budget"></dl><div id="categories"></div>
 <p class="muted">數字是控管估算，不是供應商帳單。X 同一 UTC 日的重讀以有上限的「重讀風險」列為未確認。</p>

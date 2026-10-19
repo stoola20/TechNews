@@ -16,7 +16,7 @@ function database(){
   return db;
 }
 function mediaStore(){const objects=new Map();return {objects,async put(key,stream,options){const bytes=new Uint8Array(await new Response(stream).arrayBuffer());objects.set(key,{bytes,options});},async get(key){const value=objects.get(key);return value?{body:new Response(value.bytes).body,size:value.bytes.length}:null;},async delete(key){objects.delete(key);}};}
-function environment(){const jobs=[];return {DB:database(),RUN_TOKEN:'private-test-token',GEMINI_API_KEY:'gemini-test-secret',LEARNING_ENABLED:'true',PUBLIC_BASE_URL:'https://learning.example.org',LEARNING_MONTHLY_USD:'30',MEDIA:mediaStore(),LEARNING_JOBS:{jobs,async send(job){jobs.push(job);}},TELEGRAM_BOT_TOKEN:'telegram-test',TELEGRAM_CHAT_ID:'-1001',TELEGRAM_WEBHOOK_SECRET:'webhook-test',TELEGRAM_ALLOWED_CHAT_IDS:'42',X_CLIENT_ID:'x-client',X_CLIENT_SECRET:'x-secret',X_APP_OWNER_ID:'7'};}
+function environment(){const jobs=[];return {DB:database(),RUN_TOKEN:'private-test-token',GEMINI_API_KEY:'gemini-test-secret',PUBLIC_BASE_URL:'https://learning.example.org',LEARNING_MONTHLY_USD:'30',MEDIA:mediaStore(),LEARNING_JOBS:{jobs,async send(job){jobs.push(job);}},TELEGRAM_BOT_TOKEN:'telegram-test',TELEGRAM_CHAT_ID:'-1001',TELEGRAM_WEBHOOK_SECRET:'webhook-test',TELEGRAM_ALLOWED_CHAT_IDS:'42',X_CLIENT_ID:'x-client',X_CLIENT_SECRET:'x-secret',X_APP_OWNER_ID:'7'};}
 const longBody='背景與機制。'.repeat(1200)+'最末的版本限制不能刪掉。';
 function network(overrides={}){
   const calls=[];

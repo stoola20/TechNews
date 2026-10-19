@@ -24,11 +24,8 @@
     "consumers": [{ "queue": "technews-learning-jobs", "max_batch_size": 1, "max_batch_timeout": 5, "max_retries": 3, "max_concurrency": 1 }]
   },
   "vars": {
-    "MODEL_PROFILE": "gemma4",
-    "MAX_ARTICLES_PER_RUN": "6",
     "MAX_ARTICLE_CHARS": "150000",
     "MAX_ARTICLE_AGE_DAYS": "7",
-    "LEARNING_ENABLED": "true",
     "LEARNING_MODEL": "gemini-3.8-flash",
     "LEARNING_MONTHLY_USD": "30",
     "LEARNING_BASE_USD": "0",

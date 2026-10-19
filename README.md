@@ -54,7 +54,7 @@ flowchart LR
 | 工作不能因為一次失敗就消失 | 文章與工作狀態寫進 D1，長工作交給 Queue；失敗留在待處理清單，下次繼續 | Worker 單次執行有時間限制，外部 API 也會暫時失敗 |
 | 不偷偷截短或換便宜模型 | 全文超過上限就報錯留待重試；模型失敗不會自動改用付費 API；Mac 離線時工作等待，不改用雲端文字模型 | 讀者看到的整理必須對應完整原文，花費也必須是你主動選的 |
 | 本機與雲端混合 | 只有 Mac 執行器對外連線去領工作；Ollama 只聽 `127.0.0.1` | 手機不用連回家裡，也不用開放家用網路的埠 |
-| 模型可抽換 | 所有模型走同一個 summarize 介面，輸入輸出格式相同，設定頁即可切換，不需重新部署 | 方便用同一篇文章比較模型品質 |
+| 文字模型可切換 | Gemini 與 Mac 本機 Gemma 使用同一份輸入格式，在管理頁切換，不需重新部署 | 方便用同一篇文章比較品質，也能自己決定花費 |
 | 來源內容不是指令 | 來源夾帶的指令會被當成資料處理；驗收素材含 prompt injection 案例 | 抓進來的網頁與貼文不可信 |
 
 ## 我該讀哪份文件
@@ -62,16 +62,15 @@ flowchart LR
 | 我想要 | 讀這個 | 需要什麼 |
 | --- | --- | --- |
 | 先看畫面，不連外部服務 | [本機示範](docs/learning-setup.md#本機閱讀與操作示範) | Node.js 22.13+ |
-| 每天在 Telegram 收到官方部落格摘要 | 本頁[快速開始](#快速開始每日-telegram-摘要) | Cloudflare 帳號、Telegram bot |
-| 建立私人文章庫，收 X 書籤與分享連結 | [設定與使用](docs/learning-setup.md) | 再加 Gemini API 金鑰；X 書籤另需 X 開發帳號 |
+| 部署文章庫，每天收到官方文章通知 | 本頁[快速開始](#快速開始) | Cloudflare 帳號、Telegram bot、Gemini API 金鑰 |
+| 用 Telegram 分享連結、收 X 書籤 | [設定與使用](docs/learning-setup.md) | X 書籤另需 X 開發帳號 |
 | 讓文字整理改由自己的 Mac 執行 | [Mac 執行器](cloud-digest/runner/README.md) | Apple Silicon Mac、Ollama |
 | 對官方文章做語意問答 | 本頁[選用：RAG 問答服務](#選用rag-問答服務) | Python 3.12+、PostgreSQL + pgvector、OpenAI 金鑰 |
-| 看系統怎麼設計 | [資料流與 input/output](docs/architecture.md) · [模型額度與 Worker／n8n 比較](docs/digest-design.md) | — |
+| 看系統怎麼設計 | [資料流與 input/output](docs/architecture.md) · [來源策略與 Worker／n8n 比較](docs/source-strategy.md) | — |
 | 看實測結果 | [驗收紀錄](docs/testing/unified-learning-acceptance-2026-10-17.md) | — |
 
 ## 目前狀態
 
-- **每日 Telegram 摘要**：可用。預設用 Workers AI 的 Google Gemma 4，不需外部 API 金鑰。
 - **私人文章庫**：已部署並用真實貼文完成一輪驗證（收件、影片處理、教材生成、完成通知、單篇追問），見[實測紀錄](docs/testing/learning-setup-2026-10-13.md)。X 書籤同步預設關閉，要在管理頁主動開啟。
 - **本機 Gemma**：14 組合成代表素材通過驗收，程式預設文字模型仍是 Gemini。要在代表素材驗收並啟動 Mac 執行器後，才到 `/learning/admin` 切換。
 - **RAG 問答**：獨立的選用服務，沒有和 Worker 共用資料庫。
@@ -87,11 +86,11 @@ flowchart LR
 
 ---
 
-## 快速開始：每日 Telegram 摘要
+## 快速開始
 
-這條路線只需要 Cloudflare 與 Telegram。部署完成後，每天台北時間 08:00 開始整理，沒有相關新文章時不發訊息。
+部署完成後，每天台北時間 08:00 開始檢查官方來源。新文章收進文章庫，由 Gemini 詳細整理，完成後在 Telegram 發一則精簡介紹與文章連結；沒有相關新文章時不發訊息。
 
-> 想要文章庫、X 書籤或本機 Gemma，先完成這一節，再接著讀[設定與使用](docs/learning-setup.md)。
+> 想用 Telegram 分享連結、收 X 書籤或改用本機 Gemma，先完成這一節，再接著讀[設定與使用](docs/learning-setup.md)。
 
 預設追蹤 OpenAI Developer Blog、OpenAI News、Apple Developer News、Claude Blog、claude.dev、Anthropic News 與 Engineering。入口與擷取方式見 [`cloud-digest/SOURCES.md`](cloud-digest/SOURCES.md)。
 
@@ -144,29 +143,14 @@ D1 指令會輸出一組 `database_id`。打開 [`cloud-digest/wrangler.jsonc`](
 npx wrangler d1 migrations apply developer-digest-cloud --remote
 ```
 
-### 5. 選擇路線
-
-`wrangler.jsonc` 的 `vars.LEARNING_ENABLED` 決定官方文章的去向：
-
-| 值 | 官方文章 | 額外需求 |
-| --- | --- | --- |
-| `"false"` | 用 Workers AI 寫導讀，直接發 Telegram | 無 |
-| `"true"`（repo 預設） | 進私人文章庫，用 Gemini 詳細整理，完成後發通知 | `GEMINI_API_KEY`，並完成[設定與使用](docs/learning-setup.md) |
-
-只要每日摘要，把它改成 `"false"`。
-
-### 6. 設定 secrets
+### 5. 設定 secrets
 
 ```bash
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 npx wrangler secret put RUN_TOKEN
-
-# 如需使用 GPT Terra，再設定 OpenAI 金鑰
-# npx wrangler secret put OPENAI_API_KEY
-
-# 如需使用 Claude，再設定 Anthropic 金鑰
-# npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put PUBLIC_BASE_URL
 ```
 
 每個指令執行後，依提示貼上對應的值：
@@ -175,61 +159,45 @@ npx wrangler secret put RUN_TOKEN
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | 步驟 1 拿到的 bot token |
 | `TELEGRAM_CHAT_ID` | 步驟 2 的 `@頻道帳號` 或數字 ID |
-| `RUN_TOKEN` | 自訂的隨機字串，保護執行、設定與預覽 API，可用 `openssl rand -base64 32` 產生 |
-| `OPENAI_API_KEY` | 選用：切換 GPT Terra 時使用的 OpenAI API 金鑰 |
-| `ANTHROPIC_API_KEY` | 選用：切換 Claude Sonnet 時使用的 Anthropic API 金鑰 |
+| `RUN_TOKEN` | 自訂的隨機字串，登入文章庫與管理頁時使用，可用 `openssl rand -base64 32` 產生 |
+| `GEMINI_API_KEY` | Gemini API 金鑰，用來詳細整理文章與解析圖片、影片 |
+| `PUBLIC_BASE_URL` | Worker 的 HTTPS 網址（例如 `https://developer-digest-cloud.<你的子網域>.workers.dev`），通知裡的文章連結會用它 |
 
-請保存自己設定的 RUN_TOKEN，登入手機設定頁時使用同一份值。若存成本機 `.cloud-run-token`，此檔案已由 `.gitignore` 排除。
+請保存自己設定的 RUN_TOKEN。若存成本機 `.cloud-run-token`，此檔案已由 `.gitignore` 排除。
 `.env*`、`.dev.vars*`、Wrangler 本機狀態與資料庫檔也不會提交；只有空白或示範值的環境設定範例會保留。
 
-### 7. 部署
+### 6. 部署
 
 ```bash
 npx wrangler deploy
 ```
 
-部署完成後會顯示 Worker 網址（`https://developer-digest-cloud.<你的子網域>.workers.dev`）。Cron 為每天 `00:00 UTC`（台北時間 08:00）開始整理；08:00 是開始時間，完成時間取決於文章數量與模型速度。各 Cron 對應的任務見 `cloud-digest/src/schedule.js`。
+部署完成後會顯示 Worker 網址。Cron 為每天 `00:00 UTC`（台北時間 08:00）開始檢查官方來源；08:00 是開始時間，完成時間取決於文章數量與模型速度。各 Cron 對應的任務見 `cloud-digest/src/schedule.js`。
 
-### 8. 手動執行一次，確認 Telegram 有收到
+### 7. 確認可以運作
 
-```bash
-curl -X POST \
-  -H "Authorization: Bearer <你的RUN_TOKEN>" \
-  https://developer-digest-cloud.<你的子網域>.workers.dev/run
-```
+開啟 `https://<Worker 網址>/learning`，用 RUN_TOKEN 登入，貼上一篇官方文章連結並按「加入文章庫」。整理完成後，Telegram 會收到通知。
 
-官方來源**只收發表 7 天內的文章**（`MAX_ARTICLE_AGE_DAYS`），新來源首次執行也只回補這段期間；沒有日期時只處理列表第一篇。每次最多嘗試 6 篇，其餘保存在 D1 待處理清單，下次繼續。擷取失敗時不使用 RSS 簡介代替全文。
+官方來源**只收發表 7 天內的文章**（`MAX_ARTICLE_AGE_DAYS`），新來源首次執行也只回補這段期間；沒有日期時只處理列表第一篇。擷取失敗時不使用 RSS 簡介代替全文。
 
 新增 D1 遷移後，部署前先執行 `npx wrangler d1 migrations apply developer-digest-cloud --remote`。只測本機時使用 `--local`。
-
-### 手機設定
-
-開啟 `https://<Worker 網址>/settings`，輸入 RUN_TOKEN，再選擇模型與關注主題。
-設定存進 D1，下次執行生效，不需要重新部署。
-設定頁的「先試讀一篇」不發送 Telegram，可在儲存模型前比較導讀。
-
-可選模型：Workers AI Google Gemma 4（預設）、NVIDIA Nemotron 3、OpenAI GPT-5.6 Terra、Anthropic Claude Sonnet 5.5。付費 API 不會在免費模型失敗時自動啟用。
 
 ### Worker 提供的端點
 
 | 端點 | 驗證 | 說明 |
 | --- | --- | --- |
 | `GET /health` | 不需要 | 健康檢查 |
-| `GET /settings` | 頁面入口不需要 | 載入手機設定頁，讀寫設定時仍需 RUN_TOKEN |
-| `GET /config` | `Authorization: Bearer <RUN_TOKEN>` | 讀取模型、主題與來源 JSON；不回傳金鑰 |
-| `PUT /config` | `Authorization: Bearer <RUN_TOKEN>` | 取代設定 JSON，下次執行生效 |
-| `POST /run` | `Authorization: Bearer <RUN_TOKEN>` | 立即執行一次 digest（與 Cron 相同流程） |
-| `GET /preview?source=<id>` | `Authorization: Bearer <RUN_TOKEN>` | 導讀來源列表第一篇，只回傳 JSON、不發 Telegram。可加 `profile=gemma4` 或 `nemotron3`、`url=<原文網址>` 比較模型；來源 ID 見 SOURCES.md |
 | `GET /learning`、`GET /learning/admin` | 登入 session | 文章庫（列表／閱讀）與管理入口 |
+| `POST /learning/telegram` | Telegram webhook secret | Telegram 分享收件，設定見[設定與使用](docs/learning-setup.md#telegram-收件與通知) |
 | `POST /learning/runner/{claim,heartbeat,complete,fail,release}` | `Authorization: Bearer <LEARNING_RUNNER_TOKEN>` | Mac 執行器專用；網站登入憑證不能使用 |
 
-除 `/health` 與 `/settings` 的公開入口外，未帶正確 token 的請求一律回 404。
+其他路徑一律回 404。
 
 ### 自訂
 
 - **修改推送時間**：編輯 `wrangler.jsonc` 的 `triggers.crons`（UTC 時間），再重新 `npx wrangler deploy`。
-- **新增或移除來源**：在 `/settings` 編輯來源 JSON；特殊網站可指定 `contentSelector`，仍需確認能完整擷取。
-- **更換摘要模型**：在 `/settings` 選擇。模型 ID 定義在 `src/settings.js`。
+- **新增或移除來源、調整想收到的內容**：設定存在 D1 的 `settings` 表，格式見 [`SOURCES.md`](cloud-digest/SOURCES.md)；特殊網站可指定 `contentSelector`，仍需確認能完整擷取。
+- **切換文字模型**：在 `/learning/admin` 切換 Gemini 或本機 Gemma。
 - **查看執行紀錄**：`npx wrangler tail`，或到 Cloudflare Dashboard → Workers → Observability。
 
 ### 執行測試
@@ -314,7 +282,7 @@ Python 測試會模擬外部網站與 OpenAI 回應，不需要真實的 API 金
 | 類別 | 文件 | 內容 |
 | --- | --- | --- |
 | 架構 | [architecture.md](docs/architecture.md) | 資料流、各平台責任、input/output |
-| 架構 | [digest-design.md](docs/digest-design.md) | 模型額度、來源策略、Worker 與 n8n 比較 |
+| 架構 | [source-strategy.md](docs/source-strategy.md) | 官方來源範圍、Workers AI 用量、Worker 與 n8n 比較 |
 | 操作 | [learning-setup.md](docs/learning-setup.md) | 文章庫：Cloudflare 資源、Gemini、X、Telegram 收件、費用與故障處理 |
 | 操作 | [runner/README.md](cloud-digest/runner/README.md) | Mac 本機文字執行器 |
 | 操作 | [SOURCES.md](cloud-digest/SOURCES.md) | 官方來源的入口與擷取方式 |

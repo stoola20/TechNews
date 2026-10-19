@@ -13,7 +13,7 @@ const samples={
   'code-and-table':{title:'設定檔欄位與重試參數',content:'設定檔使用 JSON。以下範例設定最大重試次數與逾時：\n\n```json\n{"max_retries": 3, "timeout_ms": 120000, "backoff": "exponential", "very_long_field_name_to_test_horizontal_scrolling_inside_code_blocks": true}\n```\n\n| 欄位 | 預設值 | 說明 | 適用版本 | 備註與限制條件（測試寬表格的水平捲動） |\n|---|---|---|---|---|\n| max_retries | 3 | 最多重試次數 | 2.1 以上 | 超過後標為需要處理，不會無限重試 |\n| timeout_ms | 120000 | 單次逾時 | 2.3 以上 | 長文生成可能需要提高 |\n\n限制：2.0 以前的版本不支援 backoff 欄位。'},
   'background-jobs':{title:'背景工作如何在失敗後繼續處理',content:'收件先持續保存於資料庫，再交給背景佇列處理。佇列負責喚醒，資料庫保存來源、處理階段與已生成文章。\n\n通知失敗時，重送已保存的結果，避免再付一次生成費用。來源取得失敗時則保留工作與缺漏，不把不完整內容寫成完整事實。\n\n預算用完後停止新的付費工作，收藏仍保留；即使跨月，也要等使用者手動恢復。'},
 };
-const env={DB,RUN_TOKEN:'demo-only',LEARNING_RUNNER_TOKEN:'demo-runner',LEARNING_ENABLED:'true',LEARNING_DEMO:'true',PUBLIC_BASE_URL:'https://example.org',LEARNING_MONTHLY_USD:'30'};
+const env={DB,RUN_TOKEN:'demo-only',LEARNING_RUNNER_TOKEN:'demo-runner',LEARNING_DEMO:'true',PUBLIC_BASE_URL:'https://example.org',LEARNING_MONTHLY_USD:'30'};
 // DEMO_LOCAL=1：文字工作交給本機執行器（runner/runner.mjs，TECHNEWS_RUNNER_TOKEN=demo-runner）。
 if(process.env.DEMO_LOCAL==='1')await setTextProvider(env,'local');
 const handler=createLearningHandler({

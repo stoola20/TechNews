@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 import {createLearningHandler} from '../src/learning/http.js';
 import {migrateLibrary} from '../src/learning/library.js';
 import {rows,item,query} from '../src/learning/store.js';
-import {processEntry} from '../src/index.js';
-import {SOURCES} from '../src/sources.js';
 import {environment,recorder,request,message} from './helpers.js';
 
 const now='2026-10-01T01:00:00.000Z';
@@ -83,11 +81,10 @@ test('正式網址規則造成重複時合併到已整理文章，舊深層連�
   assert.equal(again.id,'c'.repeat(32));
 });
 
-test('相容期間官方流程仍寫入舊表，維護排程把新通知文章搬入文章庫',async()=>{
+test('維護排程把已通知的舊官方導讀搬入文章庫，不呼叫模型也不重送通知',async()=>{
   const env=environment(),net=recorder(),handler=createLearningHandler(net);
-  const entry={url:'https://developers.openai.com/blog/new-post',title:'New',publishedAt:'2026-10-07',content:null};
-  const outcome=await processEntry(env,SOURCES[0],entry,{loadArticle:async(s,a)=>({...a,content:'Complete input',contentMethod:'article_html'}),summarize:async()=>({publish:true,reason:'r',title_zh:'新導讀',body_zh:'內容。'.repeat(40),provider:'workers_ai',model:'gemma'}),sendTelegram:async()=>5});
-  assert.equal(outcome,'notified');
+  const entry={url:'https://developers.openai.com/blog/new-post'};
+  await legacyOfficial(env,entry.url);
   await handler.scheduled(env,false);
   const imported=await rows(env,"SELECT * FROM learning_items WHERE url=?",entry.url);
   assert.equal(imported.length,1);assert.equal(imported[0].edition,'legacy_digest');
