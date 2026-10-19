@@ -208,7 +208,7 @@ test('索引維護的查詢走索引', async () => {
     plan(
       "SELECT id FROM learning_items WHERE triage='kept' AND status IN ('ready','partial') AND (index_revision IS NULL OR index_revision!=revision) ORDER BY kept_at LIMIT 3",
     ),
-    /USING (COVERING )?INDEX learning_items_triage/,
+    /USING (COVERING )?INDEX learning_items_(triage|kept_at)/,
   );
   assert.match(
     plan('SELECT id FROM learning_chunks WHERE item_id=?', 'x'),

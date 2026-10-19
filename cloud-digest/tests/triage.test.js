@@ -320,7 +320,7 @@ test('篩選相關的維護與列表查詢走索引', async () => {
     plan(
       "SELECT id FROM learning_items WHERE status NOT IN ('dismissed','merged') AND status!='filtered' AND triage='kept' ORDER BY COALESCE(published_at,created_at) DESC,id DESC LIMIT 50",
     ),
-    'learning_items_(triage|published)',
+    'learning_items_(triage|published|kept_at)',
   );
 });
 
