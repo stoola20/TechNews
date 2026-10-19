@@ -46,6 +46,9 @@ import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from
 import { handleTriageCallback } from './telegram-triage.js';
 import { maintainIndex } from './rag-index.js';
 import { createQuiz, submitAttempt, completeQuiz, completeGrade } from './quiz.js';
+import { search, relatedArticles, RELATED_MIN } from './retrieval.js';
+import { articleSummaries } from './library.js';
+import { articleQueryText } from './triage.js';
 import { effectiveEnvironment } from '../settings.js';
 import { getSources } from '../sources.js';
 import { now, withClock } from './clock.js';
@@ -490,7 +493,31 @@ export function createLearningService(deps = {}) {
   }
   // 批改完成後的後續步驟（網路查證、建立複習），本機批改由 Mac 回報後也走這裡。
   async function graded(env, attemptId) {}
-  const quizDeps = () => ({ fetcher, hooks: { graded } });
+  // 連結題：用本篇標題與導讀查詢 RAG，排除本篇，取文章層級分數達門檻的前 2 篇，附標題、導讀與各自最相關的 3 段。
+  // 檢索降級時沒有相關文章，照常出題，只是沒有連結題。
+  async function related(env, row) {
+    const found = await relatedArticles(env, await articleQueryText(env, row), {
+      exclude: [row.id],
+      min: RELATED_MIN,
+      limit: 2,
+    });
+    const summaries = await articleSummaries(
+      env,
+      found.articles.map((a) => a.item_id),
+    );
+    const articles = summaries.map((s, i) => ({ ref: `R${i + 1}`, id: s.id, title: s.title, intro: s.intro }));
+    const chunks = found.articles.flatMap((a) => {
+      const ref = articles.find((x) => x.id === a.item_id)?.ref;
+      return ref ? a.chunks.map((c) => ({ ...c, related: ref })) : [];
+    });
+    return { articles, chunks };
+  }
+  // 批改第二層：用「題目＋答案」查詢 RAG，只取其他保留文章，最多 6 段；檢索降級時不用第二層。
+  async function library(env, itemId, text) {
+    const found = await search(env, { query: text, scope: 'kept', exclude: [itemId], limit: 6 });
+    return found.degraded ? [] : found.chunks;
+  }
+  const quizDeps = () => ({ fetcher, related, library, hooks: { graded } });
   async function quiz(env, itemId, options = {}) {
     return createQuiz(env, itemId, options, quizDeps());
   }

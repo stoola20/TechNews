@@ -118,7 +118,13 @@ function demoGemini(body) {
           q.answer.length >= 20
             ? '示範回饋：你說出了重點與理由。'
             : '示範回饋：方向可以，但還缺少「為什麼」的說明，對照參考答案補上。',
-        citations: [input.chunks[0].ref],
+        citations: [
+          input.chunks[0].ref,
+          ...input.chunks
+            .filter((c) => c.from === '其他保留文章')
+            .slice(0, 1)
+            .map((c) => c.ref),
+        ],
         needs_web: false,
         claim: '',
       })),
