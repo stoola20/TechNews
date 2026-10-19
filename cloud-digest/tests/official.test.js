@@ -179,7 +179,7 @@ test('官方文章全部排入共同文章庫，由 Mac 詳細整理；積壓不
   const filteredId = (await query(s.env, 'SELECT item_id FROM learning_jobs WHERE id=?', irrelevant.id).first())
     .item_id;
   assert.equal((await item(s.env, filteredId)).status, 'filtered');
-  const list = await (await s.handler.fetch(request('api/items'), s.env)).json();
+  const list = await (await s.handler.fetch(request('api/items?triage=all'), s.env)).json();
   assert.ok(!list.some((i) => i.id === filteredId));
   assert.equal((await (await s.handler.fetch(request('api/items?status=filtered'), s.env)).json())[0].id, filteredId);
   await s.handler.scheduled(s.env, false);

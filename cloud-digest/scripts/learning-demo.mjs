@@ -304,6 +304,37 @@ for (const [key, title, status, gaps, error] of states) {
       .run();
   }
 }
+// 篩選示範：範例教材與時間軸文章大多已保留，部分標 ★；幾篇留在待決定（含期限快到的），兩篇在最近刪除。
+{
+  const day = 86400000,
+    at = (offset) => new Date(Date.now() + offset).toISOString();
+  sqlite.exec(
+    "UPDATE learning_items SET triage='kept',kept_at=updated_at WHERE status IN ('ready','partial') AND (url LIKE 'https://example.org/%' OR id LIKE 'f%')",
+  );
+  sqlite.exec(
+    "UPDATE learning_items SET starred=1 WHERE triage='kept' AND (id LIKE 'f00%' OR url LIKE '%code-and-table')",
+  );
+  const pending = sqlite
+    .prepare("SELECT id FROM learning_items WHERE id LIKE 'f0%' AND triage='kept' ORDER BY id LIMIT 6")
+    .all()
+    .map((r) => r.id);
+  pending.forEach((id, n) =>
+    sqlite
+      .prepare("UPDATE learning_items SET triage='pending',starred=0,kept_at=NULL,triage_deadline=? WHERE id=?")
+      .run(at((n * 3 + 1) * day), id),
+  );
+  const deleted = sqlite
+    .prepare("SELECT id FROM learning_items WHERE id LIKE 'f05%' ORDER BY id LIMIT 2")
+    .all()
+    .map((r) => r.id);
+  deleted.forEach((id, n) =>
+    sqlite
+      .prepare(
+        "UPDATE learning_items SET triage='deleted',starred=0,kept_at=NULL,deleted_at=?,deleted_reason=?,deleted_from='pending' WHERE id=?",
+      )
+      .run(at(-(n * 4 + 1) * day), n ? 'expired' : 'manual', id),
+  );
+}
 jobs.length = 0;
 for (const suffix of ['keep', 'remove'])
   await handler.service.collect(env, 'https://example.org/awaiting-' + suffix, 'backfill', 'demo:' + suffix, {

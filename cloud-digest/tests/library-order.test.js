@@ -32,7 +32,9 @@ async function add(env, id, { created, published = null }) {
   ).run();
 }
 const order = async (handler, env, q = '') =>
-  (await (await handler.fetch(request('api/items' + q), env)).json()).map((i) => i.id[0]).join('');
+  (await (await handler.fetch(request('api/items?triage=all' + q.replace('?', '&')), env)).json())
+    .map((i) => i.id[0])
+    .join('');
 
 test('列表預設依發表時間排序，沒有發表時間時以加入時間排入；可切換成加入時間', async () => {
   const env = environment(),
@@ -46,7 +48,9 @@ test('列表預設依發表時間排序，沒有發表時間時以加入時間�
   assert.equal(await order(handler, env, '?sort=published'), 'dcba');
   assert.equal(await order(handler, env, '?sort=added'), 'adbc');
   assert.equal((await handler.fetch(request('api/items?sort=bogus'), env)).status, 400);
-  const listed = (await (await handler.fetch(request('api/items'), env)).json()).find((i) => i.id[0] === 'c');
+  const listed = (await (await handler.fetch(request('api/items?triage=all'), env)).json()).find(
+    (i) => i.id[0] === 'c',
+  );
   assert.equal(listed.published_at, null);
   assert.equal(listed.created_at, T(17));
 });
@@ -147,7 +151,7 @@ test('列表與文章頁回傳發布者：官方來源名稱、X 作者帳號、
     T(1),
   ).run();
   await query(env, "UPDATE learning_items SET url='https://www.example.org/post' WHERE id=?", web).run();
-  const listed = await (await handler.fetch(request('api/items?sort=added'), env)).json();
+  const listed = await (await handler.fetch(request('api/items?triage=all&sort=added'), env)).json();
   assert.deepEqual(
     listed.map((i) => i.publisher),
     ['OpenAI Developer Blog', '@example_dev', '@example_team', 'example.org'],

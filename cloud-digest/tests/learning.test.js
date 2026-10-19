@@ -217,7 +217,9 @@ test('分享到私人閱讀：保留來源尾端、完整教材、重複身份�
   const saved = await item(env, id);
   assert.ok(saved.read_at);
   assert.equal(saved.note, '保留我的筆記');
-  const matches = await (await handler.fetch(request('api/items?q=' + encodeURIComponent('來源限制')), env)).json();
+  const matches = await (
+    await handler.fetch(request('api/items?triage=all&q=' + encodeURIComponent('來源限制')), env)
+  ).json();
   assert.equal(matches.length, 1);
   const unauthorized = new Request('https://learning.example.org/learning/api/items/' + id);
   assert.equal((await handler.fetch(unauthorized, env)).status, 401);
@@ -462,10 +464,11 @@ test('圖片觀察可保存，未知媒體與影片時間點仍拒絕', async ()
   );
 });
 
-test('待回補先免費讀原文、單篇啟動、刪除後同步不重加，重新分享可恢復', async () => {
+test('待回補先免費讀原文、單篇啟動；刪除先進最近刪除，第 8 天清除後同步不重加，重新分享可恢復', async () => {
   const env = environment(),
-    net = network(),
-    handler = createLearningHandler(net);
+    net = network();
+  let clock = Date.parse('2026-10-01T00:00:00Z');
+  const handler = createLearningHandler({ ...net, now: () => clock });
   const source = (id) => ({
     url: 'https://x.com/i/status/' + id,
     relation: 'primary',
@@ -483,16 +486,22 @@ test('待回補先免費讀原文、單篇啟動、刪除後同步不重加，�
   });
   const preview = await (await handler.fetch(request('api/items/' + first), env)).json();
   assert.equal(preview.item.status, 'awaiting_backfill');
+  assert.equal(preview.item.triage, 'pending');
   assert.equal(preview.sources[0].content, '原文內容 100');
   assert.equal(net.calls.length, 0);
   assert.equal(env.LEARNING_JOBS.jobs.length, 0);
-  const list = await (await handler.fetch(request('api/items?status=awaiting_backfill'), env)).json();
+  const list = await (await handler.fetch(request('api/items?status=awaiting_backfill&triage=pending'), env)).json();
   assert.equal(list.length, 2);
   assert.ok(list[0].preview.startsWith('原文內容'));
+  // 舊的刪除路徑已移除；篩選動作需要登入。
+  assert.equal((await handler.fetch(request('api/items/' + second, 'DELETE'), env)).status, 404);
   assert.equal(
     (
       await handler.fetch(
-        new Request('https://learning.example.org/learning/api/items/' + second, { method: 'DELETE' }),
+        new Request('https://learning.example.org/learning/api/items/' + second + '/triage', {
+          method: 'PUT',
+          body: JSON.stringify({ action: 'delete' }),
+        }),
         env,
       )
     ).status,
@@ -504,20 +513,44 @@ test('待回補先免費讀原文、單篇啟動、刪除後同步不重加，�
   assert.equal(env.LEARNING_JOBS.jobs.length, 1);
   assert.equal((await setting(env, 'sync')).backfill_approved, undefined);
   assert.equal((await handler.fetch(request('api/items/' + first + '/backfill', 'POST', {}), env)).status, 409);
-  assert.equal((await handler.fetch(request('api/items/' + first, 'DELETE'), env)).status, 409);
-  assert.equal((await handler.fetch(request('api/items/' + second, 'DELETE'), env)).status, 200);
+  const deleted = await handler.fetch(request('api/items/' + second + '/triage', 'PUT', { action: 'delete' }), env);
+  assert.equal(deleted.status, 200);
+  assert.equal((await deleted.json()).triage, 'deleted');
+  // 最近刪除：還能開啟與復原，但不在一般列表；同步再收到同一篇也不會恢復。
+  assert.equal((await handler.fetch(request('api/items/' + second), env)).status, 200);
+  assert.equal((await (await handler.fetch(request('api/items?triage=all'), env)).json()).length, 1);
+  const recent = await (await handler.fetch(request('api/items?triage=deleted'), env)).json();
+  assert.deepEqual(
+    recent.map((i) => [i.id, i.deleted_reason, i.deleted_from]),
+    [[second, 'manual', 'pending']],
+  );
+  await handler.service.collect(env, source('200').url, 'bookmark', 'bookmark:200b', { source: source('200') });
+  assert.equal((await item(env, second)).triage, 'deleted');
+  assert.equal((await rows(env, 'SELECT * FROM learning_intakes WHERE item_id=?', second)).length, 1);
+  // 第 7 天還在；第 8 天由維護排程清除，只留網址紀錄。
+  clock += 7 * 86400000 - 60000;
+  await handler.scheduled(env, { tasks: ['maintenance'] });
+  assert.equal((await item(env, second)).triage, 'deleted');
+  clock += 86400000;
+  await handler.scheduled(env, { tasks: ['maintenance'] });
+  const purged = await item(env, second);
+  assert.equal(purged.status, 'dismissed');
+  assert.equal(purged.url, 'https://x.com/i/status/200');
+  assert.equal(purged.body, null);
   assert.equal((await handler.fetch(request('api/items/' + second), env)).status, 404);
   assert.equal((await rows(env, 'SELECT * FROM learning_evidence WHERE item_id=?', second)).length, 0);
   assert.equal((await rows(env, 'SELECT * FROM learning_intakes WHERE item_id=?', second)).length, 0);
+  assert.equal((await (await handler.fetch(request('api/items?triage=deleted'), env)).json()).length, 0);
   await handler.service.collect(env, source('200').url, 'bookmark', 'bookmark:200', { source: source('200') });
   await handler.service.process(env, second);
+  const jobsFor = (id) => env.LEARNING_JOBS.jobs.filter((j) => j.id === id).length;
   assert.equal((await item(env, second)).status, 'dismissed');
-  assert.equal(env.LEARNING_JOBS.jobs.length, 1);
-  assert.equal((await (await handler.fetch(request('api/items'), env)).json()).length, 1);
-  assert.equal((await (await handler.fetch(request('api/items?status=awaiting_backfill'), env)).json()).length, 0);
+  assert.equal(jobsFor(second), 0);
+  assert.equal((await (await handler.fetch(request('api/items?triage=all'), env)).json()).length, 1);
   await handler.service.collect(env, source('200').url, 'share');
   assert.equal((await item(env, second)).status, 'queued');
-  assert.equal(env.LEARNING_JOBS.jobs.length, 2);
+  assert.equal((await item(env, second)).triage, 'pending');
+  assert.equal(jobsFor(second), 1);
 });
 
 test('Telegram 收件限制、重複 webhook 與收件回覆', async () => {

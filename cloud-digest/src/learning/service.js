@@ -42,6 +42,7 @@ import {
   pruneSourceRecords,
 } from './official.js';
 import { queueArticleNotifications, sendPending, receiptMessage, contentFingerprint } from './notifications.js';
+import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from './triage.js';
 import { effectiveEnvironment } from '../settings.js';
 import { getSources } from '../sources.js';
 import { now, withClock } from './clock.js';
@@ -83,7 +84,11 @@ export function createLearningService(deps = {}) {
       time,
       time,
     ).run();
-    if ((await item(env, id)).status === 'dismissed' && !['share', 'web'].includes(origin)) return id;
+    // 已清除或在最近刪除的文章：書籤同步與官方來源不再收件；主動分享與網站加入照常收件，回到待決定。
+    const before = await item(env, id),
+      manual = ['share', 'web'].includes(origin);
+    if ((before.status === 'dismissed' || before.triage === 'deleted') && !manual) return id;
+    if (manual && before.triage === 'deleted') await reviveFromDeleted(env, id);
     await query(
       env,
       'INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,metadata_json,created_at) VALUES(?,?,?,?,?)',
@@ -110,6 +115,8 @@ export function createLearningService(deps = {}) {
     }
     const current = await item(env, id);
     if (!options.defer && ['queued', 'error'].includes(current.status)) await enqueue(env, id);
+    // 等待確認回補的書籤一收進來就可以閱讀，待決定期限從這時起算。
+    if (current.status === 'awaiting_backfill') await startTriageClock(env, id);
     return id;
   }
   async function process(env, id) {
@@ -443,6 +450,7 @@ export function createLearningService(deps = {}) {
   }
   // 文章完成後先分類再通知；分類失敗不擋通知，由維護排程依延後時間重試。
   async function classify(env, id) {
+    await startTriageClock(env, id);
     try {
       return await classifyCompleted(env, id, deps);
     } catch (error) {
@@ -516,6 +524,15 @@ export function createLearningService(deps = {}) {
         await pruneSourceRecords(env);
       } catch (error) {
         console.log(JSON.stringify({ event: 'source_prune_failed', error: error.message }));
+      }
+    // 篩選：補上待決定期限的起算點、逾期移到最近刪除、清除刪除超過 7 天的文章。每一步都有篇數上限。
+    if (tasks.includes('maintenance'))
+      try {
+        await startTriageClock(env);
+        await expirePending(env);
+        await purgeDeleted(env);
+      } catch (error) {
+        console.log(JSON.stringify({ event: 'triage_maintenance_failed', error: error.message }));
       }
     await recover(env);
     const syncState = await setting(env, 'sync');

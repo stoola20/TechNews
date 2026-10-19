@@ -42,6 +42,20 @@ body.app{display:flex;flex-direction:column}
 .topic-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:4px 0 12px}.topic-form label{display:block;font-size:13px;margin-bottom:4px}.topic-form select{min-height:40px}
 .topic-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin:0 6px 6px 0;color:var(--ink)}.topic-tag .topic-dot{margin:0}
 .reader-bar{display:none;margin-bottom:12px}
+/* 篩選檢視與頂端入口：保留是預設檢視；待決定與最近刪除用同一排切換。 */
+.entry-bar{display:flex;flex-wrap:wrap;gap:6px 12px;margin:0 0 8px;font-size:14px}.entry-bar[hidden]{display:none}
+.entry-bar a{display:inline-flex;align-items:center;min-height:36px;padding:2px 12px;border-radius:999px;background:var(--soft);color:var(--ink);text-decoration:none;font-weight:600}
+.entry-bar a strong{margin-left:4px;font-variant-numeric:tabular-nums}
+.views{display:flex;gap:4px;overflow-x:auto;margin:8px -16px 0;padding:0 16px 2px;scrollbar-width:none}
+.views button{flex:none;min-height:36px;padding:4px 12px;border:0;border-radius:8px;background:none;color:var(--muted);font-size:14px;font-weight:600}
+.views button[aria-pressed=true]{background:var(--soft);color:var(--ink)}
+.star{color:#b45309;margin-right:4px}
+.deleted-row{display:flex;align-items:flex-start;gap:8px}.deleted-row a{flex:1;min-width:0}
+.deleted-row button{flex:none;min-height:36px;padding:4px 12px;margin-top:6px}
+.triage-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 4px}
+.triage-bar button{min-height:40px;padding:6px 14px}
+.triage-bar button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.triage-bar .muted{margin-left:4px}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
 .meta{color:var(--muted);font-size:14px;line-height:1.7}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
@@ -98,6 +112,7 @@ ${LOGIN}
 <main id="app" class="layout hidden">
 <aside id="library" aria-label="文章列表">
   <div class="list-head">
+  <div id="entry-bar" class="entry-bar" hidden></div>
   <form id="search-form" role="search"><label class="sr" for="search">搜尋標題、正文與保存的原文</label><input id="search" type="search" placeholder="搜尋標題、正文與原文（按 / ）"></form>
   <div class="tools">
     <label><input type="checkbox" id="unread"> 只看未讀</label>
@@ -108,6 +123,7 @@ ${LOGIN}
     <div><label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select></div>
     <div><label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select></div>
   </div>
+  <div id="views" class="views" role="group" aria-label="篩選結果"></div>
   <div id="topics" class="chips" role="group" aria-label="主題"></div>
   </div>
   <p id="list-summary" class="sr" aria-live="polite"></p>
@@ -143,27 +159,31 @@ ${LOGIN}
 </main>
 <script>
 ${HELPERS}
-let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',article:null},listKey=null,listItems=[],topicData={topics:[],unclassified:0,total:0},hasMore=false,loadingMore=false,current=null,openSeq=0,pollTimer=null,statusTimer=null;
+let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',triage:'kept',article:null},listKey=null,listItems=[],topicData={topics:[],unclassified:0,total:0},hasMore=false,loadingMore=false,current=null,openSeq=0,pollTimer=null,statusTimer=null;
 const narrow=matchMedia('(max-width: 959px)');
-function readView(){const p=new URLSearchParams(location.search);return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',article:p.get('article')};}
-function urlFor(v){const p=new URLSearchParams();if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
+// 篩選檢視：保留是預設；選擇存在網址，重新整理或返回時維持同一個檢視。
+const VIEWS=[['kept','保留'],['starred','★ 常用'],['pending','待決定'],['all','全部'],['deleted','最近刪除']];
+const TRIAGE_LABEL={pending:'待決定',kept:'保留',starred:'保留 ★',deleted:'最近刪除'};
+function readView(){const p=new URLSearchParams(location.search),t=p.get('triage');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article')};}
+function urlFor(v){const p=new URLSearchParams();if(v.triage&&v.triage!=='kept')p.set('triage',v.triage);if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
 function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTop;}
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
 function navigate(next,fromList){history.replaceState({...(history.state||{}),listScroll:listScroll()},'',location.href);view={...view,...next};history.pushState({fromList:!!fromList},'',urlFor(view));return apply();}
-function syncControls(){$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;$('manage-toggle').classList.toggle('active',!!(view.origin||view.state));}
+function renderViews(){$('views').replaceChildren(...VIEWS.map(([value,label])=>{const b=el('button',{type:'button','aria-pressed':String(view.triage===value),'data-triage':value,text:label});b.onclick=()=>run(()=>navigate({triage:value,article:null}));return b;}));}
+function syncControls(){renderViews();$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;$('manage-toggle').classList.toggle('active',!!(view.origin||view.state));}
 async function apply(){
   syncControls();
-  const key=JSON.stringify([view.q,view.unread,view.origin,view.state,view.sort,view.topic]);
+  const key=JSON.stringify([view.triage,view.q,view.unread,view.origin,view.state,view.sort,view.topic]);
   if(key!==listKey){listKey=key;await loadList();}
   document.body.dataset.view=view.article?'reader':'list';
   if(view.article){if(view.article!==(current&&current.id))await openArticle(view.article);}else clearArticle();
   markSelected();
 }
 window.addEventListener('popstate',e=>{view=readView();run(async()=>{await apply();if(!view.article)restoreScroll(e.state&&e.state.listScroll);});});
-function describeFilters(){const parts=[];if(view.q)parts.push('搜尋「'+view.q+'」');if(view.unread)parts.push('未讀');if(view.origin)parts.push(ORIGINS[view.origin]);if(view.state)parts.push($('state').selectedOptions[0].textContent);if(view.topic)parts.push(view.topic==='unclassified'?'未分類':(topicById(view.topic)||{name:view.topic}).name);return parts.join('・');}
+function describeFilters(){const parts=[(VIEWS.find(v=>v[0]===view.triage)||[,''])[1]];if(view.q)parts.push('搜尋「'+view.q+'」');if(view.unread)parts.push('未讀');if(view.origin)parts.push(ORIGINS[view.origin]);if(view.state)parts.push($('state').selectedOptions[0].textContent);if(view.topic)parts.push(view.topic==='unclassified'?'未分類':(topicById(view.topic)||{name:view.topic}).name);return parts.join('・');}
 // 每批 50 篇，捲到底自動接著載入；篩選或排序改變時從第一批重新載入。
-function filterQuery(){const p=new URLSearchParams();if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);return p;}
+function filterQuery(){const p=new URLSearchParams();p.set('triage',view.triage);if(view.q)p.set('q',view.q);if(view.unread)p.set('unread','1');if(view.origin)p.set('origin',view.origin);if(view.state)p.set('state',view.state);return p;}
 function listQuery(offset){const p=filterQuery();p.set('sort',view.sort);if(view.topic)p.set('topic',view.topic);p.set('offset',String(offset));return p;}
 async function loadList(){
   const key=listKey,[items,topics]=await Promise.all([api('items?'+listQuery(0).toString()),api('topics?'+filterQuery().toString())]);
@@ -199,28 +219,39 @@ const WEEKDAYS=['日','一','二','三','四','五','六'];
 function twDate(iso){const d=new Date(Date.parse(iso)+8*3600e3);return {year:d.getUTCFullYear(),month:d.getUTCMonth()+1,day:d.getUTCDate(),week:d.getUTCDay()};}
 function shortDate(iso){const d=twDate(iso);return d.month+'/'+d.day;}
 function itemDate(i){return i.published_at?shortDate(i.published_at):'日期未知・加入於 '+shortDate(i.created_at);}
-function groupTime(i){return view.sort==='added'?i.created_at:(i.published_at||i.created_at);}
+function groupTime(i){return view.triage==='deleted'?i.deleted_at:view.sort==='added'?i.created_at:(i.published_at||i.created_at);}
 function dayLabel(iso){const d=twDate(iso),year=twDate(new Date().toISOString()).year;return (d.year!==year?d.year+' 年 ':'')+d.month+' 月 '+d.day+' 日（週'+WEEKDAYS[d.week]+'）';}
 function renderList(){
   const groups=[];
-  for(const i of listItems){const label=dayLabel(groupTime(i)),last=groups[groups.length-1];if(last&&last.label===label)last.items.push(i);else groups.push({label,items:[i]});}
+  for(const i of listItems){const label=(view.triage==='deleted'?'刪除於 ':'')+dayLabel(groupTime(i)),last=groups[groups.length-1];if(last&&last.label===label)last.items.push(i);else groups.push({label,items:[i]});}
   $('list').replaceChildren(...groups.map(g=>el('section',{'aria-label':g.label},[el('h3',{class:'day'},[el('span',{text:g.label}),el('span',{text:g.items.length+' 篇'})]),el('ul',{class:'day-items'},g.items.map(renderItem))])));
-  if(!listItems.length)$('list').append(el('p',{class:'empty',text:'沒有符合的文章。'}));
+  if(!listItems.length)$('list').append(el('p',{class:'empty',text:emptyText()}));
   $('list-summary').textContent='已載入 '+listItems.length+' 篇'+(describeFilters()?'（'+describeFilters()+'）':'');
   $('more').hidden=!hasMore;
   markSelected();
 }
+function emptyText(){const filtered=view.q||view.unread||view.origin||view.state||view.topic;if(filtered)return '沒有符合的文章。';return {kept:'還沒有保留的文章。到「待決定」篩選新文章，值得留的按保留。',starred:'還沒有 ★ 常用參考。在保留的文章按 ★ 標記常回來看的文章。',pending:'待決定已清空。',deleted:'最近刪除是空的。刪除的文章會在這裡保留 7 天。',all:'文章庫還沒有文章。'}[view.triage]||'沒有符合的文章。';}
+// 剩餘天數：無條件進位，最後一天顯示「不到 1 天」。
+function daysLeft(iso){const ms=Date.parse(iso)-Date.now();return ms<=0?0:Math.ceil(ms/86400e3);}
+function leftText(iso){const d=daysLeft(iso);return d<=1?'不到 1 天':d+' 天';}
+function triageState(i){return i.triage==='deleted'?'deleted':i.triage==='kept'?(i.starred?'starred':'kept'):'pending';}
 // 已完成的文章不顯示狀態；未完成或有問題（含部分完成）才附在資訊列後面。
 function stateNode(i){return i.status==='ready'?null:el('span',{class:'state '+stateTone(i.status),text:stateLabel(i),'data-role':'state'});}
 function renderItem(i){
   const names=topicNames(i);
   const meta=el('span',{class:'item-meta'},[names.length?el('span',{text:names.join('、')}):null,names.length?el('span',{class:'sep','aria-hidden':'true'}):null,i.publisher?el('span',{text:i.publisher}):null,i.publisher?el('span',{class:'sep','aria-hidden':'true'}):null,el('span',{text:itemDate(i)})]);
   const state=stateNode(i);if(state)meta.append(el('span',{class:'sep','aria-hidden':'true'}),state);
-  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'topic-dot','aria-hidden':'true',style:topicColor(i.topic_primary)?'background:'+topicColor(i.topic_primary):''}),el('strong',{text:i.title||(i.preview||'').slice(0,80)||i.url}),meta]);
+  const title=el('strong',{},[i.starred&&i.triage==='kept'?el('span',{class:'star',text:'★','aria-label':'常用參考'}):null,document.createTextNode(i.title||(i.preview||'').slice(0,80)||i.url)]);
+  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'topic-dot','aria-hidden':'true',style:topicColor(i.topic_primary)?'background:'+topicColor(i.topic_primary):''}),title,meta]);
   if(!i.read_at)a.classList.add('unread');
   if(i.status==='awaiting_backfill'&&i.preview)a.append(el('span',{class:'preview',text:i.preview}));
   a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:i.id},true));};
-  return el('li',{},[a]);
+  if(i.triage!=='deleted')return el('li',{},[a]);
+  // 最近刪除：剩幾天清除、手動刪除或逾期移入，旁邊是「復原」。
+  a.append(el('span',{class:'preview',text:'還剩 '+leftText(i.purge_at)+'清除・'+(i.deleted_reason==='expired'?'待決定逾期移入':'手動刪除')}));
+  const restore=el('button',{type:'button',text:'復原','aria-label':'復原「'+(i.title||i.url)+'」'});
+  restore.onclick=()=>run(()=>triage(i.id,'restore'),restore,'復原中…');
+  return el('li',{class:'deleted-row'},[a,restore]);
 }
 function markSelected(){for(const a of document.querySelectorAll('#list a[data-id]'))if(current&&a.dataset.id===current.id)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
 function clearArticle(){current=null;openSeq++;$('article').replaceChildren(el('div',{class:'empty'},[el('h1',{style:'font-size:22px',text:'選一篇文章開始閱讀'}),el('p',{text:'官方文章、X 書籤與分享都在左側列表。處理狀態會自動更新。'})]));notes.close();questions.open(null);}
@@ -276,6 +307,7 @@ function renderArticle(result){
   nodes.push(topicRow(item));
   nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
   nodes.push(el('p',{class:'meta'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
+  const bar=triageBar(item);if(bar)nodes.push(bar);
   if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
   if(item.status==='waiting_local')nodes.push(el('p',{class:'notice',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
   if(item.status==='budget_paused')nodes.push(el('p',{class:'notice',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
@@ -338,6 +370,39 @@ function mediaBlock(result){
   for(const o of old)if(!placed.has(o))box.append(observationLine(o.timestamp,o.description,null));
   return box;
 }
+// 閱讀頁的篩選按鈕：保留、★、刪除，按下的狀態就是目前的篩選結果；最近刪除的文章改顯示剩餘天數與復原。
+function triageBar(item){
+  if(['filtered','merged','dismissed'].includes(item.status))return null;
+  const state=triageState(item),bar=el('div',{class:'triage-bar',role:'group','aria-label':'篩選結果','data-role':'triage'});
+  if(state==='deleted'){
+    const restore=el('button',{type:'button',class:'primary',text:'復原'});
+    restore.onclick=()=>run(()=>triage(item.id,'restore'),restore,'復原中…');
+    bar.append(el('span',{text:'已在最近刪除（'+(item.deleted_reason==='expired'?'待決定逾期移入':'手動刪除')+'），還剩 '+leftText(item.purge_at)+'清除。'}),restore);
+    return bar;
+  }
+  const kept=state==='kept'||state==='starred';
+  const keep=el('button',{type:'button','aria-pressed':String(kept),text:kept?'已保留':'保留'});
+  keep.onclick=()=>run(()=>triage(item.id,kept?'pending':'keep'),keep,'更新中…');
+  const star=el('button',{type:'button','aria-pressed':String(state==='starred'),text:state==='starred'?'★ 常用':'☆ 常用'});
+  star.onclick=()=>run(()=>triage(item.id,state==='starred'?'unstar':'star'),star,'更新中…');
+  const remove=el('button',{type:'button',class:'danger',text:'刪除'});
+  remove.onclick=()=>run(()=>triage(item.id,'delete'),remove,'刪除中…');
+  bar.append(keep,star,remove);
+  if(state==='pending')bar.append(el('span',{class:'muted',text:'待決定'+(item.triage_deadline?'・還有 '+leftText(item.triage_deadline)+'自動移到最近刪除':'')}));
+  return bar;
+}
+// 套用篩選動作：更新目前文章與列表；文章不再符合目前檢視時從列表移除。
+const TRIAGE_DONE={keep:'已保留。',star:'已保留並標記 ★。',unstar:'已拿掉 ★，仍保留。',pending:'已改回待決定。',delete:'已移到最近刪除，7 天內可以復原。',restore:'已復原。'};
+function inView(i){const t=triageState(i);return view.triage==='all'?t!=='deleted':view.triage==='starred'?t==='starred':view.triage==='kept'?t==='kept'||t==='starred':t===view.triage;}
+async function triage(id,action){
+  const result=await api('items/'+id+'/triage','PUT',{action});
+  const listed=listItems.find(i=>i.id===id);
+  if(listed){Object.assign(listed,result);if(!inView(listed)&&!view.state){listItems=listItems.filter(i=>i!==listed);renderList();}else renderList();}
+  if(current&&current.id===id){Object.assign(current,result);await refreshArticle();}
+  message(TRIAGE_DONE[action]+(result.status==='queued'&&['keep','star'].includes(action)?'已開始整理這篇，完成後會通知你。':''));
+  refreshEntries();
+  return result;
+}
 function actions(item){
   const row=el('div',{class:'actions'});
   const read=el('button',{text:item.read_at?'標記未讀':'標記已讀'});
@@ -346,9 +411,7 @@ function actions(item){
   if(item.status==='awaiting_backfill'){
     const start=el('button',{class:'primary',text:'開始整理這篇'});
     start.onclick=()=>run(async()=>{await api('items/'+item.id+'/backfill','POST',{});message('已啟動這篇文章的整理，完成後會通知你。');await refreshArticle();await updateListItem(item.id);},start,'啟動整理…');
-    const remove=el('button',{class:'danger',text:'刪除這篇待回補'});
-    remove.onclick=async()=>{if(!await askConfirm('刪除後，下次同步不會再加入；重新分享原始連結可再次收件。要刪除嗎？','刪除',true))return;run(async()=>{await api('items/'+item.id,'DELETE');message('已刪除待回補文章。');listKey=null;await navigate({article:null});},remove,'刪除中…');};
-    row.append(start,remove);return row;
+    row.append(start);return row;
   }
   const retry=el('button',{text:'補取缺漏並整理'});
   retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
@@ -391,8 +454,16 @@ async function poll(){
 }
 let textModel=null;
 function textModelName(){return !textModel?'目前設定的文字模型':textModel.provider==='local'?'本機 '+textModel.model:/gemini/i.test(textModel.model)?textModel.model:'Gemini '+textModel.model;}
+// 列表頂端的入口：待決定篇數。
+function renderEntries(s){
+  const links=[];
+  if(s.triage_pending)links.push(el('a',{href:urlFor({...view,triage:'pending',article:null}),'data-entry':'triage'},[document.createTextNode('待決定'),el('strong',{text:s.triage_pending+' 篇'})]));
+  $('entry-bar').replaceChildren(...links);$('entry-bar').hidden=!links.length;
+  for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({triage:'pending',article:null}));};
+}
+async function refreshEntries(){try{renderEntries(await api('status'));}catch(e){}}
 async function runnerStatus(){
-  try{const s=await api('status'),l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};
+  try{const s=await api('status'),l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};renderEntries(s);
     const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');
     $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
   }catch(e){}

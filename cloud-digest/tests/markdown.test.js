@@ -27,5 +27,7 @@ test('內嵌頁面腳本可解析，正文與回答均使用清理後的 HTML', 
   assert.match(LEARNING_PAGE, /content.innerHTML=current.body_html/);
   assert.match(LEARNING_PAGE, /innerHTML=q.answer_html/);
   assert.match(LEARNING_PAGE, /開始整理這篇/);
-  assert.match(LEARNING_PAGE, /刪除這篇待回補/);
+  // 待回補文章與其他文章共用篩選按鈕：刪除先進最近刪除。
+  assert.doesNotMatch(LEARNING_PAGE, /刪除這篇待回補/);
+  assert.match(LEARNING_PAGE, /api\('items\/'\+id\+'\/triage','PUT'/);
 });

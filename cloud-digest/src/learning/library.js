@@ -92,6 +92,18 @@ export async function mergeItems(env, fromId, toId) {
       nowIso(),
       toId,
     ),
+    // 被併入的文章已保留時，合併後的文章也保留（★ 一併帶過去），避免篩選結果在合併時遺失。
+    ...(from.triage === 'kept'
+      ? [
+          query(
+            env,
+            "UPDATE learning_items SET triage='kept',starred=MAX(CASE WHEN triage='kept' THEN starred ELSE 0 END,?),kept_at=COALESCE(CASE WHEN triage='kept' THEN kept_at END,?),deleted_at=NULL,deleted_reason=NULL,deleted_from=NULL WHERE id=?",
+            from.starred,
+            from.kept_at || nowIso(),
+            toId,
+          ),
+        ]
+      : []),
     // url 有唯一限制；被合併的文章改用不會再被收件比對到的網址。
     query(
       env,

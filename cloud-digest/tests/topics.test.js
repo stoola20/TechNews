@@ -153,16 +153,18 @@ test('主題篩選比對主要與次要主題並可和其他條件並用；主�
   await add(env, id('4'), { day: 1, topic: 'removed-topic' });
   await query(env, 'UPDATE learning_items SET read_at=? WHERE id=?', T(5), id('2')).run();
   const ids = async (q) =>
-    (await (await handler.fetch(request('api/items' + q), env)).json()).map((i) => i.id[0]).join('');
+    (await (await handler.fetch(request('api/items?triage=all' + q.replace('?', '&')), env)).json())
+      .map((i) => i.id[0])
+      .join('');
   assert.equal(await ids('?topic=agent-engineering'), '12');
   assert.equal(await ids('?topic=models'), '1');
   assert.equal(await ids('?topic=unclassified'), '34');
   assert.equal(await ids('?topic=agent-engineering&unread=1'), '1');
   assert.equal(await ids('?topic=agent-engineering&q=' + encodeURIComponent('工具')), '2');
   assert.equal((await handler.fetch(request('api/items?topic=bogus'), env)).status, 400);
-  const listed = (await (await handler.fetch(request('api/items'), env)).json())[0];
+  const listed = (await (await handler.fetch(request('api/items?triage=all'), env)).json())[0];
   assert.deepEqual([listed.topic_primary, listed.topic_secondary], ['models', 'agent-engineering']);
-  const counts = await (await handler.fetch(request('api/topics'), env)).json();
+  const counts = await (await handler.fetch(request('api/topics?triage=all'), env)).json();
   assert.equal(counts.total, 4);
   assert.equal(counts.unclassified, 2);
   assert.deepEqual(Object.fromEntries(counts.topics.map((t) => [t.id, t.count])), {
@@ -175,7 +177,7 @@ test('主題篩選比對主要與次要主題並可和其他條件並用；主�
     enterprise: 0,
   });
   assert.ok(counts.topics.every((t) => t.name && t.color));
-  const unread = await (await handler.fetch(request('api/topics?unread=1'), env)).json();
+  const unread = await (await handler.fetch(request('api/topics?triage=all&unread=1'), env)).json();
   assert.equal(unread.total, 3);
   assert.equal(unread.topics.find((t) => t.id === 'agent-engineering').count, 1);
   // 自訂主題表後，篩選與篇數跟著改。
@@ -255,7 +257,7 @@ test('管理頁維護主題表：改名不動文章、刪除只重分受影響�
   assert.deepEqual([rows[2].topic_primary, rows[2].topic_source, rows[2].topic_revision], [null, null, null]);
   assert.deepEqual([rows[3].topic_primary, rows[3].topic_secondary], ['ai-coding', null]);
   // 主題 API 與列表跟著新表。
-  const counts = await (await handler.fetch(request('api/topics'), env)).json();
+  const counts = await (await handler.fetch(request('api/topics?triage=all'), env)).json();
   assert.equal(counts.topics.find((t) => t.id === 'models').name, '模型');
   assert.equal(counts.unclassified, 1);
   assert.equal((await handler.fetch(request('api/items?topic=' + added.id), env)).status, 200);

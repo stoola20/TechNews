@@ -61,7 +61,7 @@ export async function queueArticleNotifications(env) {
   const candidates = await rows(
     env,
     `SELECT * FROM (SELECT i.*,MAX(i.notified_revision,COALESCE((SELECT MAX(notify_revision) FROM learning_intakes k WHERE k.item_id=i.id),0)) AS sent_revision
-    FROM learning_items i WHERE status IN ('ready','partial') AND edition='detailed' AND EXISTS(SELECT 1 FROM learning_intakes k WHERE k.item_id=i.id)) WHERE revision>sent_revision ORDER BY updated_at`,
+    FROM learning_items i WHERE status IN ('ready','partial') AND edition='detailed' AND triage!='deleted' AND EXISTS(SELECT 1 FROM learning_intakes k WHERE k.item_id=i.id)) WHERE revision>sent_revision ORDER BY updated_at`,
   );
   const topics = candidates.length ? await topicList(env) : [];
   for (const row of candidates) {
@@ -114,6 +114,17 @@ export async function queueSourceAlert(env, source, runId, failures, error) {
   return true;
 }
 
+// 文章通知送出前再確認一次：文章已在最近刪除或已清除時略過，不打擾使用者。
+async function stillWanted(env, items) {
+  if (!items.length) return true;
+  const row = await query(
+    env,
+    `SELECT COUNT(*) AS count FROM learning_items WHERE id IN (${items.map(() => '?').join(',')}) AND triage!='deleted' AND status!='dismissed'`,
+    ...items.map((i) => i.id),
+  ).first();
+  return row.count > 0;
+}
+
 // 送出已保存的通知內容；失敗只重送同一份內容，不重新生成。
 export async function sendPending(env, send) {
   for (const delivery of await rows(
@@ -130,8 +141,12 @@ export async function sendPending(env, send) {
     ).run();
     if (!acquired.meta.changes) continue;
     try {
-      const messageId = await send(env, delivery.body);
       const items = JSON.parse(delivery.item_ids_json);
+      if (!(await stillWanted(env, items))) {
+        await query(env, "UPDATE learning_deliveries SET status='skipped' WHERE id=?", delivery.id).run();
+        continue;
+      }
+      const messageId = await send(env, delivery.body);
       await env.DB.batch([
         query(
           env,
