@@ -4,9 +4,10 @@ import {readFileSync,readdirSync} from 'node:fs';
 // 真實 SQLite schema：依序套用全部 migration，與 D1 binding 介面相同。
 // 本機 SQLite 允許上萬個綁定參數，D1 單一查詢最多 100 個；超過時照 D1 的方式丟錯，避免測試過了、正式環境才失敗。
 const D1_MAX_VARIABLES=100;
-export function database(){
+// beforeMigration(name,sqlite) 在套用每個 migration 前呼叫，用來準備升級前的舊資料、驗證 migration 的轉換。
+export function database({beforeMigration}={}){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
-  for(const name of readdirSync(new URL('../migrations',import.meta.url)).filter(n=>n.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL('../migrations/'+name,import.meta.url),'utf8'));
+  for(const name of readdirSync(new URL('../migrations',import.meta.url)).filter(n=>n.endsWith('.sql')).sort()){beforeMigration?.(name,sqlite);sqlite.exec(readFileSync(new URL('../migrations/'+name,import.meta.url),'utf8'));}
   return {sqlite,prepare(sql){return {sql,args:[],bind(...args){if(args.length>D1_MAX_VARIABLES)throw new Error('D1_ERROR: too many SQL variables: SQLITE_ERROR');this.args=args;return this;},async first(){return sqlite.prepare(sql).get(...this.args)||null;},async all(){return {results:sqlite.prepare(sql).all(...this.args)};},async run(){return {meta:sqlite.prepare(sql).run(...this.args)};}};},
     async batch(statements){sqlite.exec('BEGIN');try{const result=[];for(const s of statements)result.push(await s.run());sqlite.exec('COMMIT');return result;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
 }

@@ -3,6 +3,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import {createLearningHandler} from '../src/learning/http.js';
 import {setTextProvider} from '../src/learning/local.js';
+import {SOURCES} from '../src/sources.js';
 
 // 此入口僅提供本機操作驗證，不讀取任何真實金鑰或呼叫外部服務。
 const sqlite=new DatabaseSync(':memory:');
@@ -16,7 +17,15 @@ const samples={
 const env={DB,RUN_TOKEN:'demo-only',LEARNING_RUNNER_TOKEN:'demo-runner',LEARNING_DEMO:'true',PUBLIC_BASE_URL:'https://example.org',LEARNING_MONTHLY_USD:'30'};
 // DEMO_LOCAL=1：文字工作交給本機執行器（runner/runner.mjs，TECHNEWS_RUNNER_TOKEN=demo-runner）。
 if(process.env.DEMO_LOCAL==='1')await setTextProvider(env,'local');
+// 官方來源示範：每個來源一篇新文章、一篇太舊的文章；Anthropic Engineering 模擬被網站擋下。網址與內容都是測試素材。
+const DAY=86400000,demoUrl=(source,slug)=>source.id==='apple_developer_news'?'https://developer.apple.com/news/?id='+slug:'https://'+source.host+'/'+source.paths[0]+'/'+slug;
 const handler=createLearningHandler({
+  discoverSource:async source=>{
+    if(source.id==='anthropic_engineering')throw new Error('Source HTTP 403');
+    return [{url:demoUrl(source,'demo-new'),title:source.name+' 示範新文章',publishedAt:new Date(Date.now()-DAY).toISOString(),content:null},
+      {url:demoUrl(source,'demo-old'),title:source.name+' 示範舊文章',publishedAt:new Date(Date.now()-40*DAY).toISOString(),content:null}];
+  },
+  loadArticle:async(source,entry)=>({...entry,title:entry.title || '官方來源示範',content:'這是本機官方來源示範，未讀取真實文章。正式環境會擷取官方原文全文。'.repeat(4),contentMethod:'article_html'}),
   postEvidence:async(env,id)=>({url:'https://x.com/i/status/'+id,relation:'primary',author_id:'demo',content:'這是本機 X 收件操作示範，未讀取這個網址的真實貼文。正式環境會取得來源與媒體，再交給 Gemini 整理。',metadata:{title:'本機 X 分享示範',author_username:'demo_author',post_id:id,conversation_id:id,references:[],links:[]},media:[]}),
   xRead:async()=>({data:[],meta:{}}),
   webEvidence:async url=>{const sample=samples[new URL(url).pathname.slice(1)] || {title:'本機分享示範',content:'這是本機操作測試來源。正式環境會取得原文，再由 Gemini 整理教材。'};return {url,relation:'primary',content:sample.content,metadata:{title:sample.title},media:[]};},
@@ -27,6 +36,10 @@ const handler=createLearningHandler({
 const port=Number(process.env.DEMO_PORT || 8788);
 const jobs=[];env.LEARNING_JOBS={async send(job){jobs.push(job);}};
 for(const key of Object.keys(samples)){const id=await handler.service.collect(env,'https://example.org/'+key);await handler.service.process(env,id);}
+// 來源已在先前初始化，這一輪才會出現「收件」與「太舊略過」。
+for(const source of SOURCES)sqlite.prepare("INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES(?,?,?,'[]')").run(source.id,new Date(Date.now()-30*DAY).toISOString(),new Date(Date.now()-DAY).toISOString());
+await handler.service.official(env);
+for(const job of jobs.splice(0))if(job.kind==='article')await handler.service.process(env,job.id);
 // 其他狀態：搬移前的官方短導讀、等待本機、需要處理與來源缺漏，讓列表與篩選都有資料可看。
 const time=new Date().toISOString();
 DB.prepare("INSERT INTO articles(source_url,source,title,published_at,status,summary_json,content,content_method,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind('https://developers.openai.com/blog/demo-legacy','openai_developer_blog','Legacy demo','2026-10-01','notified',JSON.stringify({title_zh:'舊官方短導讀示範',body_zh:'這是搬移前只有短導讀的官方文章，沒有保存模型資訊。'}),'官方原文示範內容。'.repeat(20),'article_html',time,time).run();

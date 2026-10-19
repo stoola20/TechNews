@@ -1,43 +1,88 @@
 import {discoverSource,initialSeenUrls,getSources,maxArticleAgeDays} from '../sources.js';
 import {effectiveEnvironment} from '../settings.js';
-import {query,nowIso} from './store.js';
+import {query,rows,nowIso} from './store.js';
 import {publishedBefore,normalizePublished} from './dates.js';
 import {now} from './clock.js';
 
+const DAY=86400000,RETENTION_DAYS=30,CHUNK=90;
+
+async function recordEntry(env,source,entry,at,decision,reason,itemId=null){
+  await query(env,`INSERT INTO source_entries(source,url,first_seen_at,last_listed_at,title,published_at,decision,reason,item_id) VALUES(?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(source,url) DO UPDATE SET last_listed_at=excluded.last_listed_at`,source.id,entry.url,at,at,entry.title || null,entry.publishedAt || null,decision,reason,itemId).run();
+}
+
 // 官方發現只抓來源索引並排入共同文章庫；整理由背景工作與 Mac 持續消化，不受單次處理量限制。
+// 每個網址記一列決策，每輪每個來源留一筆執行紀錄，管理頁靠這兩張表說明「為什麼收、為什麼沒收」。
 export async function discoverOfficial(env,collect,deps={}){
   const effective=await effectiveEnvironment(env);
   const discover=deps.discoverSource || discoverSource;
   const maxAge=maxArticleAgeDays(env);
   const result={queued:0,stale:0,initialized:[],errors:[]};
   for(const source of getSources(effective)){
+    const at=nowIso(),run={found:0,collected:0,stale:0,baseline:0};
     try{
       const entries=await discover(source);
-      if(!entries.length)throw new Error('No articles discovered');
-      const checkedAt=nowIso();
-      let state=await query(env,'SELECT seen_urls_json FROM source_state WHERE source=?',source.id).first();
+      if(!entries.length)throw new Error('來源列表沒有找到任何文章');
+      run.found=entries.length;
+      const state=await query(env,'SELECT source FROM source_state WHERE source=?',source.id).first();
+      // 新來源只回補近期文章，較舊的記為初次基準。
+      const baseline=new Set(state?[]:initialSeenUrls(entries,now(),maxAge));
       if(!state){
-        // 新來源只回補近期文章，較舊的列為已看過。
-        const baseline=initialSeenUrls(entries,now(),maxAge);
-        await query(env,'INSERT OR IGNORE INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES(?,?,?,?)',source.id,checkedAt,checkedAt,JSON.stringify(baseline)).run();
-        state={seen_urls_json:JSON.stringify(baseline)};result.initialized.push(source.id);
+        await query(env,"INSERT OR IGNORE INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES(?,?,?,'[]')",source.id,at,at).run();
+        result.initialized.push(source.id);
       }
-      const seen=new Set(JSON.parse(state.seen_urls_json));
+      const known=new Set((await rows(env,'SELECT url FROM source_entries WHERE source=?',source.id)).map(r=>r.url));
+      const listed=[];
       for(const entry of entries){
-        if(seen.has(entry.url))continue;
-        // 列表裡沒看過、但發表已久的文章（RSS 視窗變長、舊流程留下的積壓）只記為看過，不收件、不通知。
-        if(publishedBefore(entry.publishedAt,now(),maxAge)){seen.add(entry.url);result.stale++;continue;}
-        // receipt 與舊官方匯入相同，重複的日次事件或同一篇再次出現都不會新增收件。
-        await collect(env,entry.url,'official',`official:${entry.url}`,{metadata:{source_id:source.id,title:entry.title || null,published_at:entry.publishedAt || null}});
-        seen.add(entry.url);result.queued++;
+        if(known.has(entry.url)){listed.push(entry.url);continue;}
+        if(baseline.has(entry.url)){await recordEntry(env,source,entry,at,'baseline','新來源首次執行前就已在列表上');run.baseline++;continue;}
+        // 列表裡沒看過、但發表已久的文章（RSS 視窗變長、流程交接留下的積壓）只記為太舊略過，不收件、不通知。
+        if(publishedBefore(entry.publishedAt,now(),maxAge)){await recordEntry(env,source,entry,at,'stale',`發表超過 ${maxAge} 天`);run.stale++;continue;}
+        // receipt 固定為官方網址：重複的日次事件或同一篇再次出現都不會新增收件。收件成功才記錄，失敗時下一輪重試。
+        const id=await collect(env,entry.url,'official',`official:${entry.url}`,{metadata:{source_id:source.id,title:entry.title || null,published_at:entry.publishedAt || null}});
+        await recordEntry(env,source,entry,at,'collected',null,id);run.collected++;
       }
-      await query(env,'UPDATE source_state SET last_checked_at=?,seen_urls_json=? WHERE source=?',checkedAt,JSON.stringify([...seen].slice(-400)),source.id).run();
+      for(let i=0;i<listed.length;i+=CHUNK){
+        const chunk=listed.slice(i,i+CHUNK);
+        await query(env,`UPDATE source_entries SET last_listed_at=? WHERE source=? AND url IN (${chunk.map(()=>'?').join(',')})`,at,source.id,...chunk).run();
+      }
+      await query(env,'UPDATE source_state SET last_checked_at=? WHERE source=?',at,source.id).run();
+      await query(env,'INSERT INTO source_runs(id,source,ran_at,found,collected,stale,baseline,ok) VALUES(?,?,?,?,?,?,?,1)',crypto.randomUUID(),source.id,at,run.found,run.collected,run.stale,run.baseline).run();
+      result.queued+=run.collected;result.stale+=run.stale;
     }catch(error){
-      result.errors.push({source:source.id,error:error instanceof Error?error.message:'Unknown error'});
+      const message=error instanceof Error?error.message:'Unknown error';
+      await query(env,'INSERT INTO source_runs(id,source,ran_at,found,collected,stale,baseline,ok,error) VALUES(?,?,?,?,?,?,?,0,?)',crypto.randomUUID(),source.id,at,run.found,run.collected,run.stale,run.baseline,message.slice(0,500)).run();
+      result.errors.push({source:source.id,error:message});
     }
   }
   console.log(JSON.stringify({event:'official_discovery',queued:result.queued,stale:result.stale,initialized:result.initialized,errors:result.errors.length}));
   return result;
+}
+
+// 管理頁「官方來源」：每個來源的最近一輪結果與狀態。
+export async function officialOverview(env){
+  const effective=await effectiveEnvironment(env);
+  const sources=[];
+  for(const source of getSources(effective)){
+    const state=await query(env,'SELECT initialized_at,last_checked_at FROM source_state WHERE source=?',source.id).first();
+    const last=await query(env,'SELECT ran_at,found,collected,stale,baseline,ok,error FROM source_runs WHERE source=? ORDER BY ran_at DESC LIMIT 1',source.id).first();
+    sources.push({id:source.id,name:source.name,initialized_at:state?.initialized_at || null,last_checked_at:state?.last_checked_at || null,
+      last_run:last?{...last,ok:!!last.ok}:null,status:!last?'never':last.ok?'ok':'failed'});
+  }
+  return {max_age_days:maxArticleAgeDays(env),retention_days:RETENTION_DAYS,sources};
+}
+
+// 紀錄保留 30 天：執行紀錄依時間清除；網址條目只在 30 天內都沒再出現在列表時才刪，避免仍在列表上的舊網址被當成沒看過。
+export async function pruneSourceRecords(env){
+  const cutoff=new Date(now()-RETENTION_DAYS*DAY).toISOString();
+  const runs=await query(env,'DELETE FROM source_runs WHERE ran_at<?',cutoff).run();
+  const entries=await query(env,'DELETE FROM source_entries WHERE last_listed_at<?',cutoff).run();
+  return {runs:runs.meta.changes || 0,entries:entries.meta.changes || 0};
+}
+
+// 抓到原文後才確定太舊的官方文章，對應的網址條目也改成太舊略過。
+export async function markEntryStale(env,itemId,reason){
+  await query(env,"UPDATE source_entries SET decision='stale',reason=? WHERE item_id=? AND manual=0",reason,itemId).run();
 }
 
 export async function officialIntake(env,itemId){

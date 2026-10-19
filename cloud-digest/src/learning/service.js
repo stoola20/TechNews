@@ -10,7 +10,7 @@ import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './li
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
 import {askQuestion,completeQuestion} from './questions.js';
-import {discoverOfficial,officialIntake,staleOfficialReason} from './official.js';
+import {discoverOfficial,officialIntake,staleOfficialReason,markEntryStale,pruneSourceRecords} from './official.js';
 import {queueArticleNotifications,sendPending,receiptMessage,contentFingerprint} from './notifications.js';
 import {effectiveEnvironment} from '../settings.js';
 import {getSources} from '../sources.js';
@@ -67,6 +67,7 @@ export function createLearningService(deps={}) {
       if(stale){
         await query(env,"UPDATE learning_items SET status='filtered',stage=NULL,title=COALESCE(NULLIF(title,''),?),article_json=?,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=? WHERE id=?",
           JSON.parse(primary.metadata_json || '{}').title || row.url,JSON.stringify({publish:false,reason:stale}),nowIso(),id).run();
+        await markEntryStale(env,id,stale);
         return {done:true};
       }
       await query(env,"UPDATE learning_items SET stage='media' WHERE id=?",id).run();
@@ -188,6 +189,7 @@ export function createLearningService(deps={}) {
     try{await backfillPublished(env);}catch(error){console.log(JSON.stringify({event:'published_backfill_failed',error:error.message}));}
     // 主題分類用 Workers AI，不經過 Mac、不記入預算；新文章與既有文章回補共用這一步。
     if(tasks.includes('maintenance'))try{await classifyPending(env,deps);}catch(error){console.log(JSON.stringify({event:'topic_classification_failed',error:error.message}));}
+    if(tasks.includes('maintenance'))try{await pruneSourceRecords(env);}catch(error){console.log(JSON.stringify({event:'source_prune_failed',error:error.message}));}
     // 舊資料裡只因外部網頁裝飾圖片而標成來源缺漏的文章，改回正確狀態。
     for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='partial' AND gaps_json LIKE '%媒體%' LIMIT 50"))await skipDecorative(env,row.id);
     await recover(env);

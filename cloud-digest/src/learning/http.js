@@ -12,6 +12,7 @@ import {articleMessage} from './notifications.js';
 import {skipDecorative} from './media.js';
 import {topicList,setItemTopics,saveTopicList,reclassifyAll} from './topics.js';
 import {mergeExistingDuplicates} from './linking.js';
+import {officialOverview} from './official.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS={ready:['ready','partial'],needs_action:['needs_attention','error','partial'],waiting_local:['waiting_local','generating'],paused:['budget_paused','paused'],processing:['queued','processing'],awaiting_backfill:['awaiting_backfill'],filtered:['filtered'],legacy:['ready','partial']};
@@ -109,6 +110,7 @@ export function createLearningHandler(deps={}) {
         await recordCost(env,data.category,amount,'adjustment',{note:data.note.trim()});
         return json(await budgetSummary(env,await budget(env)));
       }
+      if(route==='admin/sources'&&request.method==='GET')return json(await officialOverview(env));
       if(route==='admin/topics'&&request.method==='GET')return json({topics:await topicList(env)});
       if(route==='admin/topics'&&request.method==='PUT')return json(await saveTopicList(env,await body(request)));
       if(route==='admin/topics/reclassify'&&request.method==='POST')return json(await reclassifyAll(env));

@@ -6,7 +6,7 @@ import {createLearningHandler} from '../src/learning/http.js';
 import {setTextProvider,claim} from '../src/learning/local.js';
 import {item,rows,query} from '../src/learning/store.js';
 import {SOURCES} from '../src/sources.js';
-import {environment,recorder,request,message} from './helpers.js';
+import {environment,recorder,request,message,database} from './helpers.js';
 
 const TAIL='限制：此功能僅在 v2.4 以上可用，且每分鐘最多 60 次請求。';
 const longContent='背景、機制、例子與操作步驟。'.repeat(500)+TAIL;
@@ -138,8 +138,10 @@ test('已初始化的來源突然冒出舊文章：發表超過期限的只記�
   const result=await handler.service.official(env);
   assert.equal(result.queued,2);assert.equal(result.stale,2);
   assert.deepEqual((await rows(env,'SELECT url FROM learning_items ORDER BY url')).map(r=>r.url.split('/').at(-1)),['fresh','undated']);
-  const seen=JSON.parse((await query(env,"SELECT seen_urls_json FROM source_state WHERE source='openai_developer_blog'").first()).seen_urls_json);
-  assert.equal(seen.length,4);
+  const overview=await (await handler.fetch(request('api/admin/sources'),env)).json();
+  const openai=overview.sources.find(s=>s.id==='openai_developer_blog');
+  assert.equal(overview.max_age_days,7);assert.equal(openai.status,'ok');
+  assert.deepEqual({found:openai.last_run.found,collected:openai.last_run.collected,stale:openai.last_run.stale},{found:4,collected:2,stale:2});
   // 下一次發現：全部都看過，不再收件。
   assert.equal((await handler.service.official(env)).queued,0);
 });
@@ -167,4 +169,55 @@ test('列表沒有日期的官方文章：抓到原文才發現太舊就篩掉�
   await (await handler.fetch(request('api/collect','POST',{url:'https://developers.openai.com/blog/old'}),env)).json();
   for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
   assert.equal((await query(env,"SELECT status FROM learning_items WHERE url='https://developers.openai.com/blog/old'").first()).status,'ready');
+});
+
+test('升級前的看過清單轉成初次基準：之後仍出現在列表上也不會被當成新文章收件',async()=>{
+  const DB=database({beforeMigration:(name,sqlite)=>{
+    if(name==='0016_source_entries.sql')sqlite.prepare("INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,?)")
+      .run(new Date(NOW-30*DAY).toISOString(),new Date(NOW-DAY).toISOString(),JSON.stringify(['https://developers.openai.com/blog/known']));
+  }});
+  const env=environment({DB}),net=recorder();
+  const feed=[{url:'https://developers.openai.com/blog/known',title:'Known',publishedAt:daysAgo(1),content:null},{url:'https://developers.openai.com/blog/new',title:'New',publishedAt:daysAgo(1),content:null}];
+  const handler=createLearningHandler({...net,now,discoverSource:async source=>source.id==='openai_developer_blog'?feed:[]});
+  await settings(env);
+  assert.equal((await handler.service.official(env)).queued,1);
+  assert.deepEqual((await rows(env,'SELECT url FROM learning_items')).map(r=>r.url),['https://developers.openai.com/blog/new']);
+  const openai=(await (await handler.fetch(request('api/admin/sources'),env)).json()).sources.find(s=>s.id==='openai_developer_blog');
+  assert.deepEqual([openai.last_run.found,openai.last_run.collected],[2,1]);
+});
+
+test('來源失敗與空列表記為失敗，管理頁顯示原因；從未執行的來源標為尚未執行',async()=>{
+  const env=environment(),net=recorder();
+  const handler=createLearningHandler({...net,now,discoverSource:async source=>{if(source.id==='openai_developer_blog')throw new Error('Source HTTP 403');return [];}});
+  await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('digest',?,?)",JSON.stringify({interests:'AI',sources:SOURCES.slice(0,2)}),new Date(NOW).toISOString()).run();
+  const before=(await (await handler.fetch(request('api/admin/sources'),env)).json()).sources;
+  assert.deepEqual(before.map(s=>s.status),['never','never']);
+  const result=await handler.service.official(env);
+  assert.equal(result.errors.length,2);
+  const [openai,apple]=(await (await handler.fetch(request('api/admin/sources'),env)).json()).sources;
+  assert.equal(openai.status,'failed');assert.equal(openai.last_run.error,'Source HTTP 403');
+  assert.equal(apple.status,'failed');assert.equal(apple.last_run.error,'來源列表沒有找到任何文章');
+});
+
+test('紀錄保留 30 天：沒再出現在列表的網址會清掉，仍在列表上的保留；重新出現時不會重複整理或通知',async()=>{
+  const env=environment(),net=recorder();let today=NOW,feed=[];
+  const handler=createLearningHandler({...net,now:()=>today,discoverSource:async source=>source.id==='openai_developer_blog'?feed:[],
+    loadArticle:async(source,entry)=>({...entry,title:'Official',publishedAt:new Date(today).toISOString(),content:longContent,contentMethod:'article_html'}),
+    generate:async(env,sources)=>({title:'詳細教材',body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]})});
+  await settings(env);
+  await query(env,"INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,'[]')",new Date(NOW-DAY).toISOString(),new Date(NOW-DAY).toISOString()).run();
+  const A={url:'https://developers.openai.com/blog/stays',title:'A',publishedAt:null,content:null},B={url:'https://developers.openai.com/blog/drops',title:'B',publishedAt:null,content:null};
+  const lastRun=async()=>(await (await handler.fetch(request('api/admin/sources'),env)).json()).sources.find(s=>s.id==='openai_developer_blog').last_run;
+  feed=[A,B];assert.equal((await handler.service.official(env)).queued,2);
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  const sent=()=>net.calls.filter(c=>c.url.includes('api.telegram.org')).length;
+  assert.equal(sent(),2);
+  today=NOW+20*DAY;feed=[A];await handler.service.official(env);
+  today=NOW+31*DAY;await handler.scheduled(env,{tasks:['maintenance']});
+  today=NOW+32*DAY;feed=[A,B];await handler.service.official(env);
+  // A 一直在列表上，紀錄保留、不重新判斷；B 消失超過 30 天，紀錄已清掉，重新出現時再記一次收件。
+  assert.equal((await lastRun()).collected,1);
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  assert.equal((await rows(env,'SELECT id FROM learning_items')).length,2);
+  assert.equal(sent(),2);
 });

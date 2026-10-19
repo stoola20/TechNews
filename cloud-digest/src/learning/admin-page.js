@@ -8,11 +8,16 @@ main{max-width:1000px;margin:24px auto;padding:0 20px}h1{font-size:24px}h2{font-
 dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}dt{color:var(--muted);font-size:14px}dd{margin:0;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow:auto}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.switches{display:grid;gap:4px}
-.wide{grid-column:1/-1}
+.wide{grid-column:1/-1}tr.failed td:last-child{color:var(--danger);font-weight:600}
 .topic-edit{display:grid;grid-template-columns:44px minmax(8em,14em) minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
 .topic-edit input[type=color]{width:44px;height:44px;padding:2px;min-height:auto}.topic-edit input[type=text]{width:100%;min-width:0}
 @media(max-width:640px){.topic-edit{grid-template-columns:44px minmax(0,1fr) auto}.topic-edit .desc{grid-column:1/-1}}.switch{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600}.switch input{min-height:auto;width:20px;height:20px;flex:none}.pre{white-space:pre-line;line-height:1.7}
-@media(max-width:640px){main{padding:0 12px}}
+@media(max-width:640px){main{padding:0 12px}
+#sources table,#sources tbody{display:block}#sources thead{display:none}
+#sources tr{display:grid;grid-template-columns:repeat(3,1fr);gap:2px 8px;padding:10px 0;border-bottom:1px solid var(--line)}
+#sources td{border:0;padding:0;white-space:normal}#sources td:nth-child(1){grid-column:1/-1;font-weight:600}
+#sources td:nth-child(2),#sources td:nth-child(6){grid-column:1/-1}#sources td:nth-child(2){color:var(--muted);font-size:13px}
+#sources td[data-label]::before{content:attr(data-label)'　';color:var(--muted);font-size:13px}}
 </style></head><body>
 <header class="top"><a class="brand" href="/learning">TechNews 文章庫</a><nav><a href="/learning">回到文章庫</a><button id="logout" class="hidden">登出</button></nav></header>
 <div id="feedback" role="status" aria-live="polite"></div>
@@ -20,6 +25,7 @@ ${LOGIN}
 <main id="app" class="hidden"><h1>管理</h1>
 <p class="muted">同步、模型分工、預算與故障處理集中在這裡；日常閱讀請回到文章庫。</p>
 <div class="grid">
+<section class="panel wide" aria-labelledby="sources-title"><h2 id="sources-title">官方來源</h2><p id="sources-rule" class="muted"></p><div id="sources"></div></section>
 <section class="panel" aria-labelledby="model-title"><h2 id="model-title">模型分工</h2><dl id="models"></dl>
 <p class="muted">「文字模型」負責官方主題判斷、詳細整理、通知介紹與來源追問。切到本機前請先完成代表素材驗收。Mac 離線時工作會等待，不會改用雲端文字模型。</p>
 <div class="actions"><button id="use-local">改用本機 Gemma</button><button id="use-gemini">改回 Gemini</button></div></section>
@@ -46,7 +52,7 @@ const COST_STATUS={settled:'已結算估算',reserved:'預留中',uncertain:'未
 function dl(id,pairs){$(id).replaceChildren(...pairs.flatMap(p=>[el('dt',{text:p[0]}),el('dd',{text:p[1]})]));}
 async function load(){
   const s=await api('status'),b=await api('budget'),l=s.local;
-  dl('models',[['文字模型',l.provider==='local'?'本機 Ollama '+l.model:'Gemini（'+'切換前路徑）'],['媒體理解','Gemini Flash（只解析圖片與影片，保存證據）'],['官方導讀（切換前）','由舊設定頁的模型產生']]);
+  dl('models',[['文字模型',l.provider==='local'?'本機 Ollama '+l.model:'Gemini'],['媒體理解','Gemini Flash（只解析圖片與影片，保存證據）'],['主題分類','Workers AI Gemma 4（不記入預算）']]);
   dl('runner',[['狀態',l.online?'在線':'離線'],['最後心跳',when(l.last_seen_at)],['目前工作',l.current?(l.current.kind==='question'?'追問':'文章')+'・領取於 '+when(l.current.leased_at):'無'],['等待中',String(l.jobs.waiting_local||0)],['失敗待處理',String(l.jobs.failed||0)],['版本',l.info?(l.info.version||'—')+'・'+(l.info.model||'')+(l.info.model_digest?' ('+l.info.model_digest+')':''):'—']]);
   $('queue').replaceChildren(l.queue.length?el('table',{},[el('thead',{},[el('tr',{},['順序','類型','優先','有效優先','建立'].map(t=>el('th',{text:t})))]),el('tbody',{},l.queue.map(q=>el('tr',{},[q.position,q.kind==='question'?'追問':'文章',q.priority,q.effective_priority,when(q.created_at)].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'目前沒有排隊的本機工作。'}));
   $('budget-state').textContent=b.pause_reason==='manual'?'已手動暫停全部處理。':b.pause_reason==='budget'?'費用暫停：不呼叫付費服務；已取得證據的本機工作照常。跨月不會自動恢復。':'處理中。';
@@ -95,7 +101,16 @@ $('topic-reclassify').onclick=async e=>{
   if(!await askConfirm('所有非手動設定的文章會在接下來的維護排程中重新分類（每 5 分鐘最多 10 篇），期間保留目前主題。要繼續嗎？'))return;
   run(async()=>{const r=await api('admin/topics/reclassify','POST',{});message('已排入 '+r.queued+' 篇重新分類。');},button,'處理中…');
 };
+// 官方來源：每個來源最近一輪的找到、收件、太舊略過與狀態。
+const SOURCE_STATUS={ok:'正常',failed:'失敗',never:'尚未執行'};
+async function loadSources(){
+  const o=await api('admin/sources');
+  $('sources-rule').textContent='只收 '+o.max_age_days+' 天內發表的文章。每天 08:00 檢查，紀錄保留 '+o.retention_days+' 天。';
+  const cells=s=>{const r=s.last_run;return [s.name,when(r?r.ran_at:s.last_checked_at),r?r.found:'—',r?r.collected:'—',r?r.stale:'—',s.status==='failed'?'失敗：'+(r.error||'原因不明'):SOURCE_STATUS[s.status]];};
+  $('sources').replaceChildren(el('table',{},[el('thead',{},[el('tr',{},['來源','最後檢查','找到','收件','太舊略過','狀態'].map(t=>el('th',{text:t})))]),
+    el('tbody',{},o.sources.map(s=>el('tr',{'data-source':s.id,class:s.status==='failed'?'failed':''},cells(s).map((v,i)=>el('td',{text:String(v),...([2,3,4].includes(i)?{'data-label':['','','找到','收件','太舊略過'][i]}:{})})))))]));
+}
 bindLogin(boot);
-async function boot(){await load();await loadTopics();showApp();}
+async function boot(){await load();await loadSources();await loadTopics();showApp();}
 run(boot);
 </script></body></html>`;
