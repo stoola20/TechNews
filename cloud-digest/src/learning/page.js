@@ -41,7 +41,14 @@ body.app{display:flex;flex-direction:column}
 .topic-row .linkish{min-height:32px;padding:2px 8px;border:0;background:none;color:var(--accent);text-decoration:underline;font-size:13px;margin-bottom:6px}
 .topic-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:4px 0 12px}.topic-form label{display:block;font-size:13px;margin-bottom:4px}.topic-form select{min-height:40px}
 .topic-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin:0 6px 6px 0;color:var(--ink)}.topic-tag .topic-dot{margin:0}
-.reader-bar{display:none;margin-bottom:12px}
+.reader-bar{display:none;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px}
+body[data-view=reader] .reader-bar{display:flex}#back{visibility:hidden}#read-end{height:1px}
+#focus-toggle{margin-left:auto;min-height:36px;padding:4px 14px}#focus-toggle[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+/* 專注模式：只留標題、主題・發布者・發表日、篩選按鈕、正文、媒體、原始來源、問答與筆記追問。 */
+body.focus[data-view=reader][data-mode=""] #library,body.focus[data-view=reader][data-mode=""] header.top{display:none}
+body.focus[data-view=reader][data-mode=""] .layout{grid-template-columns:minmax(0,1fr)}
+body.focus[data-view=reader][data-mode=""] :is(.admin-info,.process-note,.versions,.manage){display:none!important}
+body.focus[data-view=reader][data-mode=""] #article{max-width:880px;margin:0 auto}
 /* 篩選檢視與頂端入口：保留是預設檢視；待決定與最近刪除用同一排切換。 */
 .entry-bar{display:flex;flex-wrap:wrap;gap:6px 12px;margin:0 0 8px;font-size:14px}.entry-bar[hidden]{display:none}
 .entry-bar a{display:inline-flex;align-items:center;min-height:36px;padding:2px 12px;border-radius:999px;background:var(--soft);color:var(--ink);text-decoration:none;font-weight:600}
@@ -59,7 +66,7 @@ body.app{display:flex;flex-direction:column}
 /* 一次一篇的模式（篩選、複習、週回顧）：隱藏列表與筆記追問，內容置中。 */
 body.app:not([data-mode=""]) #library,body.app:not([data-mode=""]) #dock{display:none}
 body.app:not([data-mode=""]) .layout{grid-template-columns:minmax(0,1fr)}
-body.app:not([data-mode=""]) #reader{padding-bottom:40px}
+body.app:not([data-mode=""]) #reader{padding-bottom:40px}body.app:not([data-mode=""]) .reader-bar{display:none}
 #mode{max-width:760px;margin:0 auto}#mode[hidden]{display:none}
 .mode-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px}
 .mode-head h1{font-size:20px;margin:0}.mode-head .links{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -117,7 +124,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
   #dock{position:fixed;left:0;right:0;bottom:0;transform:none;width:auto;border-radius:16px 16px 0 0;border-bottom:0;padding-bottom:env(safe-area-inset-bottom)}
   #dock.open{height:auto;max-height:78vh;max-height:78dvh}
   #quick-ask{display:none}
-  .top{position:static}.reader-bar{display:block;position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:2}
+  .top{position:static}body[data-view=reader] .reader-bar{position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:2}#back{visibility:visible}
   #article-title{font-size:23px}.article-body{font-size:16px}
   .top{padding:10px 12px}.top form{order:3;flex-basis:100%;max-width:none}
 }
@@ -151,7 +158,7 @@ ${LOGIN}
 </aside>
 <div class="reader-wrap">
 <div id="reader" tabindex="-1" aria-label="閱讀區">
-  <div class="reader-bar"><button id="back">← 返回列表</button></div>
+  <div class="reader-bar"><button id="back">← 返回列表</button><button type="button" id="focus-toggle" aria-pressed="false" title="隱藏列表與管理資訊；Esc 離開">專注</button></div>
   <div id="mode" hidden></div>
   <div id="article"><div class="empty"><h1 style="font-size:22px">選一篇文章開始閱讀</h1><p>官方文章、X 書籤與分享都在左側列表。處理狀態會自動更新。</p></div></div>
 </div>
@@ -306,10 +313,10 @@ function topicRow(item){
   const tags=[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean);
   const row=el('div',{class:'topic-row',id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag'},[el('span',{class:'topic-dot',style:'background:'+t.color,'aria-hidden':'true'}),document.createTextNode(t.name)])):[el('span',{class:'topic-tag',text:'未分類'})]);
   if(item.topic_source==='manual')row.append(el('span',{class:'muted',text:'手動設定'}));
-  const edit=el('button',{type:'button',class:'linkish','aria-expanded':'false',text:'修改主題'});
+  const edit=el('button',{type:'button',class:'linkish manage','aria-expanded':'false',text:'修改主題'});
   edit.onclick=()=>{const open=!row.nextSibling||!row.nextSibling.classList.contains('topic-form');if(open)row.after(topicForm(item,edit));else row.nextSibling.remove();edit.setAttribute('aria-expanded',String(open));if(open)row.nextSibling.querySelector('select').focus();};
   row.append(edit);
-  if(item.topic_source==='manual'){const auto=el('button',{type:'button',class:'linkish',text:'改回自動分類'});auto.onclick=e=>run(()=>saveTopics(item.id,{auto:true},'已改回自動分類，幾分鐘內會重新分類。'),e.currentTarget,'處理中…');row.append(auto);}
+  if(item.topic_source==='manual'){const auto=el('button',{type:'button',class:'linkish manage',text:'改回自動分類'});auto.onclick=e=>run(()=>saveTopics(item.id,{auto:true},'已改回自動分類，幾分鐘內會重新分類。'),e.currentTarget,'處理中…');row.append(auto);}
   return row;
 }
 function topicForm(item,edit){
@@ -335,25 +342,26 @@ function renderArticle(result){
   const origins=[...new Set((result.intakes||[]).map(i=>ORIGINS[i.origin]||i.origin))];
   // 文章資訊：發布者與時間在前；收件入口、既有導讀與整理模型等管理資訊放在第二行。
   nodes.push(topicRow(item));
-  nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
-  nodes.push(el('p',{class:'meta'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
+  nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge admin-info '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
+  nodes.push(el('p',{class:'meta admin-info'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
   const bar=triageBar(item);if(bar)nodes.push(bar);
-  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
-  if(item.status==='waiting_local')nodes.push(el('p',{class:'notice',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
-  if(item.status==='budget_paused')nodes.push(el('p',{class:'notice',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
-  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]));
+  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice process-note',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
+  if(item.status==='waiting_local')nodes.push(el('p',{class:'notice process-note',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
+  if(item.status==='budget_paused')nodes.push(el('p',{class:'notice process-note',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
+  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice process-note'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]));
   nodes.push(actions(item));
   if(item.status==='awaiting_backfill'){
     nodes.push(el('p',{class:'notice',text:'這篇尚未呼叫模型。先閱讀同步時保存的原文，或開啟原始來源查看最新內容，再決定是否整理。'}));
     const originals=result.sources.filter(s=>s.status==='available'&&s.content);
     nodes.push(el('section',{class:'block'},[el('h2',{text:'保存的原文'}),...(originals.length?originals.map(sourceBlock):[el('p',{text:'尚未保存原文，請先開啟上方原始來源。'})])]));
   }
-  if(item.body){const content=el('div',{class:'article-body'});content.innerHTML=current.body_html;nodes.push(el('section',{class:'block','aria-labelledby':'body-title'},[el('h2',{id:'body-title',class:'sr',text:'教材'}),el('span',{class:'label',text:'教材（'+(provenance(article)||'模型整理')+'；標示「補充例子」的段落是模型額外加的教學例子）'}),content]));}
+  if(item.body){const content=el('div',{class:'article-body'});content.innerHTML=current.body_html;nodes.push(el('section',{class:'block','aria-labelledby':'body-title'},[el('h2',{id:'body-title',class:'sr',text:'教材'}),el('span',{class:'label',text:'教材（'+(provenance(article)||'模型整理')+'；標示「補充例子」的段落是模型額外加的教學例子）'}),content,el('div',{id:'read-end','aria-hidden':'true'})]));}
   const media=mediaBlock(result);if(media)nodes.push(media);
-  if((result.versions||[]).length)nodes.push(el('section',{class:'block'},[el('h2',{text:'舊版本'}),el('ul',{},result.versions.map(v=>el('li',{text:when(v.created_at)+'・'+(v.edition==='legacy_digest'?'既有導讀':'版本 '+v.revision)+(v.title?'・'+v.title:'')})))]));
+  if((result.versions||[]).length)nodes.push(el('section',{class:'block versions'},[el('h2',{text:'舊版本'}),el('ul',{},result.versions.map(v=>el('li',{text:when(v.created_at)+'・'+(v.edition==='legacy_digest'?'既有導讀':'版本 '+v.revision)+(v.title?'・'+v.title:'')})))]));
   // 原始來源放在整頁最下方，閱讀教材時不被打斷。
   if(item.status!=='awaiting_backfill'&&result.sources.length)nodes.push(el('section',{class:'block'},[el('h2',{text:'原始來源與片段'}),el('p',{class:'muted',text:'以下是系統保存的原文，與上方模型整理的內容分開。'}),...result.sources.map(sourceBlock)]));
   box.replaceChildren(...nodes);
+  autoRead.attach(item);
 }
 // 自動取不到的文章來源，可以手動貼上原文後重新整理。
 function gapLine(item,g,sources){
@@ -511,26 +519,63 @@ const triageMode={
   },
 };
 const MODES={triage:triageMode};
+// 讀到正文結尾自動標已讀：只點開不算，要有捲動等閱讀動作之後，結尾進入畫面才送出；同一次開啟只送一次。
+const autoRead={
+  observer:null,seq:-1,visible:false,armed:false,armAt:0,off:false,sent:false,
+  attach(item){
+    if(this.seq!==openSeq){this.seq=openSeq;this.off=false;this.sent=false;this.armed=false;this.armAt=performance.now()+600;}
+    this.detach();this.visible=false;
+    const end=$('read-end');
+    if(item.read_at||!item.body||!end||this.sent||!('IntersectionObserver' in window))return;
+    this.observer=new IntersectionObserver(entries=>{this.visible=entries.some(e=>e.isIntersecting);this.check();});
+    this.observer.observe(end);
+  },
+  detach(){if(this.observer)this.observer.disconnect();this.observer=null;},
+  interact(){if(!this.observer||performance.now()<this.armAt)return;this.armed=true;this.check();},
+  check(){
+    if(!this.observer||!this.armed||!this.visible||this.off||this.sent||!current||current.read_at)return;
+    this.sent=true;this.detach();
+    const id=current.id,seq=this.seq;
+    api('items/'+id,'PATCH',{read:true}).then(()=>{
+      if(seq!==openSeq||!current||current.id!==id)return;
+      current.read_at=new Date().toISOString();
+      const b=$('read-toggle');if(b)b.textContent='標記未讀';
+      updateListItem(id).catch(()=>{});
+    }).catch(()=>{this.sent=false;});
+  },
+};
+for(const target of [window,$('reader')])for(const type of ['scroll','wheel','touchmove'])target.addEventListener(type,()=>autoRead.interact(),{passive:true});
+document.addEventListener('keydown',e=>{if(['ArrowDown','PageDown','End',' '].includes(e.key))autoRead.interact();});
+// 專注模式：這台裝置記住開關；讀不到設定時預設關閉。
+const focusMode={
+  on:false,
+  load(){try{this.on=localStorage.getItem('technews-focus')==='1';}catch(e){this.on=false;}this.apply();},
+  set(on){this.on=on;try{localStorage.setItem('technews-focus',on?'1':'0');}catch(e){}this.apply();},
+  apply(){document.body.classList.toggle('focus',this.on);const b=$('focus-toggle');b.setAttribute('aria-pressed',String(this.on));b.textContent=this.on?'離開專注':'專注';},
+};
+$('focus-toggle').onclick=()=>focusMode.set(!focusMode.on);
+focusMode.load();
 function actions(item){
   const row=el('div',{class:'actions'});
-  const read=el('button',{text:item.read_at?'標記未讀':'標記已讀'});
-  read.onclick=()=>run(async()=>{await api('items/'+item.id,'PATCH',{read:!item.read_at});await refreshArticle();await updateListItem(item.id);},read,'更新中…');
+  const read=el('button',{id:'read-toggle',text:item.read_at?'標記未讀':'標記已讀'});
+  // 手動改回未讀：這次開啟不再自動標已讀。
+  read.onclick=()=>run(async()=>{const next=!current.read_at;await api('items/'+item.id,'PATCH',{read:next});if(!next)autoRead.off=true;await refreshArticle();await updateListItem(item.id);},read,'更新中…');
   row.append(read);
   if(item.status==='awaiting_backfill'){
-    const start=el('button',{class:'primary',text:'開始整理這篇'});
+    const start=el('button',{class:'primary manage',text:'開始整理這篇'});
     start.onclick=()=>run(async()=>{await api('items/'+item.id+'/backfill','POST',{});message('已啟動這篇文章的整理，完成後會通知你。');await refreshArticle();await updateListItem(item.id);},start,'啟動整理…');
     row.append(start);return row;
   }
-  const retry=el('button',{text:'補取缺漏並整理'});
+  const retry=el('button',{class:'manage',text:'補取缺漏並整理'});
   retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
   row.append(retry);
   if(['ready','partial','needs_attention','error'].includes(item.status)){
-    const rewrite=el('button',{text:'只重寫文字'});
+    const rewrite=el('button',{class:'manage',text:'只重寫文字'});
     rewrite.onclick=async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
     row.append(rewrite);
   }
   if(['ready','partial'].includes(item.status)&&item.edition==='detailed'){
-    const resend=el('button',{text:'重送通知'});
+    const resend=el('button',{class:'manage',text:'重送通知'});
     resend.onclick=async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},resend,'送出中…');};
     row.append(resend);
   }
@@ -746,6 +791,7 @@ document.addEventListener('keydown',e=>{
   }
   // Escape 先關閉筆記與追問對話框並把焦點還給展開按鈕，這次不觸發手機版的返回列表。
   if(e.key==='Escape'&&dock.isOpen()){e.preventDefault();dock.toggle(false,true);return;}
+  if(e.key==='Escape'&&focusMode.on&&view.article&&!view.mode&&!typing){e.preventDefault();focusMode.set(false);$('focus-toggle').focus();return;}
   if(e.key==='/'&&!typing){e.preventDefault();$('search').focus();}
   if(e.key==='Escape'&&narrow.matches&&view.article&&!typing&&!$('dock').contains(document.activeElement))$('back').click();
 });

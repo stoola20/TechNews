@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 用 IntersectionObserver 觀察正文結尾，只對未讀且有正文的文章呼叫既有的已讀 API
-- [ ] 手動改回未讀後，這次開啟不再自動標已讀
-- [ ] 專注模式的隱藏與保留範圍符合規格，手機寬度也適用
-- [ ] 設定存在 `localStorage`，讀寫包 try/catch，讀不到時預設關閉
-- [ ] 內建瀏覽器在桌機與手機寬度確認自動已讀與專注模式
+- [x] 用 IntersectionObserver 觀察正文結尾，只對未讀且有正文的文章呼叫既有的已讀 API
+- [x] 手動改回未讀後，這次開啟不再自動標已讀
+- [x] 專注模式的隱藏與保留範圍符合規格，手機寬度也適用
+- [x] 設定存在 `localStorage`，讀寫包 try/catch，讀不到時預設關閉
+- [x] 內建瀏覽器在桌機與手機寬度確認自動已讀與專注模式
