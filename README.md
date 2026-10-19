@@ -65,7 +65,6 @@ flowchart LR
 | 部署文章庫，每天收到官方文章通知 | 本頁[快速開始](#快速開始) | Cloudflare 帳號、Telegram bot、Gemini API 金鑰 |
 | 用 Telegram 分享連結、收 X 書籤 | [設定與使用](docs/learning-setup.md) | X 書籤另需 X 開發帳號 |
 | 讓文字整理改由自己的 Mac 執行 | [Mac 執行器](cloud-digest/runner/README.md) | Apple Silicon Mac、Ollama |
-| 對官方文章做語意問答 | 本頁[選用：RAG 問答服務](#選用rag-問答服務) | Python 3.12+、PostgreSQL + pgvector、OpenAI 金鑰 |
 | 看系統怎麼設計 | [資料流與 input/output](docs/architecture.md) · [來源策略與 Worker／n8n 比較](docs/source-strategy.md) | — |
 | 看實測結果 | [驗收紀錄](docs/testing/unified-learning-acceptance-2026-10-17.md) | — |
 
@@ -73,7 +72,6 @@ flowchart LR
 
 - **私人文章庫**：已部署並用真實貼文完成一輪驗證（收件、影片處理、教材生成、完成通知、單篇追問），見[實測紀錄](docs/testing/learning-setup-2026-10-13.md)。X 書籤同步預設關閉，要在管理頁主動開啟。
 - **本機 Gemma**：14 組合成代表素材通過驗收，程式預設文字模型仍是 Gemini。要在代表素材驗收並啟動 Mac 執行器後，才到 `/learning/admin` 切換。
-- **RAG 問答**：獨立的選用服務，沒有和 Worker 共用資料庫。
 
 ## 專案結構
 
@@ -81,7 +79,6 @@ flowchart LR
 | --- | --- |
 | [`cloud-digest/`](cloud-digest/) | Cloudflare Worker：排程、收件、文章庫網站、模型呼叫、Telegram 推送。**主要程式在這裡** |
 | [`cloud-digest/runner/`](cloud-digest/runner/) | Mac 本機執行器與 launchd 常駐腳本 |
-| [`app/`](app/) | 選用：FastAPI + pgvector 的 RAG 問答 |
 | [`docs/`](docs/) | 架構、規格、實作計畫、驗收紀錄與調查報告，索引在[文件地圖](#文件地圖) |
 
 ---
@@ -211,72 +208,6 @@ npm test
 
 ---
 
-## 選用：RAG 問答服務
-
-用 FastAPI 提供 `/ingest`（匯入 OpenAI Developer Blog 文章並產生向量）與 `/ask`（語意檢索後由 LLM 回答並附引用）。只要 Telegram 摘要或文章庫的話，不需要這部分。
-
-### 需求
-
-- Python 3.12+ 與 `uv`
-- PostgreSQL + [pgvector](https://github.com/pgvector/pgvector)（以下用 Docker 示範；macOS 也可以用 [Apple Container](https://github.com/apple/container)，指令幾乎相同，把 `docker` 換成 `container`）
-- OpenAI API 金鑰
-
-### 設定與啟動
-
-```bash
-cp .env.example .env        # 填入 OPENAI_API_KEY
-cp .db.env.example .db.env
-uv sync --extra test
-
-docker volume create developer-kb-pgdata
-docker run --detach --name developer-kb-db \
-  --env-file .db.env \
-  --publish 127.0.0.1:5432:5432 \
-  --volume developer-kb-pgdata:/var/lib/postgresql/data \
-  pgvector/pgvector:pg17
-
-uv run alembic upgrade head
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-範例設定使用僅供本機開發的資料庫帳密。若修改 `.db.env` 的 `POSTGRES_PASSWORD`，也要同步修改 `.env` 中 `DATABASE_URL` 的密碼。
-
-### 使用
-
-```bash
-# 匯入文章（會呼叫 OpenAI 產生向量，有 API 費用）
-curl -X POST http://127.0.0.1:8000/ingest
-
-# 列出已匯入的文章
-curl http://127.0.0.1:8000/articles
-
-# 提問
-curl -X POST http://127.0.0.1:8000/ask \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"OpenAI 最近對 Codex 做了哪些改動？"}'
-```
-
-`/ask` 回傳 `answer` 與 `sources`（標題、原文網址、片段位置、相似度）。API 文件在 http://127.0.0.1:8000/docs 。
-
-### 運作方式
-
-發現文章網址 → 擷取內文 → 計算內容雜湊（未變動則略過）→ 切片（預設約 800 token、重疊 120）→ 產生 embedding → 存入 PostgreSQL。提問時以 pgvector 餘弦相似度取前 `RAG_TOP_K` 個片段，交給模型回答並標註引用；資訊不足時會回覆無法確認。
-
-可調整的設定見 [`.env.example`](.env.example)。變更 `EMBEDDING_DIMENSIONS` 需要資料庫遷移；更換 embedding 模型則要重新產生所有片段的向量。
-
-### 測試
-
-```bash
-uv run pytest -q
-```
-
-Python 測試會模擬外部網站與 OpenAI 回應，不需要真實的 API 金鑰。
-首次執行切片測試需要下載 tiktoken 的公開分詞資料，之後會使用本機快取。
-
-> 這是給個人本機使用的服務，沒有身分驗證，請讓 API 與資料庫只監聽 `127.0.0.1`。
-
----
-
 ## 文件地圖
 
 | 類別 | 文件 | 內容 |
@@ -286,7 +217,7 @@ Python 測試會模擬外部網站與 OpenAI 回應，不需要真實的 API 金
 | 操作 | [learning-setup.md](docs/learning-setup.md) | 文章庫：Cloudflare 資源、Gemini、X、Telegram 收件、費用與故障處理 |
 | 操作 | [runner/README.md](cloud-digest/runner/README.md) | Mac 本機文字執行器 |
 | 操作 | [SOURCES.md](cloud-digest/SOURCES.md) | 官方來源的入口與擷取方式 |
-| 規格 | [x-learning](docs/specs/x-learning.md) · [unified-learning](docs/specs/unified-learning.md) · [source-merging](docs/specs/source-merging-and-reading.md) · [library-topics-timeline](docs/specs/library-topics-timeline.md) | 需求與使用情境 |
+| 規格 | [x-learning](docs/specs/x-learning.md) · [unified-learning](docs/specs/unified-learning.md) · [source-merging](docs/specs/source-merging-and-reading.md) · [library-topics-timeline](docs/specs/library-topics-timeline.md) · [official-sources-and-cleanup](docs/specs/official-sources-and-cleanup.md) | 需求與使用情境 |
 | 計畫 | [x-learning](docs/plans/x-learning.md) · [unified-learning](docs/plans/unified-learning.md) | 實作順序與阻擋關係 |
 | 驗收 | [docs/testing/](docs/testing/) | 測試證據與實測紀錄，區分模擬與真實 API |
 | 調查 | [docs/research/](docs/research/) | X 收藏工具 survey、影片處理比較；價格與能力採用前須重新查核 |
