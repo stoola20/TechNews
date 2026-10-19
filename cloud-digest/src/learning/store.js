@@ -75,6 +75,8 @@ export async function manuallyPaused(env){
   const control=await setting(env,'control');
   return !!control.paused && control.reason==='manual';
 }
+// 對方回了錯誤（非 2xx）：沒有讀到資料，這次呼叫記 $0，並留下狀態碼與情境供管理頁列出。
+export async function failed(env, id, usage = {}) { await query(env,"UPDATE learning_costs SET amount_micro=0,status='failed',usage_json=? WHERE id=? AND status='reserved'",JSON.stringify(usage),id).run(); }
 export async function uncertain(env, id) { await query(env,"UPDATE learning_costs SET status='uncertain' WHERE id=? AND status='reserved'",id).run(); }
 export async function resume(env) {
   const b=await budget(env);

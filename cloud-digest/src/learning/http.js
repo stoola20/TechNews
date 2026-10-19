@@ -56,7 +56,7 @@ export function createLearningHandler(deps={}) {
         await query(env,'DELETE FROM learning_connections WHERE name=?',key).run();
         const token=await exchange(env,{grant_type:'authorization_code',code,code_verifier:saved.verifier,redirect_uri:saved.redirect_uri},fetcher);
         if(!token.access_token || !token.refresh_token)throw new Error('X 授權未包含持續讀取權限');
-        const identity=await xRead(env,'/users/me',{},1,false,fetcher,token.access_token);
+        const identity=await xRead(env,'/users/me',{},1,false,fetcher,token.access_token,'connect');
         if(!identity.data?.id)throw new Error('X 帳號身份不可確認');
         await saveConnection(env,'x',{...token,user_id:identity.data.id,expires_at:now()+(token.expires_in || 7200)*1000});
         const existing=await setting(env,'sync');

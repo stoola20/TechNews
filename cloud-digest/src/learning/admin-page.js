@@ -10,6 +10,7 @@ table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow:
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.switches{display:grid;gap:4px}
 .wide{grid-column:1/-1}tr.failed td:last-child{color:var(--danger);font-weight:600}tr.off td{color:var(--muted)}
 #sources .switch{min-height:36px}.advanced{margin-top:16px;border-top:1px solid var(--line)}.advanced summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}
+ul.plain{margin:0 0 8px;padding:0;list-style:none;font-size:14px}ul.plain li{padding:6px 0;border-top:1px solid var(--line)}
 #sources-json{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;line-height:1.5}
 .entries{margin-top:12px}.entries details{border-top:1px solid var(--line)}.entries summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px;font-weight:600;list-style:none}.entries summary::-webkit-details-marker{display:none}.entries summary::before{content:'▸';color:var(--muted)}.entries details[open] summary::before{content:'▾'}
 .entry{display:grid;grid-template-columns:7em minmax(0,1fr) minmax(10em,auto);gap:4px 12px;align-items:center;padding:6px 0;font-size:14px;border-top:1px solid var(--line)}.entry a{overflow-wrap:anywhere}.entry .why{color:var(--muted)}.entry button{margin-left:8px}
@@ -43,8 +44,8 @@ ${LOGIN}
 <p class="muted">「文字模型」負責官方主題判斷、詳細整理、通知介紹與來源追問。切到本機前請先完成代表素材驗收。Mac 離線時工作會等待，不會改用雲端文字模型。</p>
 <div class="actions"><button id="use-local">改用本機 Gemma</button><button id="use-gemini">改回 Gemini</button></div></section>
 <section class="panel" aria-labelledby="runner-title"><h2 id="runner-title">Mac 執行器</h2><dl id="runner"></dl><div id="queue"></div></section>
-<section class="panel" aria-labelledby="budget-title"><h2 id="budget-title">本月預算（台灣曆月）</h2><p id="budget-state"></p><dl id="budget"></dl><div id="categories"></div>
-<p class="muted">數字是控管估算，不是供應商帳單。X 同一 UTC 日的重讀以有上限的「重讀風險」列為未確認。</p>
+<section class="panel" aria-labelledby="budget-title"><h2 id="budget-title">本月預算（台灣曆月）</h2><p id="budget-state"></p><dl id="budget"></dl><div id="categories"></div><div id="x-failures"></div>
+<p class="muted">數字是控管估算，不是供應商帳單。X 回錯誤的呼叫沒有讀到資料，記 $0；只有沒收到回應，或收到後處理失敗的才列為未確認。同一 UTC 日重讀同一資源不計費。</p>
 <div class="actions"><button id="pause">暫停全部處理</button><button id="resume" class="primary">手動恢復</button></div></section>
 <section class="panel" aria-labelledby="sync-title"><h2 id="sync-title">X 書籤同步</h2>
 <div class="switches"><label class="switch"><input type="checkbox" id="x-bookmarks"> 書籤同步（每 10 分鐘局部檢查、每天完整核對）</label><label class="switch"><input type="checkbox" id="x-author"> 作者重查（完成 24 小時後重讀作者補充）</label></div>
@@ -62,6 +63,16 @@ ${HELPERS}
 const SKIPS={baseline_incomplete:'首次完整掃描完成前不做局部檢查',rate_limited:'X 限流，稍後再試',full_scan_running:'完整核對進行中，這次略過',partial_running:'上一次局部檢查仍在進行'};
 const CATEGORY={x:'X 讀取','x-reread-risk':'X 重讀風險',gemini:'Gemini 寫作','gemini-media':'Flash 媒體解析','r2-storage':'R2 保存'};
 const COST_STATUS={settled:'已結算估算',reserved:'預留中',uncertain:'未確認',adjustment:'人工核對調整'};
+const X_READ={bookmarks:'書籤列表',post:'貼文',user:'使用者',search:'搜尋',other:'其他'};
+const X_CONTEXT={sync_full:'書籤完整核對',sync_partial:'書籤局部檢查',post:'整理貼文',author_profile:'查作者資料',author_replies:'作者補充',connect:'連接 X'};
+// X 失敗呼叫：次數、最近一次摘要，展開看每次的時間、讀取類型、狀態碼與情境。
+function xFailures(f){
+  if(!f.count)return el('p',{class:'muted',text:'X 失敗呼叫：本月 0 次。'});
+  const last=f.items[0],label=i=>(i.status?'HTTP '+i.status:'狀態不明')+'・'+(X_CONTEXT[i.context]||X_READ[i.read]||'X 讀取');
+  return el('div',{},[el('p',{text:'X 失敗呼叫：本月 '+f.count+' 次，未計費。最近一次：'+label(last)+'（'+when(last.at)+'）'}),
+    el('details',{class:'advanced'},[el('summary',{text:'每次明細'+(f.count>f.items.length?'（最近 '+f.items.length+' 次）':'')}),
+      el('ul',{class:'plain'},f.items.map(i=>el('li',{text:when(i.at)+'・'+(i.status?'HTTP '+i.status:'狀態不明')+'・'+(X_READ[i.read]||i.read||'—')+'・'+(X_CONTEXT[i.context]||i.context||'—')})))])]);
+}
 function dl(id,pairs){$(id).replaceChildren(...pairs.flatMap(p=>[el('dt',{text:p[0]}),el('dd',{text:p[1]})]));}
 async function load(){
   const s=await api('status'),b=await api('budget'),l=s.local;
@@ -70,7 +81,10 @@ async function load(){
   $('queue').replaceChildren(l.queue.length?el('table',{},[el('thead',{},[el('tr',{},['順序','類型','優先','有效優先','建立'].map(t=>el('th',{text:t})))]),el('tbody',{},l.queue.map(q=>el('tr',{},[q.position,q.kind==='question'?'追問':'文章',q.priority,q.effective_priority,when(q.created_at)].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'目前沒有排隊的本機工作。'}));
   $('budget-state').textContent=b.pause_reason==='manual'?'已手動暫停全部處理。':b.pause_reason==='budget'?'費用暫停：不呼叫付費服務；已取得證據的本機工作照常。跨月不會自動恢復。':'處理中。';
   dl('budget',[['月預算',money(b.limit_micro)],['基本費預留',money(b.base_micro)],['已使用估算',money(b.metered_micro)],['剩餘',money(b.remaining_micro)],['已結算估算',money(b.totals.settled_micro)],['預留中',money(b.totals.reserved_micro)],['未確認',money(b.totals.uncertain_micro)],['人工核對調整',money(b.totals.adjustment_micro)],['X 計價查核日',b.x_pricing.checked_at]]);
-  $('categories').replaceChildren(b.categories.length?el('table',{},[el('thead',{},[el('tr',{},['項目','狀態','金額','筆數'].map(t=>el('th',{text:t})))]),el('tbody',{},b.categories.map(c=>el('tr',{},[CATEGORY[c.category]||c.category,COST_STATUS[c.status]||c.status,money(c.amount_micro),c.count].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'本月尚無費用紀錄。'}));
+  // 失敗呼叫固定 $0，另外在下方列出，不放進金額明細。
+  const lines=b.categories.filter(c=>c.status!=='failed');
+  $('categories').replaceChildren(lines.length?el('table',{},[el('thead',{},[el('tr',{},['項目','狀態','金額','筆數'].map(t=>el('th',{text:t})))]),el('tbody',{},lines.map(c=>el('tr',{},[CATEGORY[c.category]||c.category,COST_STATUS[c.status]||c.status,money(c.amount_micro),c.count].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'本月尚無費用紀錄。'}));
+  $('x-failures').replaceChildren(xFailures(b.x_failures));
   const p=s.sync_partial||{},f=s.sync||{};
   $('x-bookmarks').checked=s.x_reads.bookmarks;$('x-author').checked=s.x_reads.author_recheck;
   if(!s.x_reads.bookmarks)$('sync-state').textContent='書籤同步已關閉：不做局部檢查與完整核對，只在手動分享時讀取 X。\n等待確認回補：'+s.awaiting_backfill+' 篇';

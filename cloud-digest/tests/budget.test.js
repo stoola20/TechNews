@@ -18,7 +18,7 @@ function xNetwork(){
 async function connect(env){await saveConnection(env,'x',{user_id:'7',access_token:'x-access',refresh_token:'x-refresh',expires_at:Date.now()+86400000*90});}
 const costs=async env=>(await rows(env,'SELECT month,category,amount_micro,status,usage_json FROM learning_costs ORDER BY created_at')).map(r=>({...r,usage:JSON.parse(r.usage_json)}));
 
-test('X 重讀依 UTC 日辨識：同日重讀只計有上限的未確認風險，跨 UTC 日重新計首次讀取，月份依台灣時間',async t=>{
+test('X 重讀依 UTC 日辨識：同日重讀記 $0、不再估算重讀風險，跨 UTC 日重新計首次讀取，月份依台灣時間',async t=>{
   mock.timers.enable({apis:['Date'],now:Date.parse('2026-10-31T23:30:00Z')});
   t.after(()=>mock.timers.reset());
   const env=environment(),net=xNetwork();await connect(env);
@@ -26,22 +26,49 @@ test('X 重讀依 UTC 日辨識：同日重讀只計有上限的未確認風險�
   let list=await costs(env);
   assert.equal(list[0].month,'2026-11');assert.equal(list[0].status,'settled');
   assert.equal(list[0].amount_micro,100*1000);assert.equal(list[0].usage.owned,true);assert.equal(list[0].usage.pricing_checked_at,'2026-10-16');
-  // 十分鐘後重讀同一頁：不是 100 筆新費用，只記 5% 的未確認風險。
+  // 十分鐘後重讀同一頁：同一 UTC 日不再計費，也不另記未確認的重讀風險。
   mock.timers.setTime(Date.parse('2026-10-31T23:40:00Z'));
-  await xRead(env,'/users/7/bookmarks',{},100,true,net.fetcher);
+  for(let i=0;i<3;i++)await xRead(env,'/users/7/bookmarks',{},100,true,net.fetcher);
   list=await costs(env);
-  assert.deepEqual(list.slice(1).map(c=>[c.category,c.status,c.amount_micro]),[['x','settled',0],['x-reread-risk','uncertain',5000]]);
+  assert.deepEqual(list.slice(1).map(c=>[c.category,c.status,c.amount_micro]),[['x','settled',0],['x','settled',0],['x','settled',0]]);
   assert.equal(list[1].usage.rereads,100);
-  // 每日重讀風險有上限。
-  for(let i=0;i<30;i++)await xRead(env,'/users/7/bookmarks',{},100,true,net.fetcher);
-  const risk=(await costs(env)).filter(c=>c.category==='x-reread-risk').reduce((n,c)=>n+c.amount_micro,0);
-  assert.equal(risk,100000);
   // UTC 午夜後同一批資源重新計費，但仍屬台灣 11 月。
   mock.timers.setTime(Date.parse('2026-11-01T00:30:00Z'));
   const before=(await costs(env)).length;
   await xRead(env,'/users/7/bookmarks',{},100,true,net.fetcher);
   const fresh=(await costs(env)).slice(before);
   assert.deepEqual(fresh.map(c=>[c.month,c.amount_micro]),[['2026-11',100000]]);
+});
+
+test('X 回錯誤記 $0 並列在失敗呼叫明細；沒收到回應或收到後處理失敗記為未確認',async()=>{
+  const env=environment();await connect(env);
+  const handler=createLearningHandler(recorder());
+  const reply=make=>async()=>make();
+  for(const [status,path,context] of [[429,'/users/7/bookmarks','sync_partial'],[503,'/tweets/42','post'],[401,'/users/9','author_profile']])
+    await assert.rejects(xRead(env,path,{},100,false,reply(()=>new Response('{}',{status})),null,context),{status});
+  await assert.rejects(xRead(env,'/tweets/43',{},1,false,reply(()=>{throw new Error('The operation timed out');}),null,'post'),/timed out/);
+  await assert.rejects(xRead(env,'/tweets/44',{},1,false,reply(()=>new Response('不是 JSON',{status:200})),null,'post'),/不是有效 JSON/);
+  const list=await costs(env);
+  assert.deepEqual(list.map(c=>[c.status,c.amount_micro]),[['failed',0],['failed',0],['failed',0],['uncertain',5000],['uncertain',5000]]);
+  const summary=await (await handler.fetch(request('api/budget'),env)).json();
+  assert.equal(summary.metered_micro,10000);
+  assert.equal(summary.x_failures.count,3);
+  assert.deepEqual(summary.x_failures.items.map(i=>[i.status,i.read,i.context]),[[401,'user','author_profile'],[503,'post','post'],[429,'bookmarks','sync_partial']]);
+  assert.ok(summary.x_failures.items[0].at);
+});
+
+test('書籤局部檢查遇到 X 限流：那次呼叫記 $0、同步區塊照舊顯示限流說明',async()=>{
+  const env=environment({X_CLIENT_ID:'client',X_CLIENT_SECRET:'secret'});await connect(env);
+  const net=recorder(async url=>url.hostname==='api.x.com'?new Response('{}',{status:429}):null);
+  const handler=createLearningHandler(net);
+  await handler.fetch(request('api/admin/x-reads','PUT',{bookmarks:true}),env);
+  await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('learning:sync',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",JSON.stringify({baseline_complete:true}),new Date().toISOString()).run();
+  await handler.queue({messages:[message({kind:'sync',scope:'partial'})]},env);
+  const status=await (await handler.fetch(request('api/status'),env)).json();
+  assert.equal(status.sync_partial.last_error,'X 限流，稍後再檢查');
+  const summary=await (await handler.fetch(request('api/budget'),env)).json();
+  assert.equal(summary.x_failures.count,1);assert.deepEqual([summary.x_failures.items[0].status,summary.x_failures.items[0].context],[429,'sync_partial']);
+  assert.equal(summary.metered_micro,0);
 });
 
 test('Owned Read 只在自身資源端點且確認為 app 擁有者時使用',async()=>{
@@ -106,7 +133,7 @@ test('手動暫停停下全部處理，與費用暫停分開標示；預算明�
   const r=await reserve(env,'gemini',2000);
   const adjusted=await (await handler.fetch(request('api/admin/budget-adjust','POST',{category:'x',amount_usd:-0.5,note:'與 X Developer Console 十月用量核對'}),env)).json();
   assert.equal(adjusted.totals.reserved_micro,2000);assert.equal(adjusted.totals.adjustment_micro,-500000);
-  assert.equal(adjusted.x_pricing.post_micro,5000);assert.equal(adjusted.x_pricing.reread_daily_cap_micro,100000);
+  assert.equal(adjusted.x_pricing.post_micro,5000);assert.equal(adjusted.x_pricing.reread_daily_cap_micro,undefined);
   assert.equal((await handler.fetch(request('api/admin/budget-adjust','POST',{category:'x',amount_usd:1,note:''}),env)).status,400);
   assert.ok(r);
 });

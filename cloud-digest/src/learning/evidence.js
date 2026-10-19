@@ -66,14 +66,14 @@ export async function acquireEvidence(env,item,deps={}) {
       if(!username){
         let profile=await setting(env,`author:${primary.author_id}`);
         if(!profile.username || profile.expires_at<now()){
-          const result=await (deps.xRead || xRead)(env,`/users/${primary.author_id}`,{'user.fields':'username,name'},1,false,fetcher);
+          const result=await (deps.xRead || xRead)(env,`/users/${primary.author_id}`,{'user.fields':'username,name'},1,false,fetcher,null,'author_profile');
           if(result.data?.id!==primary.author_id || !/^[A-Za-z0-9_]{1,15}$/.test(result.data?.username || ''))throw new Error('作者身份無法確認');
           profile={username:result.data.username,expires_at:now()+86400000};
           await setSetting(env,`author:${primary.author_id}`,profile);
         }
         username=profile.username;
       }
-      const result=await (deps.xRead || xRead)(env,'/tweets/search/all',{...postParameters(env),query:`conversation_id:${metadata.conversation_id} from:${username}`,max_results:100,next_token:state.author_cursor},100,false,fetcher);
+      const result=await (deps.xRead || xRead)(env,'/tweets/search/all',{...postParameters(env),query:`conversation_id:${metadata.conversation_id} from:${username}`,max_results:100,next_token:state.author_cursor},100,false,fetcher,null,'author_replies');
       for(const post of result.data || []) {
         if(post.id===metadata.post_id || post.author_id!==primary.author_id)continue;
         const source=normalizePost(post,result.includes);

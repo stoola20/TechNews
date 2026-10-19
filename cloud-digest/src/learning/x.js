@@ -1,6 +1,6 @@
 import {apiJson} from './network.js';
-import {connection,saveConnection,query,setting,setSetting,reserve,settle,uncertain,nowIso,saveEvidence,hash} from './store.js';
-import {xPricing,ownedEligible,firstReads,rereadRisk,recordCost,utcDay} from './pricing.js';
+import {connection,saveConnection,query,setting,setSetting,reserve,settle,uncertain,failed,nowIso,saveEvidence,hash} from './store.js';
+import {xPricing,ownedEligible,firstReads,utcDay} from './pricing.js';
 import {xArticleUrl} from './local.js';
 import {now} from './clock.js';
 
@@ -27,7 +27,17 @@ export function postParameters(env) {
   return {[modern?'post.fields':'tweet.fields']:`author_id,conversation_id,created_at,entities,attachments,article,${modern?'note_post,referenced_posts':'note_tweet,referenced_tweets'}`,
     expansions:'attachments.media_keys','media.fields':'type,url,preview_image_url,variants,duration_ms,alt_text'};
 }
-export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fetch,token=null) {
+// 讀取類型依端點判斷；情境由呼叫端說明（書籤同步、整理貼文、作者補充等），一起記在失敗呼叫的明細上。
+export function xReadType(path){
+  if(/\/bookmarks$/.test(path))return 'bookmarks';
+  if(path==='/tweets/search/all')return 'search';
+  if(/^\/tweets\//.test(path))return 'post';
+  if(/^\/users\//.test(path))return 'user';
+  return 'other';
+}
+// 費用分三種結果：收到 2xx 依實際讀到的資源結算；收到非 2xx 表示沒有讀到資料，記 $0；
+// 沒收到回應（逾時、連線中斷），或收到 2xx 後處理失敗時，X 可能已計費，記為未確認。
+export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fetch,token=null,context=null) {
   const auth=token || await accessToken(env,fetcher);
   const account=await connection(env,'x');
   const pricing=xPricing(env);
@@ -36,10 +46,19 @@ export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fet
   const discounted=owned && ownedEligible(path,account,env);
   const rate=users?pricing.user_micro:discounted?pricing.owned_micro:pricing.post_micro;
   const id=await reserve(env,'x',maximum*rate);
+  let response;
   try {
     const url=new URL(`https://api.x.com/2${path}`);
     for(const [k,v] of Object.entries(params))if(v!=null)url.searchParams.set(k,String(v));
-    const data=await apiJson(await fetcher(url.href,{headers:{authorization:`Bearer ${auth}`},signal:AbortSignal.timeout(30000)}),4000000);
+    response=await fetcher(url.href,{headers:{authorization:`Bearer ${auth}`},signal:AbortSignal.timeout(30000)});
+  }catch(error){await uncertain(env,id);throw error;}
+  if(!response.ok){
+    await failed(env,id,{status:response.status,read:xReadType(path),context,pricing_checked_at:pricing.checked_at});
+    await response.body?.cancel();
+    const error=new Error(`外部服務 HTTP ${response.status}`);error.status=response.status;throw error;
+  }
+  try {
+    const data=await apiJson(response,4000000);
     const primary=(Array.isArray(data.data)?data.data:data.data?[data.data]:[]).map(r=>r.id);
     const includedPosts=(data.includes?.posts || data.includes?.tweets || []).map(r=>r.id);
     const includedUsers=(data.includes?.users || []).map(r=>r.id);
@@ -48,9 +67,7 @@ export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fet
     const posts=await firstReads(env,'post',includedPosts,day),people=await firstReads(env,'user',includedUsers,day);
     const amount=main.first*rate+posts.first*pricing.post_micro+people.first*pricing.user_micro;
     await settle(env,id,amount,{utc_day:day,first_reads:main.first,rereads:main.reread,included_posts:includedPosts.length,included_users:includedUsers.length,
-      rate_micro:rate,owned:discounted,pricing_checked_at:pricing.checked_at,errors:(data.errors || []).length});
-    const risk=await rereadRisk(env,main.reread*rate+posts.reread*pricing.post_micro+people.reread*pricing.user_micro,1,day);
-    if(risk)await recordCost(env,'x-reread-risk',risk,'uncertain',{utc_day:day,rereads:main.reread+posts.reread+people.reread,fraction:pricing.reread_fraction});
+      rate_micro:rate,owned:discounted,pricing_checked_at:pricing.checked_at,errors:(data.errors || []).length,context});
     return data;
   }catch(error){await uncertain(env,id);throw error;}
 }
@@ -88,7 +105,7 @@ export async function registerMedia(env,itemId,evidenceId,list) {
   }
 }
 export async function postEvidence(env,id,fetcher=fetch) {
-  const result=await xRead(env,`/tweets/${id}`,postParameters(env),1,false,fetcher);
+  const result=await xRead(env,`/tweets/${id}`,postParameters(env),1,false,fetcher,null,'post');
   if(!result.data?.id)throw new Error('X 主文不可取得或帳號沒有讀取權限');
   return normalizePost(result.data,result.includes);
 }
@@ -159,7 +176,7 @@ export async function syncBookmarks(env,deps={},scope='full') {
     const initial=!sync.baseline_complete;
     for(let page=0;page<5;page++) {
       stage='x_read';
-      const result=await xRead(env,`/users/${account.user_id}/bookmarks`,{...postParameters(env),max_results:100,pagination_token:sync.cursor},100,true,fetcher);
+      const result=await xRead(env,`/users/${account.user_id}/bookmarks`,{...postParameters(env),max_results:100,pagination_token:sync.cursor},100,true,fetcher,null,'sync_full');
       if(result.data!=null&&!Array.isArray(result.data))throw new Error('X 書籤資料格式不符');
       if(!result.data&&!result.meta&&!result.errors)throw new Error('X 書籤回應缺少資料與分頁資訊');
       stage='collect';
@@ -213,7 +230,7 @@ async function partialCheck(env,deps,account,full,fetcher){
     let cursor=null,checked=0,added=0;
     for(let page=0;page<pages;page++){
       stage='x_read';
-      const result=await xRead(env,`/users/${account.user_id}/bookmarks`,{...postParameters(env),max_results:size,pagination_token:cursor},size,true,fetcher);
+      const result=await xRead(env,`/users/${account.user_id}/bookmarks`,{...postParameters(env),max_results:size,pagination_token:cursor},size,true,fetcher,null,'sync_partial');
       if(result.data!=null&&!Array.isArray(result.data))throw new Error('X 書籤資料格式不符');
       stage='collect';
       for(const post of result.data || []){

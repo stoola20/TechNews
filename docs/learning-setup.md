@@ -253,7 +253,9 @@ X 讀取按次計費。預設只在你主動分享 X 連結（Telegram 或網站
 
 - Owned Reads 只用在官方列出的自身資源端點（例如 `/users/{id}/bookmarks`），且 `X_APP_OWNER_ID` 必須等於已連接的帳號。不符合時一律用一般費率。
 - 同一資源在同一個 UTC 日第一次讀取，以全額計入。
-- 同一 UTC 日再次讀到同一資源，X 通常不再計費，但官方說明這是 soft guarantee。系統把重讀記為「X 重讀風險」，按 `X_REREAD_RISK_FRACTION`（預設 0.05）估算，每個 UTC 日最多 `X_REREAD_RISK_DAILY_USD`（預設 US$0.10），列在「未確認」。
+- 同一 UTC 日再次讀到同一資源不計費，記 $0。官方說明這是 soft guarantee；若帳單有出入，用人工核對調整修正。
+- X 回錯誤（非 2xx，例如 429、503、401）時沒有讀到資料，那次呼叫記 $0，狀態為「失敗」。管理頁預算區塊顯示「X 失敗呼叫：本月 N 次，未計費」與最近一次的狀態碼和情境，可展開看每次的時間、讀取類型、狀態碼與情境（書籤同步、整理貼文、作者補充等）。
+- 沒收到回應（逾時、連線中斷），或收到 2xx 後處理失敗（內容過大、無法解析）時，X 可能已經計費，保留預留金額並列為「未確認」。
 - 預算月份依台灣時間；X 去重依 UTC 日。兩者分開計算。
 - 與 X Developer Console 或 Google 帳單核對後，可用 `POST /learning/api/admin/budget-adjust`（`category`、`amount_usd`，可為負數、`note` 必填）記錄人工修正。
 
