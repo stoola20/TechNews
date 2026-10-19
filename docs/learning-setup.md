@@ -121,7 +121,7 @@ npx wrangler secret put TELEGRAM_ALLOWED_CHAT_IDS
 https://<Worker 網址>/learning/telegram
 ```
 
-同時設定與 Worker 完全一致的 `secret_token`，以及 `allowed_updates` 為 `message`、`channel_post`。兩邊使用同一份保存的值，不要各自產生一份。輪替時必須同步更新 Worker 與 Telegram，避免待送訊息持續驗證失敗。以下本機設定程序從互動輸入取得 Bot token 與 webhook secret，不把它們放進命令參數或文件：
+同時設定與 Worker 完全一致的 `secret_token`，以及 `allowed_updates` 為 `message`、`channel_post`、`callback_query`。`callback_query` 是完成通知上「保留」「保留並 ★」「刪除」按鈕的回呼；沒有加入時按鈕會一直轉圈，文章庫不會收到。兩邊使用同一份保存的值，不要各自產生一份。輪替時必須同步更新 Worker 與 Telegram，避免待送訊息持續驗證失敗。以下本機設定程序從互動輸入取得 Bot token 與 webhook secret，不把它們放進命令參數或文件：
 
 ```python
 import getpass
@@ -136,7 +136,7 @@ if not base_url.startswith("https://"):
 payload = json.dumps({
     "url": base_url + "/learning/telegram",
     "secret_token": secret,
-    "allowed_updates": ["message", "channel_post"],
+    "allowed_updates": ["message", "channel_post", "callback_query"],
 }).encode()
 request = urllib.request.Request(
     "https://api.telegram.org/bot" + token + "/setWebhook",
@@ -152,6 +152,8 @@ print("設定成功" if result.get("ok") else "設定未成功，請檢查 Teleg
 ```
 
 Webhook 和 `getUpdates` 不能同時用來收件。收件設定完成後，既有通知的 `sendMessage` 功能仍可使用。
+
+篩選按鈕只接受 `TELEGRAM_CHAT_ID`（通知頻道）或 `TELEGRAM_ALLOWED_CHAT_IDS` 裡的對話；其他對話按下時回 200 並忽略。通知頻道若是頻道，能看到頻道訊息的人都能按按鈕，請不要把通知頻道公開。
 
 `setWebhook` 成功只表示 Telegram 接受設定，不能證明 Worker 已接受 secret。啟用後需透過真實分享確認收件回覆、文章庫紀錄與完成通知；更新 webhook 時不要為排除錯誤直接丟棄待送更新。
 

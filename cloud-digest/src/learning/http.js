@@ -92,6 +92,8 @@ export function createLearningHandler(deps = {}) {
         const update = await body(request),
           message = update.message || update.channel_post;
         if (!Number.isSafeInteger(update.update_id)) return json({ error: 'Webhook 缺少有效 update_id' }, 400);
+        // 通知上的篩選按鈕：只處理通知頻道或允許對話傳來的回呼，其他回 200 並忽略。
+        if (update.callback_query) return json(await service.triageCallback(env, update.callback_query));
         const allowed = (env.TELEGRAM_ALLOWED_CHAT_IDS || '').split(',').map((s) => s.trim());
         if (!message || !allowed.includes(String(message.chat?.id))) return json({ ok: true, ignored: true });
         const text = message.text || message.caption || '';

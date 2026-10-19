@@ -1,6 +1,7 @@
 import { query, rows, hash, nowIso } from './store.js';
 import { now } from './clock.js';
 import { topicList, topicTags } from './topics.js';
+import { notificationMarkup } from './telegram-triage.js';
 
 const STATES = {
   queued: '等待處理',
@@ -146,7 +147,9 @@ export async function sendPending(env, send) {
         await query(env, "UPDATE learning_deliveries SET status='skipped' WHERE id=?", delivery.id).run();
         continue;
       }
-      const messageId = await send(env, delivery.body);
+      // 篩選按鈕在送出時才決定：只有這時仍是待決定的文章附「保留」「保留並 ★」「刪除」。
+      const markup = await notificationMarkup(env, items);
+      const messageId = await send(env, delivery.body, markup ? { reply_markup: markup } : {});
       await env.DB.batch([
         query(
           env,

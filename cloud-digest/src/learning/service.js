@@ -43,6 +43,7 @@ import {
 } from './official.js';
 import { queueArticleNotifications, sendPending, receiptMessage, contentFingerprint } from './notifications.js';
 import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from './triage.js';
+import { handleTriageCallback } from './telegram-triage.js';
 import { effectiveEnvironment } from '../settings.js';
 import { getSources } from '../sources.js';
 import { now, withClock } from './clock.js';
@@ -390,20 +391,41 @@ export function createLearningService(deps = {}) {
     ))
       await enqueue(env, row.id);
   }
-  async function send(env, text) {
-    if (deps.sendTelegram) return deps.sendTelegram(env, text);
-    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) throw new Error('Telegram 通知設定未完成');
-    const result = await apiJson(
-      await fetcher(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  async function send(env, text, extra = {}) {
+    if (deps.sendTelegram) return deps.sendTelegram(env, text, extra);
+    if (!env.TELEGRAM_CHAT_ID) throw new Error('Telegram 通知設定未完成');
+    const result = await telegram(env, 'sendMessage', {
+      chat_id: env.TELEGRAM_CHAT_ID,
+      text,
+      link_preview_options: { is_disabled: true },
+      ...extra,
+    });
+    if (!result.ok || !result.result?.message_id) throw new Error('Telegram 通知未確認成功');
+    return result.result.message_id;
+  }
+  async function telegram(env, method, body) {
+    if (!env.TELEGRAM_BOT_TOKEN) throw new Error('Telegram 通知設定未完成');
+    return apiJson(
+      await fetcher(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         signal: AbortSignal.timeout(20000),
-        body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, link_preview_options: { is_disabled: true } }),
+        body: JSON.stringify(body),
       }),
       64000,
     );
-    if (!result.ok || !result.result?.message_id) throw new Error('Telegram 通知未確認成功');
-    return result.result.message_id;
+  }
+  // 通知上的篩選按鈕：套用到文章庫，回覆短提示並改按鈕。Bot API 失敗時不影響已套用的結果。
+  async function triageCallback(env, callback) {
+    return handleTriageCallback(
+      env,
+      callback,
+      (method, body) =>
+        telegram(env, method, body).catch((error) => {
+          console.log(JSON.stringify({ event: 'telegram_callback_reply_failed', method, error: error.message }));
+        }),
+      { enqueue },
+    );
   }
   async function receipt(env, chatId, ids, key) {
     if (!ids.length) return;
@@ -588,6 +610,7 @@ export function createLearningService(deps = {}) {
     enqueue,
     receipt,
     official,
+    triageCallback,
     migrate: migrateLibrary,
   };
   for (const [name, fn] of Object.entries(api)) api[name] = (...args) => withClock(deps.now, () => fn(...args));
