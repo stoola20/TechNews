@@ -49,6 +49,7 @@ import { indexStatus, rebuildIndex } from './rag-index.js';
 import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
 import { listQuizzes, quizView, attemptView, QuizError } from './quiz.js';
 import { webCheckSummary, setWebCheck } from './web-check.js';
+import { todayReviews, todayCount } from './reviews.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -250,6 +251,7 @@ export function createLearningHandler(deps = {}) {
           x_reads: await xReads(env),
           awaiting_backfill: count.count,
           triage_pending: await pendingCount(env),
+          reviews_today: await todayCount(env),
           local: await runnerStatus(env),
           demo: env.LEARNING_DEMO === 'true',
           configured: {
@@ -683,6 +685,12 @@ export function createLearningHandler(deps = {}) {
           const attempt = await service.attempt(env, quiz.id, await body(request));
           return json(attempt, attempt.status === 'done' || attempt.status === 'error' ? 200 : 202);
         }
+      }
+      if (route === 'reviews/today' && request.method === 'GET') return json(await todayReviews(env));
+      const reviewMatch = route.match(/^reviews\/([0-9a-f-]{36})\/attempts$/);
+      if (reviewMatch && request.method === 'POST') {
+        const attempt = await service.review(env, reviewMatch[1], await body(request));
+        return json(attempt, attempt.status === 'done' || attempt.status === 'error' ? 200 : 202);
       }
       const attemptMatch = route.match(/^attempts\/([0-9a-f-]{36})$/);
       if (attemptMatch && request.method === 'GET') {

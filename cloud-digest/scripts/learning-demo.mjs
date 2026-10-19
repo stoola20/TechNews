@@ -414,6 +414,21 @@ for (const [key, title, status, gaps, error] of states) {
 }
 // 保留文章先建立索引。
 while ((await maintainIndex(env, 20)).indexed);
+// 精讀與複習示範：兩篇範例教材各出一組題目並作答，答錯與不確定的題目放進今天的複習。
+for (const key of ['background-jobs', 'code-and-table']) {
+  const { id } = sqlite.prepare('SELECT id FROM learning_items WHERE url=?').get('https://example.org/' + key);
+  const quiz = await handler.service.quiz(env, id);
+  await handler.service.attempt(env, quiz.id, {
+    answers: quiz.questions.map((q) => ({
+      number: q.number,
+      answer: q.number === 1 ? '先保存再交給背景工作，失敗時才能用保存的結果重試，不必重付生成費用。' : '不確定',
+      unsure: q.number === 3,
+    })),
+  });
+}
+sqlite
+  .prepare('UPDATE learning_reviews SET due_date=?')
+  .run(new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10));
 jobs.length = 0;
 for (const suffix of ['keep', 'remove'])
   await handler.service.collect(env, 'https://example.org/awaiting-' + suffix, 'backfill', 'demo:' + suffix, {

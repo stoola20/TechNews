@@ -263,7 +263,13 @@ function matchingChunks(chunks, text, skip) {
 
 // 作答：一次送出全部答案（複習時一題）。空白答案不送模型，直接判錯並附參考答案。
 // deps.library 由批改第二層提供其他保留文章的片段；hooks.graded 在批改完成後執行（例如建立複習）。
-export async function submitAttempt(env, quizId, data, deps = {}, { context = 'quiz', numbers = null } = {}) {
+export async function submitAttempt(
+  env,
+  quizId,
+  data,
+  deps = {},
+  { context = 'quiz', numbers = null, reviewId = null } = {},
+) {
   const quiz = await query(env, 'SELECT * FROM learning_quizzes WHERE id=?', quizId).first();
   if (!quiz) throw new QuizError('題組不存在', 404);
   if (quiz.status !== 'ready') throw new QuizError('題目還沒準備好', 409);
@@ -284,11 +290,12 @@ export async function submitAttempt(env, quizId, data, deps = {}, { context = 'q
     provider = await textProvider(env);
   await query(
     env,
-    "INSERT INTO learning_attempts(id,quiz_id,item_id,context,answers_json,status,provider,created_at,updated_at) VALUES(?,?,?,?,?,'grading',?,?,?)",
+    "INSERT INTO learning_attempts(id,quiz_id,item_id,context,review_id,answers_json,status,provider,created_at,updated_at) VALUES(?,?,?,?,?,?,'grading',?,?,?)",
     id,
     quizId,
     quiz.item_id,
     context,
+    reviewId,
     JSON.stringify(answers),
     provider === 'local' ? 'ollama' : 'gemini',
     time,

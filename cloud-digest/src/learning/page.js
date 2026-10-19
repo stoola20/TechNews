@@ -81,15 +81,15 @@ kbd{font:12px ui-monospace,SFMono-Regular,monospace;border:1px solid currentColo
 .keys{margin:0 0 12px;padding:12px 16px;border:1px dashed var(--line);border-radius:8px;font-size:14px;line-height:1.9}.keys[hidden]{display:none}
 .done-box{text-align:center;padding:40px 16px}
 /* 精讀問答 */
-#quiz .q{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0;background:var(--paper)}
-#quiz .q h3{font-size:16px;line-height:1.6;margin:0 0 8px}#quiz textarea{min-height:96px}
-#quiz .unsure{display:flex;align-items:center;gap:8px;min-height:40px;font-weight:400}#quiz .unsure input{min-height:auto;width:18px;height:18px}
-#quiz .verdict{display:inline-block;font-size:13px;font-weight:700;border-radius:5px;padding:2px 8px;margin-right:8px}
+:is(#quiz,#review-card) .q{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0;background:var(--paper)}
+:is(#quiz,#review-card) .q h3{font-size:16px;line-height:1.6;margin:0 0 8px}:is(#quiz,#review-card) textarea{min-height:96px}
+:is(#quiz,#review-card) .unsure{display:flex;align-items:center;gap:8px;min-height:40px;font-weight:400}:is(#quiz,#review-card) .unsure input{min-height:auto;width:18px;height:18px}
+:is(#quiz,#review-card) .verdict{display:inline-block;font-size:13px;font-weight:700;border-radius:5px;padding:2px 8px;margin-right:8px}
 .verdict.correct{background:var(--soft);color:var(--accent)}.verdict.partial{background:#e8eefc;color:#22408a}.verdict.incorrect{background:var(--warn-bg);color:var(--warn)}
-#quiz dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px;margin:8px 0}#quiz dt{color:var(--muted);font-size:14px}#quiz dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}
-#quiz .src{font-size:14px;margin:6px 0 0}#quiz .src ul{margin:2px 0 0;padding-left:1.2em}
-#quiz .summary{font-size:18px;font-weight:700;margin:4px 0 8px}#quiz .linkish{border:0;background:none;color:var(--accent);text-decoration:underline;min-height:36px;padding:2px 0}
-@media(max-width:640px){#quiz dl{grid-template-columns:minmax(0,1fr)}#quiz dt{margin-top:6px}}
+:is(#quiz,#review-card) dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px;margin:8px 0}:is(#quiz,#review-card) dt{color:var(--muted);font-size:14px}:is(#quiz,#review-card) dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}
+:is(#quiz,#review-card) .src{font-size:14px;margin:6px 0 0}:is(#quiz,#review-card) .src ul{margin:2px 0 0;padding-left:1.2em}
+:is(#quiz,#review-card) .summary{font-size:18px;font-weight:700;margin:4px 0 8px}:is(#quiz,#review-card) .linkish{border:0;background:none;color:var(--accent);text-decoration:underline;min-height:36px;padding:2px 0}
+@media(max-width:640px){:is(#quiz,#review-card) dl{grid-template-columns:minmax(0,1fr)}:is(#quiz,#review-card) dt{margin-top:6px}}
 #similar .subhead{font-weight:700;font-size:14px;margin:12px 0 4px}.similar-list{margin:0;padding-left:1.2em;line-height:1.8;font-size:15px}
 @media(max-width:959px){body.app:not([data-mode=""]) .reader-wrap{display:block}body.app:not([data-mode=""]) .reader-bar{display:none}.decide{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
@@ -203,7 +203,7 @@ const narrow=matchMedia('(max-width: 959px)');
 // 篩選檢視：保留是預設；選擇存在網址，重新整理或返回時維持同一個檢視。
 const VIEWS=[['kept','保留'],['starred','★ 常用'],['pending','待決定'],['all','全部'],['deleted','最近刪除']];
 const TRIAGE_LABEL={pending:'待決定',kept:'保留',starred:'保留 ★',deleted:'最近刪除'};
-const MODE_NAMES=['triage'];
+const MODE_NAMES=['triage','review'];
 function readView(){const p=new URLSearchParams(location.search),t=p.get('triage'),m=p.get('view');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article'),mode:MODE_NAMES.includes(m)&&!p.get('article')?m:''};}
 function urlFor(v){const p=new URLSearchParams();if(v.mode&&!v.article)p.set('view',v.mode);if(v.triage&&v.triage!=='kept')p.set('triage',v.triage);if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
 function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTop;}
@@ -539,7 +539,45 @@ const triageMode={
     }finally{this.busy=false;}
   },
 };
-const MODES={triage:triageMode};
+// 今日複習：一次一題，送出後由 AI 批改，顯示回饋後進下一題。
+const reviewMode={
+  data:null,attempt:null,timer:null,
+  async open(){clearTimeout(this.timer);this.attempt=null;this.data=await api('reviews/today');this.render();},
+  head(){
+    const back=el('a',{href:urlFor({...view,mode:'',article:null}),text:'回到列表'});back.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:'',article:null}));};
+    const d=this.data;
+    return el('div',{class:'mode-head'},[el('h1',{text:'今日複習'}),el('div',{class:'links'},[el('span',{class:'muted',id:'review-left','aria-live':'polite',text:'今天還有 '+d.items.length+' 題（每天最多 '+d.limit+' 題，已作答 '+d.answered_today+' 題）'}),back])]);
+  },
+  render(){
+    const box=$('mode'),d=this.data;
+    if(this.attempt){
+      const a=this.attempt;
+      if(ATTEMPT_WAIT[a.status]){box.replaceChildren(this.head(),el('div',{class:'card'},[el('p',{},[el('span',{class:'spinner','aria-hidden':'true'}),document.createTextNode(ATTEMPT_WAIT[a.status])])]));this.poll();return;}
+      const next=el('button',{type:'button',class:'primary',text:'下一題'});next.onclick=()=>run(()=>this.open(),next,'載入中…');
+      const card=el('div',{class:'card',id:'review-card'},a.status==='error'?[el('p',{class:'error',text:'批改失敗：'+(a.error||'原因不明')})]:attemptNodes(a,quizArea));
+      box.replaceChildren(this.head(),card,el('div',{class:'actions'},[next]));
+      const h=card.querySelector('.summary');if(h){h.setAttribute('tabindex','-1');h.focus({preventScroll:true});}
+      return;
+    }
+    const item=d.items[0];
+    if(!item){
+      const more=d.total_due-d.items.length;
+      box.replaceChildren(this.head(),el('div',{class:'card done-box'},[el('h2',{tabindex:'-1',text:more>0?'今天的複習已達上限':'今天的複習完成了'}),el('p',{class:'muted',text:more>0?'還有 '+more+' 題已到期，明天會再出現。':'答錯或不確定的題目會依 1、3、7、21 天的階梯再出現。'})]));
+      box.querySelector('h2').focus({preventScroll:true});return;
+    }
+    const open=quizArea.articleLink(item.item_id,item.title);
+    const area=el('textarea',{id:'review-answer',maxlength:'2000',placeholder:'用自己的話回答'}),unsure=el('input',{type:'checkbox',id:'review-unsure'});
+    const submit=el('button',{class:'primary',text:'送出答案'});
+    const form=el('form',{class:'card',id:'review-card'},[el('p',{class:'meta',text:'第 '+item.stage+' 階・到期 '+item.due_date}),el('h2',{id:'review-question',tabindex:'-1',text:item.question}),
+      el('p',{class:'muted'},[document.createTextNode('出自：'),open,document.createTextNode(item.publisher?'・'+item.publisher:'')]),
+      el('label',{class:'sr',for:'review-answer',text:'你的答案'}),area,el('label',{class:'unsure'},[unsure,document.createTextNode('不確定')]),el('div',{class:'actions'},[submit])]);
+    form.onsubmit=e=>{e.preventDefault();run(async()=>{this.attempt=await api('reviews/'+item.id+'/attempts','POST',{answer:area.value,unsure:unsure.checked});this.render();refreshEntries();},submit,'批改中…');};
+    box.replaceChildren(this.head(),form);
+    $('review-question').focus({preventScroll:true});$('reader').scrollTop=0;
+  },
+  poll(){clearTimeout(this.timer);this.timer=setTimeout(async()=>{if(view.mode!=='review'||!this.attempt)return;try{this.attempt=await api('attempts/'+this.attempt.id);}catch(e){}this.render();},5000);},
+};
+const MODES={triage:triageMode,review:reviewMode};
 // 精讀問答：文末「開始問答」，按下才出題；作答一次送出，批改後顯示判定、回饋、參考答案與出處。
 const VERDICT={correct:'正確',partial:'部分正確',incorrect:'錯誤'};
 const QUIZ_WAIT={queued:'準備出題…',waiting_local:'已保存，等待 Mac 出題。Mac 離線時會一直等待，不會改用雲端模型；可以離開這頁，之後回來看。',generating:'Mac 正在出題…'};
@@ -625,16 +663,7 @@ const quizArea={
     const a=this.attempt;
     if(ATTEMPT_WAIT[a.status])return [el('p',{},[el('span',{class:'spinner','aria-hidden':'true'}),document.createTextNode(ATTEMPT_WAIT[a.status])])];
     if(a.status==='error'){const back=el('button',{type:'button',text:'回到題目'});back.onclick=()=>{this.mode='';this.render();};return [el('p',{class:'error',text:'批改失敗：'+(a.error||'原因不明')}),back];}
-    const nodes=[el('p',{class:'summary',text:a.summary.correct+'／'+a.summary.total+' 正確'+(a.summary.partial?'・'+a.summary.partial+' 題部分正確':'')})];
-    if(a.web_check==='failed')nodes.push(el('p',{class:'notice',text:'這次沒有完成網路查證'+(a.web_note?'（'+a.web_note+'）':'')+'，以下是只依本篇與保留文章的批改結果。'}));
-    if(a.web_check==='disabled')nodes.push(el('p',{class:'muted',text:'有說法超出本篇與保留文章，但沒有上網查證（'+(a.web_note||'網路查證已關閉')+'）。'}));
-    for(const r of a.results){
-      const groups=[['本篇',r.sources.article,s=>s.relation==='article_body'?this.bodyLink():safeLink(s.url,(RELATIONS[s.relation]||s.relation))],['其他保留文章',r.sources.library,s=>this.articleLink(s.item_id,s.title)],['網路',r.sources.web,s=>safeLink(s.url,s.title||s.url)]].filter(g=>g[1].length);
-      nodes.push(el('div',{class:'q','data-number':String(r.number)},[
-        el('h3',{},[el('span',{class:'verdict '+r.verdict,text:VERDICT[r.verdict]}),document.createTextNode('第 '+r.number+' 題：'+r.question)]),
-        el('dl',{},[el('dt',{text:'你的答案'}),el('dd',{text:(r.answer||'（空白）')+(r.unsure?'（勾了不確定）':'')}),el('dt',{text:'回饋'}),el('dd',{text:r.feedback+(r.web_checked?'（已上網查證）':r.needs_web?'（有說法待查證）':'')}),el('dt',{text:'參考答案'}),el('dd',{text:r.reference})]),
-        ...groups.map(([label,list,link])=>el('div',{class:'src'},[el('strong',{text:'出處・'+label}),el('ul',{},list.map(s=>el('li',{},[link(s),s.excerpt?el('span',{class:'preview',text:s.excerpt.slice(0,160)}):null])))]))]));
-    }
+    const nodes=attemptNodes(a,this);
     const redo=el('button',{type:'button',text:'重做'});redo.onclick=()=>{this.mode='';this.attempt=null;this.render();$('quiz').scrollIntoView({block:'start'});};
     const fresh=el('button',{type:'button',text:'換一組新題目'});fresh.onclick=()=>run(()=>this.create(true),fresh,'出題中…');
     const next=el('button',{type:'button',class:'primary',text:'下一篇'});next.onclick=()=>run(nextUnread,next,'尋找中…');
@@ -654,6 +683,20 @@ const quizArea={
     this.render();if(QUIZ_WAIT[q.status])this.poll();
   },
 };
+// 作答結果：總結、查證說明與每題的判定、你的答案、回饋、參考答案與分組出處。精讀問答與今日複習共用。
+function attemptNodes(a,links){
+    const nodes=[el('p',{class:'summary',text:a.summary.correct+'／'+a.summary.total+' 正確'+(a.summary.partial?'・'+a.summary.partial+' 題部分正確':'')})];
+    if(a.web_check==='failed')nodes.push(el('p',{class:'notice',text:'這次沒有完成網路查證'+(a.web_note?'（'+a.web_note+'）':'')+'，以下是只依本篇與保留文章的批改結果。'}));
+    if(a.web_check==='disabled')nodes.push(el('p',{class:'muted',text:'有說法超出本篇與保留文章，但沒有上網查證（'+(a.web_note||'網路查證已關閉')+'）。'}));
+    for(const r of a.results){
+      const groups=[['本篇',r.sources.article,s=>s.relation==='article_body'?links.bodyLink():safeLink(s.url,(RELATIONS[s.relation]||s.relation))],['其他保留文章',r.sources.library,s=>links.articleLink(s.item_id,s.title)],['網路',r.sources.web,s=>safeLink(s.url,s.title||s.url)]].filter(g=>g[1].length);
+      nodes.push(el('div',{class:'q','data-number':String(r.number)},[
+        el('h3',{},[el('span',{class:'verdict '+r.verdict,text:VERDICT[r.verdict]}),document.createTextNode('第 '+r.number+' 題：'+r.question)]),
+        el('dl',{},[el('dt',{text:'你的答案'}),el('dd',{text:(r.answer||'（空白）')+(r.unsure?'（勾了不確定）':'')}),el('dt',{text:'回饋'}),el('dd',{text:r.feedback+(r.web_checked?'（已上網查證）':r.needs_web?'（有說法待查證）':'')}),el('dt',{text:'參考答案'}),el('dd',{text:r.reference})]),
+        ...groups.map(([label,list,link])=>el('div',{class:'src'},[el('strong',{text:'出處・'+label}),el('ul',{},list.map(s=>el('li',{},[link(s),s.excerpt?el('span',{class:'preview',text:s.excerpt.slice(0,160)}):null])))]))]));
+    }
+    return nodes;
+}
 // 「下一篇」：目前列表檢視（篩選、主題、搜尋、排序）中位在本篇之後的第一篇未讀文章；已載入的不夠時往下載入。
 async function nextUnread(){
   const id=current&&current.id;
@@ -757,6 +800,7 @@ function textModelName(){return !textModel?'目前設定的文字模型':textMod
 function renderEntries(s){
   const links=[];
   if(s.triage_pending)links.push(el('a',{href:urlFor({...view,mode:'triage',article:null}),'data-entry':'triage','data-mode':'triage'},[document.createTextNode('待決定'),el('strong',{text:s.triage_pending+' 篇'})]));
+  if(s.reviews_today)links.push(el('a',{href:urlFor({...view,mode:'review',article:null}),'data-entry':'review','data-mode':'review'},[document.createTextNode('今日複習'),el('strong',{text:s.reviews_today+' 題'})]));
   $('entry-bar').replaceChildren(...links);$('entry-bar').hidden=!links.length;
   for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,article:null}));};
 }

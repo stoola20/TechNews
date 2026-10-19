@@ -4,12 +4,12 @@
 
 **Blocked by:** 09：精讀問答：出題與本篇批改
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] migration 新增 `learning_reviews` 與索引
-- [ ] 進入條件與階梯規則符合規格；同一題重做時也套用同一套規則
-- [ ] 「今天」依台灣日期，從注入的 `now()` 計算；測試涵蓋跨日邊界
-- [ ] 每日上限 10 題，當天已作答的計入；超過的隔天再出現
-- [ ] 文章非保留時暫停，重新保留恢復；清除時刪除
-- [ ] `GET reviews/today`、`POST reviews/:id/attempts`；`GET status` 回傳今日複習題數
-- [ ] 內建瀏覽器在桌機與手機寬度完成一輪複習
+- [x] migration 新增 `learning_reviews` 與索引
+- [x] 進入條件與階梯規則符合規格；同一題重做時也套用同一套規則
+- [x] 「今天」依台灣日期，從注入的 `now()` 計算；測試涵蓋跨日邊界
+- [x] 每日上限 10 題，當天已作答的計入；超過的隔天再出現
+- [x] 文章非保留時暫停，重新保留恢復；清除時刪除
+- [x] `GET reviews/today`、`POST reviews/:id/attempts`；`GET status` 回傳今日複習題數
+- [x] 內建瀏覽器在桌機與手機寬度完成一輪複習

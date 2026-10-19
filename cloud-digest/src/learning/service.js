@@ -45,10 +45,11 @@ import { queueArticleNotifications, sendPending, receiptMessage, contentFingerpr
 import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from './triage.js';
 import { handleTriageCallback } from './telegram-triage.js';
 import { maintainIndex } from './rag-index.js';
-import { createQuiz, submitAttempt, completeQuiz, completeGrade, completeWebCheck } from './quiz.js';
+import { createQuiz, submitAttempt, completeQuiz, completeGrade, completeWebCheck, QuizError } from './quiz.js';
 import { search, relatedArticles, RELATED_MIN } from './retrieval.js';
 import { articleSummaries } from './library.js';
 import { articleQueryText } from './triage.js';
+import { applyReviews, reviewForAttempt } from './reviews.js';
 import { effectiveEnvironment } from '../settings.js';
 import { getSources } from '../sources.js';
 import { now, withClock } from './clock.js';
@@ -494,6 +495,7 @@ export function createLearningService(deps = {}) {
   // 批改完成後的後續步驟：需要時上網查證，再建立或更新複習。本機批改由 Mac 回報後也走這裡。
   async function graded(env, attemptId) {
     await completeWebCheck(env, attemptId, fetcher);
+    await applyReviews(env, attemptId);
   }
   // 連結題：用本篇標題與導讀查詢 RAG，排除本篇，取文章層級分數達門檻的前 2 篇，附標題、導讀與各自最相關的 3 段。
   // 檢索降級時沒有相關文章，照常出題，只是沒有連結題。
@@ -525,6 +527,19 @@ export function createLearningService(deps = {}) {
   }
   async function attempt(env, quizId, data, options = {}) {
     return submitAttempt(env, quizId, data, quizDeps(), options);
+  }
+  // 複習一次一題：走同一套批改流程，情境為 review。
+  async function review(env, reviewId, data) {
+    const found = await reviewForAttempt(env, reviewId);
+    if (found.error) throw new QuizError(...found.error);
+    const { review: r } = found;
+    return submitAttempt(
+      env,
+      r.quiz_id,
+      { answers: [{ number: r.number, answer: data?.answer, unsure: data?.unsure === true }] },
+      quizDeps(),
+      { context: 'review', numbers: [r.number], reviewId: r.id },
+    );
   }
   // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
   async function scheduled(env, options = false) {
@@ -673,6 +688,7 @@ export function createLearningService(deps = {}) {
     triageCallback,
     quiz,
     attempt,
+    review,
     migrate: migrateLibrary,
   };
   for (const [name, fn] of Object.entries(api)) api[name] = (...args) => withClock(deps.now, () => fn(...args));
