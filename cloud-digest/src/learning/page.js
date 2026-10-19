@@ -67,7 +67,7 @@ body.focus[data-view=reader][data-mode=""] #article{max-width:880px;margin:0 aut
 body.app:not([data-mode=""]) #library,body.app:not([data-mode=""]) #dock{display:none}
 body.app:not([data-mode=""]) .layout{grid-template-columns:minmax(0,1fr)}
 body.app:not([data-mode=""]) #reader{padding-bottom:40px}body.app:not([data-mode=""]) .reader-bar{display:none}
-#mode{max-width:760px;margin:0 auto}#mode[hidden]{display:none}
+#mode{max-width:760px;margin:0 auto}#mode[hidden]{display:none}#mode [tabindex="-1"]:focus{outline:none}
 .mode-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px}
 .mode-head h1{font-size:20px;margin:0}.mode-head .links{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .mode-head .links button{min-height:36px;padding:4px 12px}
@@ -574,7 +574,7 @@ const reviewMode={
     const form=el('form',{class:'card',id:'review-card'},[el('p',{class:'meta',text:'第 '+item.stage+' 階・到期 '+item.due_date}),el('h2',{id:'review-question',tabindex:'-1',text:item.question}),
       el('p',{class:'muted'},[document.createTextNode('出自：'),open,document.createTextNode(item.publisher?'・'+item.publisher:'')]),
       el('label',{class:'sr',for:'review-answer',text:'你的答案'}),area,el('label',{class:'unsure'},[unsure,document.createTextNode('不確定')]),el('div',{class:'actions'},[submit])]);
-    form.onsubmit=e=>{e.preventDefault();run(async()=>{this.attempt=await api('reviews/'+item.id+'/attempts','POST',{answer:area.value,unsure:unsure.checked});this.render();refreshEntries();},submit,'批改中…');};
+    form.onsubmit=e=>{e.preventDefault();run(async()=>{this.attempt=await api('reviews/'+item.id+'/attempts','POST',{answer:area.value,unsure:unsure.checked});this.data=await api('reviews/today');this.render();refreshEntries();},submit,'批改中…');};
     box.replaceChildren(this.head(),form);
     $('review-question').focus({preventScroll:true});$('reader').scrollTop=0;
   },

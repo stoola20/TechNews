@@ -3,7 +3,7 @@
 把開發者技術部落格和 X 上的技術貼文，整理成繁體中文的詳細文章，存進一個只有自己能讀的文章庫，並推送到 Telegram。
 
 一個人要追的來源很多：官方部落格、X 書籤、朋友轉來的連結。這個專案讓它們走同一條流程。
-來源進來後會自動抓全文、用模型寫成繁中整理、保存原文與媒體證據。你可以在文章庫閱讀、寫筆記，或針對來源提問。
+來源進來後會自動抓全文、用模型寫成繁中整理、保存原文與媒體證據。新文章先進「待決定」，你看導讀決定保留或刪除；保留的文章可以精讀、做問答、排進間隔複習，也會進入語意檢索。
 
 整套系統跑在 Cloudflare Workers（免費方案可用）。文字整理可以改由自己 Mac 上的本機 Gemma 執行。
 
@@ -22,6 +22,7 @@ flowchart LR
     QUEUE["Queue<br/>持續保存的工作"]
     D1[("D1<br/>文章、設定、狀態")]
     R2[("R2<br/>圖片與影片")]
+    VEC[("Vectorize<br/>保留文章的向量")]
   end
 
   GEMINI["Gemini Flash<br/>看圖片與影片，留下證據"]
@@ -43,8 +44,10 @@ flowchart LR
   MAC --> OLLAMA
   GEMINI_TEXT --> D1
   MAC -->|"回報結果"| D1
-  D1 --> LIB["私人文章庫 /learning<br/>閱讀、筆記、來源追問"]
-  D1 --> TG["Telegram 通知<br/>精簡介紹＋文章連結"]
+  D1 -->|"保留文章"| VEC
+  D1 --> LIB["私人文章庫 /learning<br/>篩選、閱讀、筆記、追問<br/>精讀問答、今日複習、每週回顧"]
+  VEC -->|"語意＋關鍵字檢索"| LIB
+  D1 --> TG["Telegram 通知<br/>精簡介紹＋文章連結<br/>保留／刪除按鈕"]
 ```
 
 ### 設計上的幾個取捨
@@ -56,6 +59,7 @@ flowchart LR
 | 本機與雲端混合 | 只有 Mac 執行器對外連線去領工作；Ollama 只聽 `127.0.0.1` | 手機不用連回家裡，也不用開放家用網路的埠 |
 | 文字模型可切換 | Gemini 與 Mac 本機 Gemma 使用同一份輸入格式，在管理頁切換，不需重新部署 | 方便用同一篇文章比較品質，也能自己決定花費 |
 | 來源內容不是指令 | 來源夾帶的指令會被當成資料處理；驗收素材含 prompt injection 案例 | 抓進來的網頁與貼文不可信 |
+| 收進來不等於要留 | 新文章先待決定，14 天沒處理自動移到最近刪除，7 天後清除；只有保留文章進 RAG 與複習 | 列表與檢索只放篩選過的內容，Vectorize 免費容量也只夠放保留文章 |
 
 ## 我該讀哪份文件
 
@@ -66,12 +70,13 @@ flowchart LR
 | 用 Telegram 分享連結、收 X 書籤 | [設定與使用](docs/learning-setup.md) | X 書籤另需 X 開發帳號 |
 | 讓文字整理改由自己的 Mac 執行 | [Mac 執行器](cloud-digest/runner/README.md) | Apple Silicon Mac、Ollama |
 | 看系統怎麼設計 | [資料流與 input/output](docs/architecture.md) · [來源策略與 Worker／n8n 比較](docs/source-strategy.md) | — |
-| 看實測結果 | [驗收紀錄](docs/testing/unified-learning-acceptance-2026-10-17.md) | — |
+| 看實測結果 | [驗收紀錄](docs/testing/unified-learning-acceptance-2026-10-17.md) · [篩選、問答與複習驗收](docs/testing/curated-study-acceptance-2026-10-19.md) | — |
 
 ## 目前狀態
 
 - **私人文章庫**：已部署並用真實貼文完成一輪驗證（收件、影片處理、教材生成、完成通知、單篇追問），見[實測紀錄](docs/testing/learning-setup-2026-10-13.md)。X 書籤同步預設關閉，要在管理頁主動開啟。
 - **本機 Gemma**：14 組合成代表素材通過驗收，程式預設文字模型仍是 Gemini。要在代表素材驗收並啟動 Mac 執行器後，才到 `/learning/admin` 切換。
+- **篩選、精讀問答、間隔複習與保留文章 RAG**：程式、模擬測試與示範伺服器操作完成；Telegram 按鈕、Vectorize 與 Workers AI 的實際檢索品質、Gemini 搜尋計費還沒有在正式環境驗收，見[驗收紀錄](docs/testing/curated-study-acceptance-2026-10-19.md)。升級步驟見[設定與使用](docs/learning-setup.md#篩選精讀問答與複習)。
 
 ## 專案結構
 
@@ -122,15 +127,16 @@ npx wrangler login
 
 ### 4. 建立 Cloudflare 資源
 
-`wrangler.jsonc` 宣告了 D1、R2 與 Queue，部署前三個都要先存在。
+`wrangler.jsonc` 宣告了 D1、R2、Queue 與 Vectorize，部署前都要先存在。
 
 ```bash
 npx wrangler d1 create developer-digest-cloud
 npx wrangler r2 bucket create technews-learning-media
 npx wrangler queues create technews-learning-jobs
+npx wrangler vectorize create technews-library --dimensions=512 --metric=cosine
 ```
 
-> R2 指令若問是否自動加入設定檔，選 `n`；設定檔已經有 `MEDIA` binding。
+> R2 與 Vectorize 指令若問是否自動加入設定檔，選 `n`；設定檔已經有 `MEDIA` 與 `LIBRARY_INDEX` binding。
 
 D1 指令會輸出一組 `database_id`。打開 [`cloud-digest/wrangler.jsonc`](cloud-digest/wrangler.jsonc)，把 `d1_databases[0].database_id` **換成你自己的 ID**（repo 內的是作者帳號的 ID，你的帳號無法使用）。
 
@@ -185,7 +191,7 @@ npx wrangler deploy
 | --- | --- | --- |
 | `GET /health` | 不需要 | 健康檢查 |
 | `GET /learning`、`GET /learning/admin` | 登入 session | 文章庫（列表／閱讀）與管理入口 |
-| `POST /learning/telegram` | Telegram webhook secret | Telegram 分享收件，設定見[設定與使用](docs/learning-setup.md#telegram-收件與通知) |
+| `POST /learning/telegram` | Telegram webhook secret | Telegram 分享收件與通知上的篩選按鈕，設定見[設定與使用](docs/learning-setup.md#telegram-收件與通知) |
 | `POST /learning/runner/{claim,heartbeat,complete,fail,release}` | `Authorization: Bearer <LEARNING_RUNNER_TOKEN>` | Mac 執行器專用；網站登入憑證不能使用 |
 
 其他路徑一律回 404。
@@ -194,7 +200,8 @@ npx wrangler deploy
 
 - **修改推送時間**：編輯 `wrangler.jsonc` 的 `triggers.crons`（UTC 時間），再重新 `npx wrangler deploy`。
 - **新增或移除來源、調整想收到的內容**：在管理頁的「官方來源」區塊設定，下一輪排程生效；來源格式見 [`SOURCES.md`](cloud-digest/SOURCES.md)。特殊網站可指定 `contentSelector`，仍需確認能完整擷取。
-- **切換文字模型**：在 `/learning/admin` 切換 Gemini 或本機 Gemma。
+- **切換文字模型**：在 `/learning/admin` 切換 Gemini 或本機 Gemma。出題與批改跟著切換。
+- **網路查證**：在 `/learning/admin`「精讀問答的網路查證」開關；搜尋費用見[設定與使用](docs/learning-setup.md#精讀問答與網路查證)。
 - **查看執行紀錄**：`npx wrangler tail`，或到 Cloudflare Dashboard → Workers → Observability。
 
 ### 執行測試
@@ -225,7 +232,7 @@ git blame --ignore-revs-file .git-blame-ignore-revs cloud-digest/src/learning/se
 | 操作 | [learning-setup.md](docs/learning-setup.md) | 文章庫：Cloudflare 資源、Gemini、X、Telegram 收件、費用與故障處理 |
 | 操作 | [runner/README.md](cloud-digest/runner/README.md) | Mac 本機文字執行器 |
 | 操作 | [SOURCES.md](cloud-digest/SOURCES.md) | 官方來源的入口與擷取方式 |
-| 規格 | [x-learning](docs/specs/x-learning.md) · [unified-learning](docs/specs/unified-learning.md) · [source-merging](docs/specs/source-merging-and-reading.md) · [library-topics-timeline](docs/specs/library-topics-timeline.md) · [official-sources-and-cleanup](docs/specs/official-sources-and-cleanup.md) | 需求與使用情境 |
+| 規格 | [x-learning](docs/specs/x-learning.md) · [unified-learning](docs/specs/unified-learning.md) · [source-merging](docs/specs/source-merging-and-reading.md) · [library-topics-timeline](docs/specs/library-topics-timeline.md) · [official-sources-and-cleanup](docs/specs/official-sources-and-cleanup.md) · [curated-study](docs/specs/curated-study.md) | 需求與使用情境 |
 | 計畫 | [x-learning](docs/plans/x-learning.md) · [unified-learning](docs/plans/unified-learning.md) | 實作順序與阻擋關係 |
 | 驗收 | [docs/testing/](docs/testing/) | 測試證據與實測紀錄，區分模擬與真實 API |
 | 調查 | [docs/research/](docs/research/) | X 收藏工具 survey、影片處理比較；價格與能力採用前須重新查核 |
