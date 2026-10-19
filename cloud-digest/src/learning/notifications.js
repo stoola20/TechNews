@@ -1,4 +1,5 @@
 import {query,rows,hash,nowIso} from './store.js';
+import {now} from './clock.js';
 
 const STATES={queued:'等待處理',processing:'處理中',waiting_local:'等待本機',generating:'本機生成中',error:'待重試',needs_attention:'需要處理',budget_paused:'費用暫停',paused:'手動暫停',awaiting_backfill:'等待確認回補'};
 
@@ -45,7 +46,7 @@ export async function queueArticleNotifications(env){
 // 送出已保存的通知內容；失敗只重送同一份內容，不重新生成。
 export async function sendPending(env,send){
   for(const delivery of await rows(env,"SELECT * FROM learning_deliveries WHERE status='pending' AND origin!='receipt' ORDER BY created_at")){
-    const lease=new Date(Date.now()+60000).toISOString();
+    const lease=new Date(now()+60000).toISOString();
     const acquired=await query(env,"UPDATE learning_deliveries SET lease_until=? WHERE id=? AND (lease_until IS NULL OR lease_until<?)",lease,delivery.id,nowIso()).run();
     if(!acquired.meta.changes)continue;
     try{

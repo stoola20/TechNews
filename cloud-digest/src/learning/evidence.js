@@ -4,6 +4,7 @@ import {postEvidence,xRead,postParameters,normalizePost,registerMedia,saveArticl
 import {loadArticle,getSources} from '../sources.js';
 import {effectiveEnvironment} from '../settings.js';
 import {xArticleUrl,queueXArticle} from './local.js';
+import {now} from './clock.js';
 
 // 官方來源沿用既有官方擷取（含 Markdown 與瀏覽器備援），第一版只取全文文字，不抓媒體。
 async function officialSourceFor(env,item){
@@ -64,10 +65,10 @@ export async function acquireEvidence(env,item,deps={}) {
       let username=metadata.author_username;
       if(!username){
         let profile=await setting(env,`author:${primary.author_id}`);
-        if(!profile.username || profile.expires_at<Date.now()){
+        if(!profile.username || profile.expires_at<now()){
           const result=await (deps.xRead || xRead)(env,`/users/${primary.author_id}`,{'user.fields':'username,name'},1,false,fetcher);
           if(result.data?.id!==primary.author_id || !/^[A-Za-z0-9_]{1,15}$/.test(result.data?.username || ''))throw new Error('作者身份無法確認');
-          profile={username:result.data.username,expires_at:Date.now()+86400000};
+          profile={username:result.data.username,expires_at:now()+86400000};
           await setSetting(env,`author:${primary.author_id}`,profile);
         }
         username=profile.username;

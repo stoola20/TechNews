@@ -2,6 +2,7 @@ import {apiJson} from './network.js';
 import {query,rows,hash,nowIso,reserve,settle,uncertain} from './store.js';
 import {tokenCost} from './gemini.js';
 import {prepareMedia,skipDecorative} from './media.js';
+import {now} from './clock.js';
 
 export const MEDIA_PROMPT_VERSION='media-evidence-v1';
 export const mediaModel=env=>env.LEARNING_MEDIA_MODEL || env.LEARNING_MODEL || 'gemini-3.8-flash';
@@ -69,7 +70,7 @@ export async function analyzeMedia(env,asset,fetcher=fetch){
   if(!file.uri)throw new Error('媒體尚未完成上傳');
   const estimate=asset.type==='photo'?3000:Math.ceil((asset.duration_ms || 1200000)/1000)*300;
   const output=12000;
-  const cost=await reserve(env,'gemini-media',tokenCost(estimate+2000,output+16384,Date.now(),env));
+  const cost=await reserve(env,'gemini-media',tokenCost(estimate+2000,output+16384,now(),env));
   try{
     const result=await apiJson(await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(mediaModel(env))}:generateContent`,{
       method:'POST',headers:{'content-type':'application/json','x-goog-api-key':env.GEMINI_API_KEY},signal:AbortSignal.timeout(180000),
@@ -78,7 +79,7 @@ export async function analyzeMedia(env,asset,fetcher=fetch){
     }),4000000);
     const usage=result.usageMetadata;
     if(!usage || [usage.promptTokenCount,usage.candidatesTokenCount,usage.thoughtsTokenCount || 0].some(n=>!Number.isSafeInteger(n)||n<0))throw new Error('Gemini 未回傳可核對用量');
-    await settle(env,cost,tokenCost(usage.promptTokenCount,usage.candidatesTokenCount+(usage.thoughtsTokenCount || 0),Date.now(),env),{...usage,model:mediaModel(env),media:asset.id});
+    await settle(env,cost,tokenCost(usage.promptTokenCount,usage.candidatesTokenCount+(usage.thoughtsTokenCount || 0),now(),env),{...usage,model:mediaModel(env),media:asset.id});
     const candidate=result.candidates?.[0];
     if(candidate?.finishReason!=='STOP')throw new Error('媒體解析輸出未完成或遭拒絕');
     let data;

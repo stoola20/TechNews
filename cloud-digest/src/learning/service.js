@@ -14,6 +14,7 @@ import {discoverOfficial,officialIntake,staleOfficialReason} from './official.js
 import {queueArticleNotifications,sendPending,receiptMessage,contentFingerprint} from './notifications.js';
 import {effectiveEnvironment} from '../settings.js';
 import {getSources} from '../sources.js';
+import {now,withClock} from './clock.js';
 
 // 只從官方來源收件、且還沒發過通知的新文章才做主題判斷；使用者分享或收藏過的同一篇、已發布過的舊導讀重寫都不淘汰。
 async function officialContext(env,row){
@@ -54,7 +55,7 @@ export function createLearningService(deps={}) {
       if(await manuallyPaused(env)){await query(env,"UPDATE learning_items SET status='paused',updated_at=? WHERE id=?",nowIso(),id).run();return {waiting:true};}
       await query(env,"UPDATE learning_items SET status='processing',stage='source',updated_at=? WHERE id=?",nowIso(),id).run();
       const acquisition=await acquireEvidence(env,row,deps);
-      if(acquisition.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
+      if(acquisition.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(now()+60000).toISOString(),id).run();return {pending:true};}
       // X 貼文唯一連到的文章已在文章庫：併進那篇，不另外整理。
       if(row.kind==='x'){
         const merged=await mergeIntoLinkedArticle(env,row);
@@ -72,11 +73,11 @@ export function createLearningService(deps={}) {
       // 本機文字路徑：Flash 只解析媒體並保存證據，寫作交給 Mac；純文字來源完全不呼叫 Flash。
       if((await textProvider(env))==='local'){
         const evidence=await mediaEvidence(env,id,{...deps,fetcher});
-        if(evidence.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
+        if(evidence.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(now()+60000).toISOString(),id).run();return {pending:true};}
         return await queueLocal(env,row,acquisition,evidence);
       }
       const media=await (deps.prepareMedia || prepareMedia)(env,id,fetcher);
-      if(media.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(Date.now()+60000).toISOString(),id).run();return {pending:true};}
+      if(media.pending){await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=? WHERE id=?",new Date(now()+60000).toISOString(),id).run();return {pending:true};}
       const sources=acquisition.sources.filter(s=>s.status==='available'&&s.content);
       const gaps=[...acquisition.sources.filter(s=>s.status!=='available').map(s=>({url:s.url,error:JSON.parse(s.metadata_json).error || '來源不可取得'})),...media.gaps];
       const official=await officialContext(env,row);
@@ -99,11 +100,11 @@ export function createLearningService(deps={}) {
       if(!article.generated_at)article.generated_at=nowIso();
       if(revision!==row.revision)await saveVersion(env,row,'superseded');
       await query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=?,edition='detailed',stage=NULL,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,recheck_at=COALESCE(recheck_at,?) WHERE id=?`,
-        article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',revision,nowIso(),row.kind==='x'?new Date(Date.now()+86400000).toISOString():null,id).run();
+        article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',revision,nowIso(),row.kind==='x'?new Date(now()+86400000).toISOString():null,id).run();
       return {done:true};
     }catch(error){
       const paused=error.name==='BudgetPaused',attempts=paused?row.attempts:row.attempts+1;
-      await query(env,'UPDATE learning_items SET status=?,attempts=?,last_error=?,next_attempt_at=?,updated_at=? WHERE id=?',paused?'budget_paused':attempts>=3?'needs_attention':'error',attempts,error.message,new Date(Date.now()+Math.min(3600,60*2**attempts)*1000).toISOString(),nowIso(),id).run();
+      await query(env,'UPDATE learning_items SET status=?,attempts=?,last_error=?,next_attempt_at=?,updated_at=? WHERE id=?',paused?'budget_paused':attempts>=3?'needs_attention':'error',attempts,error.message,new Date(now()+Math.min(3600,60*2**attempts)*1000).toISOString(),nowIso(),id).run();
       if(paused)return {waiting:true};
       throw error;
     }finally{await unlock(env,id,lease);}
@@ -152,7 +153,7 @@ export function createLearningService(deps={}) {
   }
   async function flushReceipts(env){
     for(const d of await rows(env,"SELECT * FROM learning_deliveries WHERE origin='receipt' AND status='pending'")){
-      const lease=new Date(Date.now()+60000).toISOString();
+      const lease=new Date(now()+60000).toISOString();
       const acquired=await query(env,"UPDATE learning_deliveries SET lease_until=? WHERE id=? AND (lease_until IS NULL OR lease_until<?)",lease,d.id,nowIso()).run();
       if(!acquired.meta.changes)continue;
       try{
@@ -212,5 +213,8 @@ export function createLearningService(deps={}) {
       }
     }
   }
-  return {collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,official,migrate:migrateLibrary,localHooks:{completeQuestion}};
+  // 每個對外入口都在注入的時鐘下執行；沒有注入時用系統時間。
+  const api={collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,official,migrate:migrateLibrary};
+  for(const [name,fn] of Object.entries(api))api[name]=(...args)=>withClock(deps.now,()=>fn(...args));
+  return {...api,localHooks:{completeQuestion}};
 }

@@ -1,5 +1,6 @@
 import { normalizePublished } from './dates.js';
-export const nowIso = () => new Date().toISOString();
+import {now} from './clock.js';
+export const nowIso = () => new Date(now()).toISOString();
 export const query = (env, sql, ...args) => env.DB.prepare(sql).bind(...args);
 export async function rows(env, sql, ...args) { return (await query(env, sql, ...args).all()).results; }
 export async function setting(env, name, fallback = {}) {
@@ -27,12 +28,12 @@ export async function saveEvidence(env, id, value) {
   return key;
 }
 export async function lock(env, id) {
-  const token = new Date(Date.now()+600000).toISOString();
+  const token = new Date(now()+600000).toISOString();
   const result = await query(env, 'UPDATE learning_items SET lease_until=? WHERE id=? AND (lease_until IS NULL OR lease_until<?)', token,id,nowIso()).run();
   return result.meta.changes ? token : null;
 }
 export async function unlock(env, id, token) { await query(env, 'UPDATE learning_items SET lease_until=NULL WHERE id=? AND lease_until=?',id,token).run(); }
-export function monthKey(time = Date.now()) {
+export function monthKey(time = now()) {
   return new Date(time+8*3600000).toISOString().slice(0,7);
 }
 export class BudgetPaused extends Error { constructor(){super('費用不足或處理已暫停，工作已保留，請手動恢復。');this.name='BudgetPaused';} }

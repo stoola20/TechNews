@@ -10,14 +10,17 @@ import {environment,recorder,request,message} from './helpers.js';
 
 const TAIL='限制：此功能僅在 v2.4 以上可用，且每分鐘最多 60 次請求。';
 const longContent='背景、機制、例子與操作步驟。'.repeat(500)+TAIL;
-const entries=Array.from({length:8},(_,i)=>({url:`https://developers.openai.com/blog/post-${i}`,title:'Post '+i,publishedAt:new Date().toUTCString(),content:null}));
+// 固定「現在時間」：測試結果不隨真實日期改變。
+const NOW=Date.parse('2026-10-19T00:00:00Z'),now=()=>NOW,DAY=86400000;
+const daysAgo=n=>new Date(NOW-n*DAY).toUTCString();
+const entries=Array.from({length:8},(_,i)=>({url:`https://developers.openai.com/blog/post-${i}`,title:'Post '+i,publishedAt:daysAgo(0),content:null}));
 function setup(){
   const env={...environment(),LEARNING_RUNNER_TOKEN:'runner-test-token'},net=recorder(),loads=[];
-  const handler=createLearningHandler({...net,discoverSource:async source=>source.id==='openai_developer_blog'?entries:[],
+  const handler=createLearningHandler({...net,now,discoverSource:async source=>source.id==='openai_developer_blog'?entries:[],
     loadArticle:async(source,entry)=>{loads.push(entry.url);return {...entry,title:'Official '+entry.url.split('-').at(-1),content:longContent,contentMethod:'article_html'};}});
   return {env,net,handler,loads};
 }
-async function settings(env){await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('digest',?,?)",JSON.stringify({model_profile:'gemma4',interests:'AI agents 與開發者工具',sources:[SOURCES[0]]}),new Date().toISOString()).run();}
+async function settings(env){await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('digest',?,?)",JSON.stringify({interests:'AI agents 與開發者工具',sources:[SOURCES[0]]}),new Date().toISOString()).run();}
 async function complete(s,job,output){
   const r=await s.handler.fetch(new Request('https://learning.example.org/learning/runner/complete',{method:'POST',headers:{authorization:'Bearer runner-test-token','content-type':'application/json'},
     body:JSON.stringify({runner_id:'mac',job_id:job.id,attempt_token:job.attempt_token,input_version:job.input_version,model:{name:'gemma4:26b',done_reason:'stop'},output})}),s.env);
@@ -104,7 +107,7 @@ test('切換前不把官方文章送進文章庫；08:00 排程在本機模式�
 
 test('Gemini 模式：官方文章也進文章庫詳細整理，不符合讀者關注的略過且不通知',async()=>{
   const env=environment(),net=recorder(),seen=[];
-  const handler=createLearningHandler({...net,discoverSource:async source=>source.id==='openai_developer_blog'?entries.slice(0,2):[],
+  const handler=createLearningHandler({...net,now,discoverSource:async source=>source.id==='openai_developer_blog'?entries.slice(0,2):[],
     loadArticle:async(source,entry)=>({...entry,title:'Official '+entry.url.split('-').at(-1),content:longContent,contentMethod:'article_html'}),
     generate:async(env,sources,media,gaps,question,fetcher,{official}={})=>{seen.push(official);
       return sources[0].url.endsWith('post-0')?{title:'詳細教材',body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]}:{publish:false,reason:'人物專訪，沒有技術變更',title:'略過的文章'};}});
@@ -119,8 +122,6 @@ test('Gemini 模式：官方文章也進文章庫詳細整理，不符合讀者�
   assert.equal(net.calls.filter(c=>c.url.includes('api.telegram.org')).length,1);
 });
 
-const DAY=86400000;
-const daysAgo=n=>new Date(Date.now()-n*DAY).toUTCString();
 
 test('已初始化的來源突然冒出舊文章：發表超過期限的只記為看過，不收件也不通知',async()=>{
   const env=environment(),net=recorder();
@@ -130,7 +131,7 @@ test('已初始化的來源突然冒出舊文章：發表超過期限的只記�
     {url:'https://developers.openai.com/blog/eight-days',title:'Edge',publishedAt:daysAgo(8),content:null},
     {url:'https://developers.openai.com/blog/undated',title:'Undated',publishedAt:null,content:null},
   ];
-  const handler=createLearningHandler({...net,discoverSource:async source=>source.id==='openai_developer_blog'?feed:[]});
+  const handler=createLearningHandler({...net,now,discoverSource:async source=>source.id==='openai_developer_blog'?feed:[]});
   await settings(env);
   // 模擬今天的狀況：來源早已初始化，但 seen 清單沒有這些舊網址（舊流程只記已處理過的）。
   await query(env,"INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,'[]')",daysAgo(30),daysAgo(1)).run();
@@ -146,7 +147,7 @@ test('已初始化的來源突然冒出舊文章：發表超過期限的只記�
 test('列表沒有日期的官方文章：抓到原文才發現太舊就篩掉，不呼叫模型、不通知；收件後的處理延誤不算過期',async()=>{
   const env=environment(),net=recorder(),generated=[];
   const published={old:daysAgo(60),fresh:daysAgo(2),delayed:daysAgo(12)};
-  const handler=createLearningHandler({...net,
+  const handler=createLearningHandler({...net,now,
     discoverSource:async source=>source.id==='openai_developer_blog'?Object.keys(published).map(k=>({url:'https://developers.openai.com/blog/'+k,title:k,publishedAt:null,content:null})):[],
     loadArticle:async(source,entry)=>({...entry,title:'Official '+entry.url.split('/').at(-1),publishedAt:published[entry.url.split('/').at(-1)],content:longContent,contentMethod:'article_html'}),
     generate:async(env,sources)=>{generated.push(sources[0].url);return {title:'詳細教材',body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]};}});
@@ -154,7 +155,7 @@ test('列表沒有日期的官方文章：抓到原文才發現太舊就篩掉�
   await query(env,"INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,'[]')",daysAgo(30),daysAgo(1)).run();
   assert.equal((await handler.service.official(env)).queued,3);
   // delayed：收件於 10 天前（例如 Mac 離線），當時文章才發表 2 天，仍算新知。
-  await query(env,"UPDATE learning_intakes SET created_at=? WHERE receipt='official:https://developers.openai.com/blog/delayed'",new Date(Date.now()-10*DAY).toISOString()).run();
+  await query(env,"UPDATE learning_intakes SET created_at=? WHERE receipt='official:https://developers.openai.com/blog/delayed'",new Date(NOW-10*DAY).toISOString()).run();
   for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
   const items=Object.fromEntries((await rows(env,'SELECT url,status,title,article_json FROM learning_items')).map(r=>[r.url.split('/').at(-1),r]));
   assert.equal(items.old.status,'filtered');assert.match(JSON.parse(items.old.article_json).reason,/^發表於 \d{4}-\d{2}-\d{2}，收件時已超過 7 天/);

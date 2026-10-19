@@ -1,4 +1,5 @@
 import {query,rows,nowIso,monthKey,setting} from './store.js';
+import {now} from './clock.js';
 
 // X API 計價依據（查核日：2026-10-16，https://docs.x.com/x-api/getting-started/pricing）：
 // Post 讀取 US$0.005／筆、User 讀取 US$0.010／筆、Owned Reads US$0.001／筆。
@@ -11,7 +12,7 @@ export function xPricing(env={}){
   return {checked_at:env.X_PRICING_CHECKED_AT || X_PRICING_CHECKED_AT,post_micro:micro(env.X_POST_READ_USD,5000),user_micro:micro(env.X_USER_READ_USD,10000),owned_micro:micro(env.X_OWNED_READ_USD,1000),
     reread_fraction:fraction,reread_daily_cap_micro:micro(env.X_REREAD_RISK_DAILY_USD,100000)};
 }
-export const utcDay=(time=Date.now())=>new Date(time).toISOString().slice(0,10);
+export const utcDay=(time=now())=>new Date(time).toISOString().slice(0,10);
 
 // Owned Reads 只用於官方列出的自身資源端點，且帳號必須是 app 擁有者（X_APP_OWNER_ID 由使用者確認後設定）。
 export function ownedEligible(path,account,env){

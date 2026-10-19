@@ -2,6 +2,7 @@ import {apiJson} from './network.js';
 import {connection,saveConnection,query,setting,setSetting,reserve,settle,uncertain,nowIso,saveEvidence,hash} from './store.js';
 import {xPricing,ownedEligible,firstReads,rereadRisk,recordCost,utcDay} from './pricing.js';
 import {xArticleUrl} from './local.js';
+import {now} from './clock.js';
 
 function clientHeaders(env) {
   if(!env.X_CLIENT_ID || !env.X_CLIENT_SECRET)throw new Error('X_CLIENT_ID／X_CLIENT_SECRET 未設定');
@@ -13,11 +14,11 @@ export async function exchange(env,params,fetcher=fetch) {
 export async function accessToken(env,fetcher=fetch) {
   const value=await connection(env,'x');
   if(!value)throw new Error('尚未連接 X 帳號');
-  if(value.expires_at>Date.now()+60000)return value.access_token;
+  if(value.expires_at>now()+60000)return value.access_token;
   if(!value.refresh_token)throw new Error('X 授權已到期，請重新連接');
   const result=await exchange(env,{grant_type:'refresh_token',refresh_token:value.refresh_token},fetcher);
   if(!result.access_token)throw new Error('X 授權刷新失敗');
-  await saveConnection(env,'x',{...value,...result,expires_at:Date.now()+(result.expires_in || 7200)*1000});
+  await saveConnection(env,'x',{...value,...result,expires_at:now()+(result.expires_in || 7200)*1000});
   return result.access_token;
 }
 export function postParameters(env) {
@@ -101,7 +102,7 @@ export function failureDetail(error,stage){
 function logFailure(scope,detail){console.log(JSON.stringify({event:'bookmark_sync_failed',scope,...detail}));}
 const FULL_LOCK='learning:sync-lock',PARTIAL_LOCK='learning:sync-lock-partial';
 async function acquireLock(env,key,ms=600000){
-  const id=crypto.randomUUID(),until=new Date(Date.now()+ms).toISOString();
+  const id=crypto.randomUUID(),until=new Date(now()+ms).toISOString();
   await query(env,"INSERT OR IGNORE INTO settings(key,value_json,updated_at) VALUES(?,'{}',?)",key,nowIso()).run();
   const acquired=await query(env,"UPDATE settings SET value_json=?,updated_at=? WHERE key=? AND (json_extract(value_json,'$.until') IS NULL OR json_extract(value_json,'$.until')<?)",JSON.stringify({id,until}),nowIso(),key,nowIso()).run();
   return acquired.meta.changes?id:null;
@@ -186,7 +187,7 @@ export async function syncBookmarks(env,deps={},scope='full') {
   }catch(error){
     error.stage=stage;sync.last_failure=failureDetail(error,stage);logFailure('full',sync.last_failure);
     sync.last_error=error.name==='BudgetPaused'?error.message:'X 同步未完成，請檢查授權、費用與 API 設定';
-    if(error.status===429){sync.retry_after=new Date(Date.now()+RATE_LIMIT_MS).toISOString();sync.last_error='X 限流，已保存游標，稍後從同一頁續跑。';}
+    if(error.status===429){sync.retry_after=new Date(now()+RATE_LIMIT_MS).toISOString();sync.last_error='X 限流，已保存游標，稍後從同一頁續跑。';}
     else if(error.status===400&&sync.cursor){sync.cursor=null;sync.pages_scanned=0;sync.last_error='分頁請求失效，已保存內容會保留，下一次從頭核對。';}
     else if([400,401,403].includes(error.status)){sync.running=false;sync.requires_action=true;sync.last_error='X 授權或 API 設定需處理，已停止自動重試，內容與進度仍保留。';}
     await setSetting(env,'sync',sync);throw error;
@@ -231,7 +232,7 @@ async function partialCheck(env,deps,account,full,fetcher){
   }catch(error){
     error.stage=stage;state.last_failure=failureDetail(error,stage);logFailure('partial',state.last_failure);
     state.last_error=error.name==='BudgetPaused'?'費用暫停，局部檢查未執行':'局部檢查未完成，請查看 X 授權或設定';
-    if(error.status===429){state.retry_after=new Date(Date.now()+RATE_LIMIT_MS).toISOString();state.last_error='X 限流，稍後再檢查';}
+    if(error.status===429){state.retry_after=new Date(now()+RATE_LIMIT_MS).toISOString();state.last_error='X 限流，稍後再檢查';}
     else if([401,403].includes(error.status)){full.requires_action=true;full.last_error='X 授權或 API 設定需處理，已停止自動檢查。';await setSetting(env,'sync',full);}
     await setSetting(env,'sync-partial',state);
     if(error.name==='BudgetPaused')return state;

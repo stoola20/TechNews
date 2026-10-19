@@ -1,5 +1,6 @@
 import {timingSafeEqual} from 'node:crypto';
 import {hash,query,nowIso} from './store.js';
+import {now} from './clock.js';
 
 export function equalSecret(a,b) {
   if(!a || !b)return false;
@@ -17,7 +18,7 @@ export async function authorized(request,env){
 }
 export async function createSession(env){
   const token=crypto.randomUUID()+crypto.randomUUID();
-  await query(env,'INSERT INTO learning_sessions(id,credential_hash,expires_at) VALUES(?,?,?)',await hash(token),await hash(env.RUN_TOKEN),new Date(Date.now()+7*86400000).toISOString()).run();
+  await query(env,'INSERT INTO learning_sessions(id,credential_hash,expires_at) VALUES(?,?,?)',await hash(token),await hash(env.RUN_TOKEN),new Date(now()+7*86400000).toISOString()).run();
   return `learning_session=${token}; Path=/learning; HttpOnly; Secure; SameSite=Strict; Max-Age=604800`;
 }
 export function mutationAllowed(request,env){

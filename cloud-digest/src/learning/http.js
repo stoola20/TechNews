@@ -18,6 +18,7 @@ const STATE_GROUPS={ready:['ready','partial'],needs_action:['needs_attention','e
 import {listQuestions,questionView} from './questions.js';
 import {budgetSummary,recordCost} from './pricing.js';
 import {claim,heartbeat,complete,fail,release,runnerStatus,setTextProvider,JobConflict} from './local.js';
+import {now,withClock} from './clock.js';
 
 const JSON_HEADERS={'cache-control':'no-store','referrer-policy':'no-referrer'};
 const json=(value,status=200,headers={})=>Response.json(value,{status,headers:{...JSON_HEADERS,...headers}});
@@ -49,13 +50,13 @@ export function createLearningHandler(deps={}) {
         const state=url.searchParams.get('state'),code=url.searchParams.get('code');
         if(!state || !code || !equalSecret(state,cookie(request,'learning_oauth')))return json({error:'X 授權回呼驗證失敗'},400);
         const key=`oauth:${await hash(state)}`,saved=await connection(env,key);
-        if(!saved || saved.expires_at<Date.now())return json({error:'X 授權請求已到期'},400);
+        if(!saved || saved.expires_at<now())return json({error:'X 授權請求已到期'},400);
         await query(env,'DELETE FROM learning_connections WHERE name=?',key).run();
         const token=await exchange(env,{grant_type:'authorization_code',code,code_verifier:saved.verifier,redirect_uri:saved.redirect_uri},fetcher);
         if(!token.access_token || !token.refresh_token)throw new Error('X 授權未包含持續讀取權限');
         const identity=await xRead(env,'/users/me',{},1,false,fetcher,token.access_token);
         if(!identity.data?.id)throw new Error('X 帳號身份不可確認');
-        await saveConnection(env,'x',{...token,user_id:identity.data.id,expires_at:Date.now()+(token.expires_in || 7200)*1000});
+        await saveConnection(env,'x',{...token,user_id:identity.data.id,expires_at:now()+(token.expires_in || 7200)*1000});
         const existing=await setting(env,'sync');
         if(existing.user_id!==identity.data.id)await setSetting(env,'sync',{user_id:identity.data.id,baseline_complete:false,running:true,cursor:null,backfill_approved:false});
         else await setSetting(env,'sync',{...existing,requires_action:false,running:true,last_error:null});
@@ -296,7 +297,7 @@ export function createLearningHandler(deps={}) {
         const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier)));
         const challenge=btoa(String.fromCharCode(...digest)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
         const redirect=base.origin+'/learning/x/callback';
-        await saveConnection(env,`oauth:${await hash(state)}`,{verifier,redirect_uri:redirect,expires_at:Date.now()+600000});
+        await saveConnection(env,`oauth:${await hash(state)}`,{verifier,redirect_uri:redirect,expires_at:now()+600000});
         const auth=new URL('https://x.com/i/oauth2/authorize');
         for(const [k,v] of Object.entries({response_type:'code',client_id:env.X_CLIENT_ID,redirect_uri:redirect,scope:'bookmark.read tweet.read users.read offline.access',state,code_challenge:challenge,code_challenge_method:'S256'}))auth.searchParams.set(k,v);
         return json({url:auth.href},200,{'set-cookie':`learning_oauth=${state}; Path=/learning/x/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=600`});
@@ -309,6 +310,6 @@ export function createLearningHandler(deps={}) {
       return json({error:'Not found'},404);
     }catch(error){return json({error:error.message || '學習流程處理失敗'},error.name==='BudgetPaused'?429:400);}
   }
-  return {fetch:handle,queue:service.queue,scheduled:service.scheduled,service};
+  return {fetch:(request,env,ctx)=>withClock(deps.now,()=>handle(request,env,ctx)),queue:service.queue,scheduled:service.scheduled,service};
 }
 export const learning=createLearningHandler();

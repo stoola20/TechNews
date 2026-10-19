@@ -1,5 +1,6 @@
 import {apiJson,publicFetch,decorativeImage} from './network.js';
 import {rows,query,reserve,settle,uncertain,nowIso} from './store.js';
+import {now} from './clock.js';
 
 const MAX_BYTES=200*1024*1024;
 // 外部網頁的裝飾圖片（舊資料可能已登記）改標 decorative：不下載、不解析，也不算缺漏。
@@ -40,12 +41,12 @@ export async function prepareMedia(env,itemId,fetcher=fetch,options={}) {
           const source=response.body.pipeThrough(new TransformStream({transform(chunk,c){received+=chunk.byteLength;if(received>size||received>MAX_BYTES)throw new Error('媒體超過宣告大小');c.enqueue(chunk);},flush(){if(received!==size)throw new Error('媒體大小不完整');}}));
           await Promise.all([source.pipeTo(lengthStream.writable),env.MEDIA.put(key,lengthStream.readable,{httpMetadata:{contentType:mime}})]);
           await settle(env,cost,Math.ceil(received/1e9*0.015*1e6)+10,{bytes:received,retention_days:30});
-          Object.assign(asset,{object_key:key,bytes:received,mime,expires_at:new Date(Date.now()+30*86400000).toISOString()});
+          Object.assign(asset,{object_key:key,bytes:received,mime,expires_at:new Date(now()+30*86400000).toISOString()});
           await query(env,'UPDATE learning_media SET object_key=?,bytes=?,mime=?,expires_at=?,status=\'stored\',updated_at=? WHERE id=?',key,received,mime,asset.expires_at,nowIso(),asset.id).run();
         }catch(error){await uncertain(env,cost);throw error;}
       }
       let file=asset.file_json?JSON.parse(asset.file_json):null;
-      if(file?.expirationTime && Date.parse(file.expirationTime)<Date.now()+60000)file=null;
+      if(file?.expirationTime && Date.parse(file.expirationTime)<now()+60000)file=null;
       if(!file){
         const start=await fetcher('https://generativelanguage.googleapis.com/upload/v1beta/files',{
           method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'content-type':'application/json','X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(asset.bytes),'X-Goog-Upload-Header-Content-Type':asset.mime},body:JSON.stringify({file:{display_name:asset.id}}),signal:AbortSignal.timeout(30000),

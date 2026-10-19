@@ -1,4 +1,5 @@
 import {query,rows,setting,setSetting,nowIso,hash} from './store.js';
+import {now} from './clock.js';
 
 // 固定主題表：識別碼建立後不變，名稱、說明與顏色可在管理頁修改。說明給分類模型參考。
 export const DEFAULT_TOPICS=[
@@ -52,11 +53,11 @@ export async function classify(env,topics,article){
 
 // 維護排程每輪分類有限篇數，新加入的先處理；失敗延後重試，五次後停在未分類，直到內容更新或重新分類全部。
 export async function classifyPending(env,deps={},limit=BATCH){
-  const topics=await topicList(env),ids=topics.map(t=>t.id),now=nowIso();
+  const topics=await topicList(env),ids=topics.map(t=>t.id),at=nowIso();
   const candidates=await rows(env,`SELECT id,title,body,article_json,revision,topic_attempts FROM learning_items
     WHERE status IN ('ready','partial') AND topic_source IS NOT 'manual' AND (topic_next_at IS NULL OR topic_next_at<=?)
       AND (topic_revision IS NULL OR topic_revision<revision OR (topic_primary IS NOT NULL AND topic_primary NOT IN (${ids.map(()=>'?').join(',')})))
-    ORDER BY created_at DESC LIMIT ?`,now,...ids,limit);
+    ORDER BY created_at DESC LIMIT ?`,at,...ids,limit);
   let classified=0;
   for(const row of candidates){
     try{
@@ -67,7 +68,7 @@ export async function classifyPending(env,deps={},limit=BATCH){
     }catch(error){
       const attempts=row.topic_attempts+1,giveUp=attempts>=MAX_ATTEMPTS;
       await query(env,'UPDATE learning_items SET topic_attempts=?,topic_next_at=?,topic_revision=? WHERE id=?',
-        giveUp?0:attempts,giveUp?null:new Date(Date.now()+5*60e3*2**attempts).toISOString(),giveUp?row.revision:null,row.id).run();
+        giveUp?0:attempts,giveUp?null:new Date(now()+5*60e3*2**attempts).toISOString(),giveUp?row.revision:null,row.id).run();
       console.log(JSON.stringify({event:'topic_classification_failed',attempts,error:String(error.message).slice(0,200)}));
     }
   }

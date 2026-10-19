@@ -2,6 +2,7 @@ import {discoverSource,initialSeenUrls,getSources,maxArticleAgeDays} from '../so
 import {effectiveEnvironment} from '../settings.js';
 import {query,nowIso} from './store.js';
 import {publishedBefore,normalizePublished} from './dates.js';
+import {now} from './clock.js';
 
 // 官方發現只抓來源索引並排入共同文章庫；整理由背景工作與 Mac 持續消化，不受單次處理量限制。
 export async function discoverOfficial(env,collect,deps={}){
@@ -13,24 +14,24 @@ export async function discoverOfficial(env,collect,deps={}){
     try{
       const entries=await discover(source);
       if(!entries.length)throw new Error('No articles discovered');
-      const now=nowIso();
+      const checkedAt=nowIso();
       let state=await query(env,'SELECT seen_urls_json FROM source_state WHERE source=?',source.id).first();
       if(!state){
         // 新來源只回補近期文章，較舊的列為已看過。
-        const baseline=initialSeenUrls(entries,Date.now(),maxAge);
-        await query(env,'INSERT OR IGNORE INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES(?,?,?,?)',source.id,now,now,JSON.stringify(baseline)).run();
+        const baseline=initialSeenUrls(entries,now(),maxAge);
+        await query(env,'INSERT OR IGNORE INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES(?,?,?,?)',source.id,checkedAt,checkedAt,JSON.stringify(baseline)).run();
         state={seen_urls_json:JSON.stringify(baseline)};result.initialized.push(source.id);
       }
       const seen=new Set(JSON.parse(state.seen_urls_json));
       for(const entry of entries){
         if(seen.has(entry.url))continue;
         // 列表裡沒看過、但發表已久的文章（RSS 視窗變長、舊流程留下的積壓）只記為看過，不收件、不通知。
-        if(publishedBefore(entry.publishedAt,Date.now(),maxAge)){seen.add(entry.url);result.stale++;continue;}
+        if(publishedBefore(entry.publishedAt,now(),maxAge)){seen.add(entry.url);result.stale++;continue;}
         // receipt 與舊官方匯入相同，重複的日次事件或同一篇再次出現都不會新增收件。
         await collect(env,entry.url,'official',`official:${entry.url}`,{metadata:{source_id:source.id,title:entry.title || null,published_at:entry.publishedAt || null}});
         seen.add(entry.url);result.queued++;
       }
-      await query(env,'UPDATE source_state SET last_checked_at=?,seen_urls_json=? WHERE source=?',now,JSON.stringify([...seen].slice(-400)),source.id).run();
+      await query(env,'UPDATE source_state SET last_checked_at=?,seen_urls_json=? WHERE source=?',checkedAt,JSON.stringify([...seen].slice(-400)),source.id).run();
     }catch(error){
       result.errors.push({source:source.id,error:error instanceof Error?error.message:'Unknown error'});
     }
