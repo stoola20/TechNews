@@ -226,7 +226,12 @@ export async function generate(env, sources, media, gaps, question = null, fetch
 
 // 一般的 Gemini JSON 呼叫（出題、批改）：先依估算預留月預算，回應後依實際用量結算，費用記在 gemini 類別。
 // 輸入超過單次處理範圍時直接報錯，不截短。
-export async function geminiJson(env, { system, text, schema, output = 8192, fetcher = fetch }) {
+export async function geminiJson(env, options) {
+  return (await geminiCall(env, options)).data;
+}
+// search=true 時啟用 Google 搜尋（REST 的 tools: [{ google_search: {} }]），回傳 JSON 與 grounding metadata。
+// 文字 token 一樣記在 gemini 類別；搜尋次數由呼叫端另外記帳。
+export async function geminiCall(env, { system, text, schema, output = 8192, fetcher = fetch, search = false }) {
   if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY 未設定');
   const bytes = new TextEncoder().encode(text).length;
   if (bytes > 1200000) throw new Error('來源超過單次處理範圍，已保留原文，未截短');
@@ -242,6 +247,7 @@ export async function geminiJson(env, { system, text, schema, output = 8192, fet
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: system }] },
             contents: [{ role: 'user', parts: [{ text }] }],
+            ...(search ? { tools: [{ google_search: {} }] } : {}),
             generationConfig: {
               maxOutputTokens: output,
               thinkingConfig: { thinkingLevel: 'MEDIUM' },
@@ -268,17 +274,21 @@ export async function geminiJson(env, { system, text, schema, output = 8192, fet
       { ...usage, model: env.LEARNING_MODEL || 'gemini-3.8-flash' },
     );
     const candidate = result.candidates?.[0];
-    if (candidate?.finishReason !== 'STOP') throw new Error('Gemini 輸出未完成或遭拒絕');
+    // 回應有問題時也帶著 grounding metadata：搜尋可能已經執行，呼叫端仍要依實際次數記帳。
+    if (candidate?.finishReason !== 'STOP')
+      throw Object.assign(new Error('Gemini 輸出未完成或遭拒絕'), { grounding: candidate?.groundingMetadata || null });
+    let data;
     try {
-      return JSON.parse(
+      data = JSON.parse(
         (candidate.content?.parts || [])
           .filter((p) => p.text && !p.thought)
           .map((p) => p.text)
           .join(''),
       );
     } catch {
-      throw new Error('Gemini 回應不是有效的 JSON');
+      throw Object.assign(new Error('Gemini 回應不是有效的 JSON'), { grounding: candidate.groundingMetadata || null });
     }
+    return { data, grounding: candidate.groundingMetadata || null };
   } catch (error) {
     await uncertain(env, cost);
     throw error;

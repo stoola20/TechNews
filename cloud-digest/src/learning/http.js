@@ -48,6 +48,7 @@ import {
 import { indexStatus, rebuildIndex } from './rag-index.js';
 import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
 import { listQuizzes, quizView, attemptView, QuizError } from './quiz.js';
+import { webCheckSummary, setWebCheck } from './web-check.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -183,6 +184,18 @@ export function createLearningHandler(deps = {}) {
           if (action === 'release') return json(await release(env, data.job_id, data.attempt_token, data.error));
           if (action === 'complete') {
             const result = await complete(env, data, {
+              ...service.localHooks,
+              // 本機批改完成後由 Worker 在背景接著做網路查證，不讓執行器的回報等待搜尋。
+              completeGrade: (env, job, input, data) =>
+                service.localHooks.completeGrade(env, job, input, data, (work) => {
+                  const done = work.catch((error) =>
+                    console.log(
+                      JSON.stringify({ event: 'web_check_failed', error: String(error.message).slice(0, 200) }),
+                    ),
+                  );
+                  if (ctx.waitUntil) ctx.waitUntil(done);
+                  else return done;
+                }),
               articleCompleted: async (env, id) => {
                 const work = service
                   .classify(env, id)
@@ -192,7 +205,6 @@ export function createLearningHandler(deps = {}) {
                 else await work;
               },
               sourceFetched: (env, id) => service.enqueue(env, id),
-              ...service.localHooks,
             });
             return json(result);
           }
@@ -300,6 +312,11 @@ export function createLearningHandler(deps = {}) {
       if (route === 'admin/sources/collect' && request.method === 'POST') {
         const data = await body(request);
         return json(await collectAnyway(env, service.collect, data.source, data.url), 202);
+      }
+      if (route === 'admin/web-check' && request.method === 'GET') return json(await webCheckSummary(env));
+      if (route === 'admin/web-check' && request.method === 'PUT') {
+        await setWebCheck(env, (await body(request)).enabled);
+        return json(await webCheckSummary(env));
       }
       if (route === 'admin/index' && request.method === 'GET') return json(await indexStatus(env));
       if (route === 'admin/index/rebuild' && request.method === 'POST')

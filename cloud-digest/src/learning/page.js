@@ -626,12 +626,13 @@ const quizArea={
     if(ATTEMPT_WAIT[a.status])return [el('p',{},[el('span',{class:'spinner','aria-hidden':'true'}),document.createTextNode(ATTEMPT_WAIT[a.status])])];
     if(a.status==='error'){const back=el('button',{type:'button',text:'回到題目'});back.onclick=()=>{this.mode='';this.render();};return [el('p',{class:'error',text:'批改失敗：'+(a.error||'原因不明')}),back];}
     const nodes=[el('p',{class:'summary',text:a.summary.correct+'／'+a.summary.total+' 正確'+(a.summary.partial?'・'+a.summary.partial+' 題部分正確':'')})];
-    if(a.web_check==='failed')nodes.push(el('p',{class:'muted',text:'這次沒有完成網路查證。'}));
+    if(a.web_check==='failed')nodes.push(el('p',{class:'notice',text:'這次沒有完成網路查證'+(a.web_note?'（'+a.web_note+'）':'')+'，以下是只依本篇與保留文章的批改結果。'}));
+    if(a.web_check==='disabled')nodes.push(el('p',{class:'muted',text:'有說法超出本篇與保留文章，但沒有上網查證（'+(a.web_note||'網路查證已關閉')+'）。'}));
     for(const r of a.results){
       const groups=[['本篇',r.sources.article,s=>s.relation==='article_body'?this.bodyLink():safeLink(s.url,(RELATIONS[s.relation]||s.relation))],['其他保留文章',r.sources.library,s=>this.articleLink(s.item_id,s.title)],['網路',r.sources.web,s=>safeLink(s.url,s.title||s.url)]].filter(g=>g[1].length);
       nodes.push(el('div',{class:'q','data-number':String(r.number)},[
         el('h3',{},[el('span',{class:'verdict '+r.verdict,text:VERDICT[r.verdict]}),document.createTextNode('第 '+r.number+' 題：'+r.question)]),
-        el('dl',{},[el('dt',{text:'你的答案'}),el('dd',{text:(r.answer||'（空白）')+(r.unsure?'（勾了不確定）':'')}),el('dt',{text:'回饋'}),el('dd',{text:r.feedback}),el('dt',{text:'參考答案'}),el('dd',{text:r.reference})]),
+        el('dl',{},[el('dt',{text:'你的答案'}),el('dd',{text:(r.answer||'（空白）')+(r.unsure?'（勾了不確定）':'')}),el('dt',{text:'回饋'}),el('dd',{text:r.feedback+(r.web_checked?'（已上網查證）':r.needs_web?'（有說法待查證）':'')}),el('dt',{text:'參考答案'}),el('dd',{text:r.reference})]),
         ...groups.map(([label,list,link])=>el('div',{class:'src'},[el('strong',{text:'出處・'+label}),el('ul',{},list.map(s=>el('li',{},[link(s),s.excerpt?el('span',{class:'preview',text:s.excerpt.slice(0,160)}):null])))]))]));
     }
     const redo=el('button',{type:'button',text:'重做'});redo.onclick=()=>{this.mode='';this.attempt=null;this.render();$('quiz').scrollIntoView({block:'start'});};

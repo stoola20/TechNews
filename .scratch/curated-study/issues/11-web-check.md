@@ -4,12 +4,12 @@
 
 **Blocked by:** 10：連結題與批改的第二層證據
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 以 Gemini API 文件確認 Google 搜尋與結構化輸出能否並用、grounding metadata 的欄位，程式註解寫查核日
-- [ ] settings `learning:web-check`；未設定時有 `GEMINI_API_KEY` 就開啟；管理頁可切換
-- [ ] 作答狀態在查證期間為 `web_check`；失敗時保留第一輪結果並註明
-- [ ] 新費用類別 `gemini-search`：依實際搜尋次數記帳，本月在免費額度內記 $0；部署變數 `LEARNING_SEARCH_FREE_PER_MONTH`、`LEARNING_SEARCH_USD_PER_1K`
-- [ ] 呼叫前依搜尋上限預留，回應後結算；費用暫停時不查證並註明
-- [ ] 結果畫面出處多一組「網路」
-- [ ] 測試涵蓋觸發條件、開關、沒有金鑰、本機接續、失敗與記帳
+- [x] 以 Gemini API 文件確認 Google 搜尋與結構化輸出能否並用、grounding metadata 的欄位，程式註解寫查核日
+- [x] settings `learning:web-check`；未設定時有 `GEMINI_API_KEY` 就開啟；管理頁可切換
+- [x] 作答狀態在查證期間為 `web_check`；失敗時保留第一輪結果並註明
+- [x] 新費用類別 `gemini-search`：依實際搜尋次數記帳，本月在免費額度內記 $0；部署變數 `LEARNING_SEARCH_FREE_PER_MONTH`、`LEARNING_SEARCH_USD_PER_1K`
+- [x] 呼叫前依搜尋上限預留，回應後結算；費用暫停時不查證並註明
+- [x] 結果畫面出處多一組「網路」
+- [x] 測試涵蓋觸發條件、開關、沒有金鑰、本機接續、失敗與記帳

@@ -45,7 +45,7 @@ import { queueArticleNotifications, sendPending, receiptMessage, contentFingerpr
 import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from './triage.js';
 import { handleTriageCallback } from './telegram-triage.js';
 import { maintainIndex } from './rag-index.js';
-import { createQuiz, submitAttempt, completeQuiz, completeGrade } from './quiz.js';
+import { createQuiz, submitAttempt, completeQuiz, completeGrade, completeWebCheck } from './quiz.js';
 import { search, relatedArticles, RELATED_MIN } from './retrieval.js';
 import { articleSummaries } from './library.js';
 import { articleQueryText } from './triage.js';
@@ -491,8 +491,10 @@ export function createLearningService(deps = {}) {
   async function official(env) {
     return discoverOfficial(env, collect, deps);
   }
-  // 批改完成後的後續步驟（網路查證、建立複習），本機批改由 Mac 回報後也走這裡。
-  async function graded(env, attemptId) {}
+  // 批改完成後的後續步驟：需要時上網查證，再建立或更新複習。本機批改由 Mac 回報後也走這裡。
+  async function graded(env, attemptId) {
+    await completeWebCheck(env, attemptId, fetcher);
+  }
   // 連結題：用本篇標題與導讀查詢 RAG，排除本篇，取文章層級分數達門檻的前 2 篇，附標題、導讀與各自最相關的 3 段。
   // 檢索降級時沒有相關文章，照常出題，只是沒有連結題。
   async function related(env, row) {
@@ -594,6 +596,18 @@ export function createLearningService(deps = {}) {
       } catch (error) {
         console.log(JSON.stringify({ event: 'triage_maintenance_failed', error: error.message }));
       }
+    // 網路查證卡住（Worker 在查證途中中斷）超過 10 分鐘的作答，重新查證；每輪最多 3 筆。
+    if (tasks.includes('maintenance'))
+      try {
+        for (const row of await rows(
+          env,
+          "SELECT id FROM learning_attempts WHERE status='web_check' AND updated_at<? ORDER BY updated_at LIMIT 3",
+          new Date(now() - 600000).toISOString(),
+        ))
+          await graded(env, row.id);
+      } catch (error) {
+        console.log(JSON.stringify({ event: 'web_check_recovery_failed', error: error.message }));
+      }
     // RAG 索引：保留文章建立或更新索引，非保留文章移出。每輪最多建立 3 篇。
     if (tasks.includes('maintenance'))
       try {
@@ -667,7 +681,9 @@ export function createLearningService(deps = {}) {
     localHooks: {
       completeQuestion,
       completeQuiz,
-      completeGrade: (env, job, input, data) => completeGrade(env, job, input, data, { graded: api.graded }),
+      // background(work) 讓網路查證在回報之後繼續執行；沒有提供時直接等待。
+      completeGrade: (env, job, input, data, background = (work) => work) =>
+        completeGrade(env, job, input, data, { graded: (env, id) => background(api.graded(env, id)) }),
     },
   };
 }

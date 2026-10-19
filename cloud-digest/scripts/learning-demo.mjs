@@ -86,8 +86,15 @@ const DAY = 86400000,
 function demoGemini(body) {
   const system = body.systemInstruction.parts[0].text,
     input = JSON.parse(body.contents[0].parts[0].text.split('\n\n').at(-1));
-  let data;
-  if (system.includes('出題老師')) {
+  let data,
+    grounding = null;
+  if (system.includes('查證技術說法')) {
+    data = { verdict: 'partial', feedback: '示範網路查證：查到的公開文件只部分支持這個說法。' };
+    grounding = {
+      webSearchQueries: ['示範查詢'],
+      groundingChunks: [{ web: { uri: 'https://example.org/reference', title: '示範參考文件' } }],
+    };
+  } else if (system.includes('出題老師')) {
     const own = input.chunks.filter((c) => c.article === '本篇'),
       linked = input.related[0];
     const pick = (n) => own[n % own.length];
@@ -125,12 +132,19 @@ function demoGemini(body) {
             .slice(0, 1)
             .map((c) => c.ref),
         ],
-        needs_web: false,
-        claim: '',
+        // 答案提到 CDN 時示範「超出來源、需要上網查證」。
+        needs_web: /CDN/i.test(q.answer),
+        claim: /CDN/i.test(q.answer) ? q.answer.slice(0, 80) : '',
       })),
     };
   return Response.json({
-    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(data) }] } }],
+    candidates: [
+      {
+        finishReason: 'STOP',
+        content: { parts: [{ text: JSON.stringify(data) }] },
+        ...(grounding ? { groundingMetadata: grounding } : {}),
+      },
+    ],
     usageMetadata: { promptTokenCount: 1200, candidatesTokenCount: 300, thoughtsTokenCount: 0 },
   });
 }

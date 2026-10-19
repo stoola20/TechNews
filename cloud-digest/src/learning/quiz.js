@@ -5,6 +5,7 @@ import { itemChunks } from './rag-index.js';
 import { keywords, mediaChunkId } from './retrieval.js';
 import { setTriage, triageState } from './triage.js';
 import { articleSummaries } from './library.js';
+import { webCheck } from './web-check.js';
 import {
   QUIZ_PROMPT_VERSION,
   GRADE_PROMPT_VERSION,
@@ -410,9 +411,11 @@ async function finishAttempt(env, id, input, results, model, hooks = {}, guard =
   const attempt = await query(env, 'SELECT * FROM learning_attempts WHERE id=?', id).first();
   const quiz = await query(env, 'SELECT * FROM learning_quizzes WHERE id=?', attempt.quiz_id).first();
   const grading = gradingResult(quiz, attempt, input, results);
+  // 有題目需要上網查證時先停在 web_check，由 hooks.graded 接著查證；本機批改也由 Worker 查證。
   const statement = query(
     env,
-    `UPDATE learning_attempts SET status='done',grading_json=?,model=COALESCE(?,model),error=NULL,updated_at=? WHERE id=? ${guard.length ? guard[0] : ''}`,
+    `UPDATE learning_attempts SET status=?,grading_json=?,model=COALESCE(?,model),error=NULL,updated_at=? WHERE id=? ${guard.length ? guard[0] : ''}`,
+    grading.results.some((r) => r.needs_web) ? 'web_check' : 'done',
     JSON.stringify(grading),
     model ? String(model).slice(0, 80) : null,
     nowIso(),
@@ -422,6 +425,38 @@ async function finishAttempt(env, id, input, results, model, hooks = {}, guard =
   if (guard.length) return statement;
   await statement.run();
   if (hooks.graded) await hooks.graded(env, id);
+}
+
+// 網路查證：更新需要查證的題目，失敗時保留第一輪結果並記下原因。重複執行時只處理仍在 web_check 的作答。
+export async function completeWebCheck(env, attemptId, fetcher = fetch) {
+  const attempt = await query(
+    env,
+    "SELECT * FROM learning_attempts WHERE id=? AND status='web_check'",
+    attemptId,
+  ).first();
+  if (!attempt) return false;
+  const quiz = await query(env, 'SELECT * FROM learning_quizzes WHERE id=?', attempt.quiz_id).first();
+  const grading = parse(attempt.grading_json, { results: [] });
+  const checked = await webCheck(env, attempt, parse(quiz.questions_json, []), grading.results, fetcher);
+  const count = (v) => checked.results.filter((r) => r.verdict === v).length;
+  const result = await query(
+    env,
+    "UPDATE learning_attempts SET status='done',web_check=?,grading_json=?,updated_at=? WHERE id=? AND status='web_check'",
+    checked.web_check,
+    JSON.stringify({
+      results: checked.results,
+      summary: {
+        total: checked.results.length,
+        correct: count('correct'),
+        partial: count('partial'),
+        incorrect: count('incorrect'),
+      },
+      web_note: checked.note,
+    }),
+    nowIso(),
+    attemptId,
+  ).run();
+  return !!result.meta.changes;
 }
 
 // 本機批改完成：驗證輸出，失敗算一次模型失敗並回報 422。
@@ -476,6 +511,7 @@ export async function attemptView(env, attempt) {
     provider: attempt.provider,
     model: attempt.model,
     web_check: attempt.web_check,
+    web_note: grading?.web_note || null,
     created_at: attempt.created_at,
     summary: grading?.summary || null,
     results: answers.map((a) => {
@@ -494,6 +530,7 @@ export async function attemptView(env, attempt) {
               feedback: r.feedback,
               reference: q.reference,
               needs_web: r.needs_web,
+              web_checked: !!r.web_checked,
               sources: {
                 article: sources.filter((s) => s.layer === 'article'),
                 library: sources
