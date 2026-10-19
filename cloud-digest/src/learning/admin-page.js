@@ -1,6 +1,6 @@
-import {STYLE,HELPERS,LOGIN} from './ui.js';
+import { STYLE, HELPERS, LOGIN } from './ui.js';
 
-export const ADMIN_PAGE=String.raw`<!doctype html>
+export const ADMIN_PAGE = String.raw`<!doctype html>
 <html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TechNews · 管理</title>
 <style>${STYLE}
 main{max-width:1000px;margin:24px auto;padding:0 20px}h1{font-size:24px}h2{font-size:19px;margin:0 0 12px}
