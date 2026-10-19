@@ -10,7 +10,7 @@ const now = new Date().toISOString();
 async function article(env, id, content, { observations = [] } = {}) {
   await query(
     env,
-    "INSERT INTO learning_items(id,url,kind,title,status,body,article_json,revision,created_at,updated_at) VALUES(?,?,?,?,'ready','正文',?,1,?,?)",
+    "INSERT INTO learning_items(id,url,kind,title,status,body,article_json,revision,triage,created_at,updated_at) VALUES(?,?,?,?,'ready','正文',?,1,'kept',?,?)",
     id,
     'https://example.org/' + id,
     'web',

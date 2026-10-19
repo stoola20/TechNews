@@ -806,8 +806,19 @@ test('私人搜尋與單篇／跨文章追問附真實片段引用', async () =>
   assert.equal(single.insufficient, false);
   assert.equal(single.sources.length, 1);
   assert.match(single.sources[0].url, /example.org/);
+  // 全庫追問預設只查保留文章；勾「也查未保留」時出處標示未保留。沒有設定 Vectorize 時只比對關鍵字並標示降級。
+  const notKept = await (await handler.fetch(request('api/ask', 'POST', { question: '背景與版本限制' }), env)).json();
+  assert.deepEqual([notKept.insufficient, notKept.sources.length], [true, 0]);
+  const unkept = await (
+    await handler.fetch(request('api/ask', 'POST', { question: '背景與版本限制', include_unkept: true }), env)
+  ).json();
+  assert.ok(unkept.sources.length);
+  assert.ok(unkept.sources.every((s) => s.kept === false));
+  await handler.fetch(request('api/items/' + id + '/triage', 'PUT', { action: 'keep' }), env);
   const cross = await (await handler.fetch(request('api/ask', 'POST', { question: '背景與版本限制' }), env)).json();
   assert.ok(cross.sources.length);
+  assert.ok(cross.sources.every((s) => s.kept === true));
+  assert.equal(cross.degraded, true);
   const unknown = await (
     await handler.fetch(request('api/ask', 'POST', { question: '完全不存在的火星引擎？' }), env)
   ).json();

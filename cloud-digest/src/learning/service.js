@@ -481,8 +481,8 @@ export function createLearningService(deps = {}) {
       return false;
     }
   }
-  async function ask(env, question, articleId = null) {
-    return askQuestion(env, question, articleId, { ...deps, fetcher });
+  async function ask(env, question, articleId = null, options = {}) {
+    return askQuestion(env, question, articleId, { ...deps, fetcher }, options);
   }
   async function official(env) {
     return discoverOfficial(env, collect, deps);

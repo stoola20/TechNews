@@ -650,7 +650,7 @@ export function createLearningHandler(deps = {}) {
         const data = await body(request);
         if (data.item_id && !(await item(env, data.item_id))) return json({ error: '文章不存在' }, 404);
         const itemId = data.item_id ? await resolveItemId(env, data.item_id) : null;
-        const result = await service.ask(env, data.question, itemId);
+        const result = await service.ask(env, data.question, itemId, { includeUnkept: data.include_unkept === true });
         return json(result, result.status === 'done' ? 200 : 202);
       }
       if (route === 'questions' && request.method === 'GET') {

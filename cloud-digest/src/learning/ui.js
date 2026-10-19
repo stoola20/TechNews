@@ -102,7 +102,7 @@ function bindLogin(boot){
 const STATES={queued:'等待處理',processing:'處理中',awaiting_backfill:'等待確認回補',ready:'已完成',partial:'已完成・來源缺漏',error:'待重試',needs_attention:'需要處理',budget_paused:'費用暫停',paused:'手動暫停',waiting_local:'等待本機',generating:'本機生成中',filtered:'主題不符・已略過'};
 const STAGES={source:'取得來源',media:'解析媒體',text:'文字生成'};
 const ORIGINS={official:'官方來源',bookmark:'X 書籤',backfill:'書籤回補',share:'Telegram 分享',web:'網站加入'};
-const RELATIONS={primary:'主要來源',shared_post:'分享的 X 貼文',author_reply:'作者補充',quote:'引用',parent:'父貼文',repost:'轉貼',external:'外部文章',context_missing:'上下文缺漏',author_context_missing:'作者補充缺漏',model_media_observation:'媒體說明',media_evidence:'媒體證據'};
+const RELATIONS={primary:'主要來源',shared_post:'分享的 X 貼文',author_reply:'作者補充',quote:'引用',parent:'父貼文',repost:'轉貼',external:'外部文章',context_missing:'上下文缺漏',author_context_missing:'作者補充缺漏',model_media_observation:'媒體說明',media_evidence:'媒體證據',article_body:'教材正文'};
 const FINAL=['ready','partial','filtered','needs_attention','awaiting_backfill'];
 function stateLabel(i){return i.status==='processing'&&STAGES[i.stage]?'處理中・'+STAGES[i.stage]:(STATES[i.status]||i.status);}
 function stateTone(s){return ['needs_attention','error','partial'].includes(s)?'warn':['waiting_local','generating','queued','processing','budget_paused','paused'].includes(s)?'wait':'done';}
