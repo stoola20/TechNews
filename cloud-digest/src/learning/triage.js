@@ -202,6 +202,14 @@ export async function purgeItem(env, id) {
     query(env, `DELETE FROM learning_intakes WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM learning_versions WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM learning_chunks WHERE item_id=? ${guard}`, id, id),
+    // 出題與批改工作的輸入含文章內容；工作以 question_id 指向題組或作答，要在刪掉題組與作答之前清掉。
+    query(
+      env,
+      `DELETE FROM learning_jobs WHERE (question_id IN (SELECT id FROM learning_quizzes WHERE item_id=?) OR question_id IN (SELECT id FROM learning_attempts WHERE item_id=?)) ${guard}`,
+      id,
+      id,
+      id,
+    ),
     query(env, `DELETE FROM learning_reviews WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM learning_attempts WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM learning_quizzes WHERE item_id=? ${guard}`, id, id),

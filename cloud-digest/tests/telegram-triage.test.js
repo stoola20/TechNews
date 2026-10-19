@@ -138,3 +138,27 @@ test('等待確認回補的書籤在 Telegram 按保留也會開始整理', asyn
   assert.deepEqual(s.env.LEARNING_JOBS.jobs, [{ kind: 'article', id }]);
   assert.equal(s.telegram('answerCallbackQuery')[0].text, '已保留，已開始整理');
 });
+
+test('通知頻道設成 @帳號時，依回呼的 username 比對；清除文章時一併刪除出題與批改工作', async () => {
+  const s = setup();
+  s.env.TELEGRAM_CHAT_ID = '@example_channel';
+  await add(s.env, A);
+  const r = await s.handler.fetch(
+    request(
+      'telegram',
+      'POST',
+      {
+        update_id: 5000,
+        callback_query: {
+          id: 'cb',
+          data: 't:k:' + A,
+          message: { message_id: 1, chat: { id: -1009, username: 'example_channel', type: 'channel' } },
+        },
+      },
+      { 'x-telegram-bot-api-secret-token': 'webhook-test' },
+    ),
+    s.env,
+  );
+  assert.equal(r.status, 200);
+  assert.equal((await item(s.env, A)).triage, 'kept');
+});

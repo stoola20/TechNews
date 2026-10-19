@@ -154,10 +154,17 @@ export async function todayReviews(env) {
   };
 }
 
-// 列表頂端的入口：今天還要做的複習題數。
+// 列表頂端的入口：今天還要做的複習題數（到期題數與今天剩餘上限取小）。狀態每 30 秒刷新，只做計數。
 export async function todayCount(env) {
-  const r = await todayReviews(env);
-  return r.items.length;
+  const today = taiwanDate();
+  const due = (
+    await query(
+      env,
+      "SELECT COUNT(*) AS count FROM learning_reviews r JOIN learning_items i ON i.id=r.item_id WHERE r.status='active' AND r.due_date<=? AND i.triage='kept'",
+      today,
+    ).first()
+  ).count;
+  return due ? Math.min(due, Math.max(0, DAILY_LIMIT - (await answeredToday(env, today)))) : 0;
 }
 
 // 複習作答前的檢查：題目進行中、文章仍保留、已到期。

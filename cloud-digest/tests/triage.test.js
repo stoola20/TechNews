@@ -353,3 +353,25 @@ test('篩選模式只列可以篩選的待決定文章，順序與列表預設�
   await query(s.env, "UPDATE learning_items SET status='ready' WHERE id=?", id('c')).run();
   assert.equal((await (await s.handler.fetch(request('api/triage'), s.env)).json()).total, 4);
 });
+
+test('清除文章時刪除指向它的出題與批改工作', async () => {
+  const s = setup();
+  await add(s.env, 'a');
+  await query(
+    s.env,
+    "INSERT INTO learning_quizzes(id,item_id,revision,status,created_at,updated_at) VALUES('qz',?,1,'waiting_local','2026-10-01','2026-10-01')",
+    id('a'),
+  ).run();
+  await query(
+    s.env,
+    "INSERT INTO learning_jobs(id,kind,question_id,priority,input_version,input_json,created_at,updated_at) VALUES('jq','quiz','qz',0,'v','{\"chunks\":[]}','2026-10-01','2026-10-01'),('other','question','q-x',0,'v','{}','2026-10-01','2026-10-01')",
+  ).run();
+  await act(s, 'a', 'delete');
+  s.clock.now += 8 * DAY;
+  await s.handler.scheduled(s.env, { tasks: ['maintenance'] });
+  assert.deepEqual(
+    (await rows(s.env, 'SELECT id FROM learning_jobs')).map((r) => r.id),
+    ['other'],
+  );
+  assert.equal((await rows(s.env, 'SELECT id FROM learning_quizzes')).length, 0);
+});

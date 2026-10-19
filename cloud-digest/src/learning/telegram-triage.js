@@ -37,12 +37,13 @@ export async function notificationMarkup(env, items) {
   return row && row.triage === 'pending' && READABLE.includes(row.status) ? triageKeyboard(row.id) : null;
 }
 
-// 只接受通知頻道或允許對話傳來的按鈕。
-export function allowedChat(env, chatId) {
+// 只接受通知頻道或允許對話傳來的按鈕。公開頻道的 TELEGRAM_CHAT_ID 可以是 @帳號，回呼只帶數字 ID 與 username，兩種都比對。
+export function allowedChat(env, chat) {
   const allowed = [env.TELEGRAM_CHAT_ID, ...(env.TELEGRAM_ALLOWED_CHAT_IDS || '').split(',')]
     .map((s) => String(s || '').trim())
     .filter(Boolean);
-  return chatId != null && allowed.includes(String(chatId));
+  if (chat?.id == null) return false;
+  return allowed.includes(String(chat.id)) || (!!chat.username && allowed.includes('@' + chat.username));
 }
 
 // 處理一次按鈕回呼：套用動作、回覆短提示、把按鈕換成結果列。重複送達時結果相同。
@@ -50,7 +51,7 @@ export function allowedChat(env, chatId) {
 export async function handleTriageCallback(env, callback, telegram, hooks = {}) {
   const chatId = callback.message?.chat?.id,
     messageId = callback.message?.message_id;
-  if (!allowedChat(env, chatId)) return { ignored: true };
+  if (!allowedChat(env, callback.message?.chat)) return { ignored: true };
   const match = /^t:([ksdui]):([a-f0-9]{32})$/.exec(callback.data || '');
   const answer = (text) => telegram('answerCallbackQuery', { callback_query_id: callback.id, text });
   const markup = (reply_markup) =>
