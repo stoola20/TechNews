@@ -45,6 +45,7 @@ import { queueArticleNotifications, sendPending, receiptMessage, contentFingerpr
 import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from './triage.js';
 import { handleTriageCallback } from './telegram-triage.js';
 import { maintainIndex } from './rag-index.js';
+import { createQuiz, submitAttempt, completeQuiz, completeGrade } from './quiz.js';
 import { effectiveEnvironment } from '../settings.js';
 import { getSources } from '../sources.js';
 import { now, withClock } from './clock.js';
@@ -487,6 +488,15 @@ export function createLearningService(deps = {}) {
   async function official(env) {
     return discoverOfficial(env, collect, deps);
   }
+  // 批改完成後的後續步驟（網路查證、建立複習），本機批改由 Mac 回報後也走這裡。
+  async function graded(env, attemptId) {}
+  const quizDeps = () => ({ fetcher, hooks: { graded } });
+  async function quiz(env, itemId, options = {}) {
+    return createQuiz(env, itemId, options, quizDeps());
+  }
+  async function attempt(env, quizId, data, options = {}) {
+    return submitAttempt(env, quizId, data, quizDeps(), options);
+  }
   // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
   async function scheduled(env, options = false) {
     const tasks = Array.isArray(options?.tasks)
@@ -618,9 +628,19 @@ export function createLearningService(deps = {}) {
     enqueue,
     receipt,
     official,
+    graded,
     triageCallback,
+    quiz,
+    attempt,
     migrate: migrateLibrary,
   };
   for (const [name, fn] of Object.entries(api)) api[name] = (...args) => withClock(deps.now, () => fn(...args));
-  return { ...api, localHooks: { completeQuestion } };
+  return {
+    ...api,
+    localHooks: {
+      completeQuestion,
+      completeQuiz,
+      completeGrade: (env, job, input, data) => completeGrade(env, job, input, data, { graded: api.graded }),
+    },
+  };
 }

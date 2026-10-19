@@ -7,8 +7,12 @@ import {
   parseAnswer,
   estimateTokens,
 } from '../src/learning/local-prompt.js';
+import { quizMessages, gradeMessages, parseQuiz, parseGrade } from '../src/learning/quiz-prompt.js';
 
-export const RUNNER_VERSION = '1.1.0';
+export const RUNNER_VERSION = '1.2.0';
+// Ollama 可用時宣告支援的文字工作；quiz（出題）與 grade（批改）從 1.2.0 起支援。
+export const TEXT_KINDS = ['article', 'question', 'quiz', 'grade'];
+const MESSAGES = { question: questionMessages, quiz: quizMessages, grade: gradeMessages };
 
 export class RunnerError extends Error {
   constructor(message, { retryable = true, local = false } = {}) {
@@ -142,7 +146,7 @@ export async function chat(config, messages, { signal, fetcher = fetch } = {}) {
 }
 
 export async function generate(config, job, { signal, fetcher = fetch } = {}) {
-  const messages = job.kind === 'question' ? questionMessages(job.input) : articleMessages(job.input);
+  const messages = (MESSAGES[job.kind] || articleMessages)(job.input);
   const estimated = estimateTokens(messages.map((m) => m.content).join('\n'));
   // 不截短來源：估算超過已驗證 context 時直接回報，原文仍保存在雲端。
   if (estimated + config.numPredict > config.numCtx)
@@ -176,7 +180,11 @@ export async function generate(config, job, { signal, fetcher = fetch } = {}) {
     const output =
       job.kind === 'question'
         ? parseAnswer(content, { stopped: true })
-        : parseArticle(content, !!job.input.official, { stopped: true });
+        : job.kind === 'quiz'
+          ? parseQuiz(content, { stopped: true })
+          : job.kind === 'grade'
+            ? parseGrade(content, job.input, { stopped: true })
+            : parseArticle(content, !!job.input.official, { stopped: true });
     return { output, model, metrics, raw: content };
   } catch (error) {
     await debugDump(config, job, content, 'unparsed');
@@ -204,7 +212,7 @@ export async function runOnce(
 ) {
   const call = serverClient(config, serverFetch);
   const status = info || { ...(await ollamaInfo(config, ollamaFetch)), version: RUNNER_VERSION };
-  const kinds = [...(status.ollama ? ['article', 'question'] : []), ...(xFetch ? ['fetch_x_article'] : [])];
+  const kinds = [...(status.ollama ? TEXT_KINDS : []), ...(xFetch ? ['fetch_x_article'] : [])];
   if (!kinds.length) {
     await call('heartbeat', { info: { ...status, state: 'ollama_unavailable' } });
     return { state: 'ollama_unavailable' };

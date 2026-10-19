@@ -80,6 +80,16 @@ body.app:not([data-mode=""]) #reader{padding-bottom:40px}body.app:not([data-mode
 kbd{font:12px ui-monospace,SFMono-Regular,monospace;border:1px solid currentColor;border-radius:4px;padding:0 5px;opacity:.75}
 .keys{margin:0 0 12px;padding:12px 16px;border:1px dashed var(--line);border-radius:8px;font-size:14px;line-height:1.9}.keys[hidden]{display:none}
 .done-box{text-align:center;padding:40px 16px}
+/* 精讀問答 */
+#quiz .q{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0;background:var(--paper)}
+#quiz .q h3{font-size:16px;line-height:1.6;margin:0 0 8px}#quiz textarea{min-height:96px}
+#quiz .unsure{display:flex;align-items:center;gap:8px;min-height:40px;font-weight:400}#quiz .unsure input{min-height:auto;width:18px;height:18px}
+#quiz .verdict{display:inline-block;font-size:13px;font-weight:700;border-radius:5px;padding:2px 8px;margin-right:8px}
+.verdict.correct{background:var(--soft);color:var(--accent)}.verdict.partial{background:#e8eefc;color:#22408a}.verdict.incorrect{background:var(--warn-bg);color:var(--warn)}
+#quiz dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 12px;margin:8px 0}#quiz dt{color:var(--muted);font-size:14px}#quiz dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}
+#quiz .src{font-size:14px;margin:6px 0 0}#quiz .src ul{margin:2px 0 0;padding-left:1.2em}
+#quiz .summary{font-size:18px;font-weight:700;margin:4px 0 8px}#quiz .linkish{border:0;background:none;color:var(--accent);text-decoration:underline;min-height:36px;padding:2px 0}
+@media(max-width:640px){#quiz dl{grid-template-columns:minmax(0,1fr)}#quiz dt{margin-top:6px}}
 #similar .subhead{font-weight:700;font-size:14px;margin:12px 0 4px}.similar-list{margin:0;padding-left:1.2em;line-height:1.8;font-size:15px}
 @media(max-width:959px){body.app:not([data-mode=""]) .reader-wrap{display:block}body.app:not([data-mode=""]) .reader-bar{display:none}.decide{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
@@ -360,6 +370,7 @@ function renderArticle(result){
   }
   if(item.body){const content=el('div',{class:'article-body'});content.innerHTML=current.body_html;nodes.push(el('section',{class:'block','aria-labelledby':'body-title'},[el('h2',{id:'body-title',class:'sr',text:'教材'}),el('span',{class:'label',text:'教材（'+(provenance(article)||'模型整理')+'；標示「補充例子」的段落是模型額外加的教學例子）'}),content,el('div',{id:'read-end','aria-hidden':'true'})]));}
   const media=mediaBlock(result);if(media)nodes.push(media);
+  const quizBox=quizArea.section(item);if(quizBox)nodes.push(quizBox);
   if((result.versions||[]).length)nodes.push(el('section',{class:'block versions'},[el('h2',{text:'舊版本'}),el('ul',{},result.versions.map(v=>el('li',{text:when(v.created_at)+'・'+(v.edition==='legacy_digest'?'既有導讀':'版本 '+v.revision)+(v.title?'・'+v.title:'')})))]));
   // 原始來源放在整頁最下方，閱讀教材時不被打斷。
   if(item.status!=='awaiting_backfill'&&result.sources.length)nodes.push(el('section',{class:'block'},[el('h2',{text:'原始來源與片段'}),el('p',{class:'muted',text:'以下是系統保存的原文，與上方模型整理的內容分開。'}),...result.sources.map(sourceBlock)]));
@@ -529,6 +540,130 @@ const triageMode={
   },
 };
 const MODES={triage:triageMode};
+// 精讀問答：文末「開始問答」，按下才出題；作答一次送出，批改後顯示判定、回饋、參考答案與出處。
+const VERDICT={correct:'正確',partial:'部分正確',incorrect:'錯誤'};
+const QUIZ_WAIT={queued:'準備出題…',waiting_local:'已保存，等待 Mac 出題。Mac 離線時會一直等待，不會改用雲端模型；可以離開這頁，之後回來看。',generating:'Mac 正在出題…'};
+const ATTEMPT_WAIT={grading:'批改中…',waiting_local:'已送出，等待 Mac 批改。可以離開這頁，之後回來看。',web_check:'第一輪批改完成，正在上網查證…'};
+const quizArea={
+  item:null,quizzes:[],quiz:null,attempt:null,mode:'',timer:null,seq:0,
+  section(item){
+    const eligible=['ready','partial'].includes(item.status)&&item.triage!=='deleted';
+    // 同一篇重繪（狀態刷新、改篩選結果）時沿用既有區塊，正在輸入的答案不會消失。
+    if(this.item&&this.item.id===item.id&&eligible&&$('quiz')){this.item=item;return $('quiz');}
+    clearTimeout(this.timer);
+    if(this.item&&this.item.id!==item.id){this.quiz=null;this.attempt=null;this.mode='';}
+    this.item=item;
+    if(!eligible)return null;
+    const box=el('section',{class:'block',id:'quiz','aria-labelledby':'quiz-title'},[el('h2',{id:'quiz-title',text:'精讀問答'}),el('div',{id:'quiz-body'},[el('p',{class:'muted',text:'載入中…'})])]);
+    const seq=++this.seq;
+    api('items/'+item.id+'/quizzes').then(list=>{if(seq!==this.seq)return;this.quizzes=list;if(!this.quiz||!list.some(q=>q.id===this.quiz.id))this.quiz=list[0]||null;else this.quiz=list.find(q=>q.id===this.quiz.id);this.resume();}).catch(e=>this.show([el('p',{class:'error',text:'問答載入失敗：'+e.message})]));
+    return box;
+  },
+  show(nodes){const body=$('quiz-body');if(body)body.replaceChildren(...nodes);},
+  setQuiz(q){this.quiz=q;this.quizzes=[q,...this.quizzes.filter(x=>x.id!==q.id)].sort((a,b)=>b.created_at.localeCompare(a.created_at));},
+  // 重新開啟頁面時接續：題組還在出題就輪詢；有進行中的批改就顯示進度；否則顯示作答表單或最近一次結果。
+  async resume(){
+    const q=this.quiz;
+    if(!q){this.render();return;}
+    if(QUIZ_WAIT[q.status]){this.render();this.poll();return;}
+    const latest=q.attempts[0];
+    if(!this.attempt&&latest&&latest.status!=='done'&&latest.status!=='error'){this.attempt=await api('attempts/'+latest.id);this.mode='result';}
+    this.render();if(this.attempt&&ATTEMPT_WAIT[this.attempt.status])this.poll();
+  },
+  poll(){
+    clearTimeout(this.timer);const seq=this.seq;
+    this.timer=setTimeout(async()=>{
+      if(seq!==this.seq||!$('quiz-body'))return;if(document.hidden){this.poll();return;}
+      try{
+        if(this.attempt&&ATTEMPT_WAIT[this.attempt.status]){this.attempt=await api('attempts/'+this.attempt.id);if(this.attempt.status==='done')this.setQuiz(await api('quizzes/'+this.quiz.id));}
+        else if(this.quiz&&QUIZ_WAIT[this.quiz.status])this.setQuiz(await api('quizzes/'+this.quiz.id));
+        if(seq!==this.seq)return;this.render();
+        if((this.attempt&&ATTEMPT_WAIT[this.attempt.status])||(this.quiz&&QUIZ_WAIT[this.quiz.status]))this.poll();
+      }catch(e){this.poll();}
+    },5000);
+  },
+  render(){
+    const q=this.quiz,nodes=[];
+    if(!q){
+      const start=el('button',{type:'button',class:'primary',text:'開始問答'});start.onclick=()=>run(()=>this.create(false),start,'出題中…');
+      nodes.push(el('p',{class:'muted',text:'讀完後按「開始問答」，由 '+textModelName()+' 出 3–5 題簡答題，考解釋與套用。'+(this.item.triage==='pending'?'待決定文章出題時會同時改成保留。':'')}),start);
+      this.show(nodes);return;
+    }
+    if(QUIZ_WAIT[q.status]){this.show([el('p',{},[el('span',{class:'spinner','aria-hidden':'true'}),document.createTextNode(QUIZ_WAIT[q.status])])]);return;}
+    if(q.status==='error'){
+      const retry=el('button',{type:'button',class:'primary',text:'重新出題'});retry.onclick=()=>run(()=>this.create(false),retry,'出題中…');
+      this.show([el('p',{class:'error',text:'出題失敗：'+(q.error||'原因不明')}),retry,this.history()]);return;
+    }
+    if(q.stale)nodes.push(el('p',{class:'notice',text:'文章已更新，題目依舊版內容。'}));
+    if(this.mode==='result'&&this.attempt)nodes.push(...this.result());
+    else nodes.push(this.form());
+    nodes.push(this.history());
+    this.show(nodes.filter(Boolean));
+  },
+  form(){
+    const q=this.quiz,form=el('form',{class:'quiz-form'});
+    for(const x of q.questions){
+      const id='quiz-answer-'+x.number;
+      form.append(el('div',{class:'q'},[el('h3',{},[document.createTextNode('第 '+x.number+' 題'+(x.type==='link'?'（連結題）':'')+'：'),document.createTextNode(x.question)]),
+        x.type==='link'&&x.related_id?el('p',{class:'muted'},[document.createTextNode('相關文章：'),this.articleLink(x.related_id,(q.related.find(r=>r.id===x.related_id)||{}).title)]):null,
+        el('label',{class:'sr',for:id,text:'第 '+x.number+' 題答案'}),el('textarea',{id,maxlength:'2000',placeholder:'用自己的話回答'}),
+        el('label',{class:'unsure'},[el('input',{type:'checkbox','data-unsure':String(x.number)}),document.createTextNode('不確定')])]));
+    }
+    const submit=el('button',{class:'primary',text:'送出全部答案'});
+    form.append(el('div',{class:'actions'},[submit]));
+    form.onsubmit=e=>{e.preventDefault();run(async()=>{
+      const answers=q.questions.map(x=>({number:x.number,answer:$('quiz-answer-'+x.number).value,unsure:form.querySelector('[data-unsure="'+x.number+'"]').checked}));
+      this.attempt=await api('quizzes/'+q.id+'/attempts','POST',{answers});this.mode='result';this.render();
+      if(ATTEMPT_WAIT[this.attempt.status])this.poll();else{this.setQuiz(await api('quizzes/'+q.id));this.render();}
+      $('quiz').scrollIntoView({block:'start'});
+    },submit,'批改中…');};
+    return form;
+  },
+  bodyLink(){const b=el('button',{type:'button',class:'linkish',text:'教材正文'});b.onclick=()=>{const body=document.querySelector('#article .article-body');if(body){body.scrollIntoView({block:'start'});body.setAttribute('tabindex','-1');body.focus({preventScroll:true});}};return b;},
+  articleLink(id,title){const a=el('a',{href:urlFor({...view,mode:'',article:id}),text:title||'相關文章'});a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:id,mode:''},true));};return a;},
+  result(){
+    const a=this.attempt;
+    if(ATTEMPT_WAIT[a.status])return [el('p',{},[el('span',{class:'spinner','aria-hidden':'true'}),document.createTextNode(ATTEMPT_WAIT[a.status])])];
+    if(a.status==='error'){const back=el('button',{type:'button',text:'回到題目'});back.onclick=()=>{this.mode='';this.render();};return [el('p',{class:'error',text:'批改失敗：'+(a.error||'原因不明')}),back];}
+    const nodes=[el('p',{class:'summary',text:a.summary.correct+'／'+a.summary.total+' 正確'+(a.summary.partial?'・'+a.summary.partial+' 題部分正確':'')})];
+    if(a.web_check==='failed')nodes.push(el('p',{class:'muted',text:'這次沒有完成網路查證。'}));
+    for(const r of a.results){
+      const groups=[['本篇',r.sources.article,s=>s.relation==='article_body'?this.bodyLink():safeLink(s.url,(RELATIONS[s.relation]||s.relation))],['其他保留文章',r.sources.library,s=>this.articleLink(s.item_id,s.title)],['網路',r.sources.web,s=>safeLink(s.url,s.title||s.url)]].filter(g=>g[1].length);
+      nodes.push(el('div',{class:'q','data-number':String(r.number)},[
+        el('h3',{},[el('span',{class:'verdict '+r.verdict,text:VERDICT[r.verdict]}),document.createTextNode('第 '+r.number+' 題：'+r.question)]),
+        el('dl',{},[el('dt',{text:'你的答案'}),el('dd',{text:(r.answer||'（空白）')+(r.unsure?'（勾了不確定）':'')}),el('dt',{text:'回饋'}),el('dd',{text:r.feedback}),el('dt',{text:'參考答案'}),el('dd',{text:r.reference})]),
+        ...groups.map(([label,list,link])=>el('div',{class:'src'},[el('strong',{text:'出處・'+label}),el('ul',{},list.map(s=>el('li',{},[link(s),s.excerpt?el('span',{class:'preview',text:s.excerpt.slice(0,160)}):null])))]))]));
+    }
+    const redo=el('button',{type:'button',text:'重做'});redo.onclick=()=>{this.mode='';this.attempt=null;this.render();$('quiz').scrollIntoView({block:'start'});};
+    const fresh=el('button',{type:'button',text:'換一組新題目'});fresh.onclick=()=>run(()=>this.create(true),fresh,'出題中…');
+    const next=el('button',{type:'button',class:'primary',text:'下一篇'});next.onclick=()=>run(nextUnread,next,'尋找中…');
+    nodes.push(el('div',{class:'actions'},[redo,fresh,next]));
+    return nodes;
+  },
+  // 作答紀錄：每次作答都保留，可以回頭看。
+  history(){
+    const rows=this.quizzes.flatMap(q=>q.attempts.filter(a=>a.summary).map(a=>({q,a})));
+    if(!rows.length)return null;
+    return el('details',{class:'source'},[el('summary',{text:'作答紀錄（'+rows.length+' 次）'}),el('ul',{},rows.map(({q,a})=>{const b=el('button',{type:'button',class:'linkish',text:when(a.created_at)+'・'+a.summary.correct+'／'+a.summary.total+' 正確'});b.onclick=()=>run(async()=>{this.quiz=q;this.attempt=await api('attempts/'+a.id);this.mode='result';this.render();});return el('li',{},[b]);}))]);
+  },
+  async create(fresh){
+    const q=await api('items/'+this.item.id+'/quizzes','POST',{fresh});
+    this.setQuiz(q);this.attempt=null;this.mode='';
+    if(this.item.triage==='pending'){this.item.triage='kept';await refreshArticle();await updateListItem(this.item.id);refreshEntries();}
+    this.render();if(QUIZ_WAIT[q.status])this.poll();
+  },
+};
+// 「下一篇」：目前列表檢視（篩選、主題、搜尋、排序）中位在本篇之後的第一篇未讀文章；已載入的不夠時往下載入。
+async function nextUnread(){
+  const id=current&&current.id;
+  for(;;){
+    const index=listItems.findIndex(i=>i.id===id);
+    const next=listItems.slice(index+1).find(i=>!i.read_at&&i.id!==id);
+    if(next)return navigate({article:next.id},true);
+    if(!hasMore){message('這份清單已讀完。');return;}
+    await loadMore();
+  }
+}
 // 讀到正文結尾自動標已讀：只點開不算，要有捲動等閱讀動作之後，結尾進入畫面才送出；同一次開啟只送一次。
 const autoRead={
   observer:null,seq:-1,visible:false,armed:false,armAt:0,off:false,sent:false,

@@ -47,6 +47,7 @@ import {
 } from './triage.js';
 import { indexStatus, rebuildIndex } from './rag-index.js';
 import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
+import { listQuizzes, quizView, attemptView, QuizError } from './quiz.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -432,7 +433,7 @@ export function createLearningHandler(deps = {}) {
         );
       }
       const match = route.match(
-        /^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics|triage|similar))?$/,
+        /^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics|triage|similar|quizzes))?$/,
       );
       if (match) {
         const id = await resolveItemId(env, match[1]),
@@ -457,6 +458,12 @@ export function createLearningHandler(deps = {}) {
             })),
           });
         }
+        // 精讀問答：POST 出題（fresh=true 換一組新題目），GET 列出這篇的題組與作答摘要。
+        if (match[2] === '/quizzes' && request.method === 'POST') {
+          const quiz = await service.quiz(env, id, { fresh: (await body(request)).fresh === true });
+          return json(quiz, quiz.status === 'ready' || quiz.status === 'error' ? 200 : 202);
+        }
+        if (match[2] === '/quizzes' && request.method === 'GET') return json(await listQuizzes(env, id));
         if (match[2] === '/triage' && request.method === 'PUT') {
           try {
             return json(await applyTriage(env, id, (await body(request)).action, { enqueue: service.enqueue }));
@@ -650,6 +657,21 @@ export function createLearningHandler(deps = {}) {
           return json({ ok: true, note_updated_at: noteUpdatedAt });
         }
       }
+      const quizMatch = route.match(/^quizzes\/([0-9a-f-]{36})(\/attempts)?$/);
+      if (quizMatch) {
+        const quiz = await query(env, 'SELECT * FROM learning_quizzes WHERE id=?', quizMatch[1]).first();
+        if (!quiz) return json({ error: '題組不存在' }, 404);
+        if (!quizMatch[2] && request.method === 'GET') return json(await quizView(env, quiz));
+        if (quizMatch[2] && request.method === 'POST') {
+          const attempt = await service.attempt(env, quiz.id, await body(request));
+          return json(attempt, attempt.status === 'done' || attempt.status === 'error' ? 200 : 202);
+        }
+      }
+      const attemptMatch = route.match(/^attempts\/([0-9a-f-]{36})$/);
+      if (attemptMatch && request.method === 'GET') {
+        const attempt = await query(env, 'SELECT * FROM learning_attempts WHERE id=?', attemptMatch[1]).first();
+        return attempt ? json(await attemptView(env, attempt)) : json({ error: '作答不存在' }, 404);
+      }
       if (route.startsWith('media/') && request.method === 'GET') {
         const asset = await query(env, 'SELECT * FROM learning_media WHERE id=?', route.slice(6)).first();
         if (!asset?.object_key || !env.MEDIA) return json({ error: '原始媒體不可取得' }, 404);
@@ -741,6 +763,7 @@ export function createLearningHandler(deps = {}) {
       if (route === 'x/backfill' && request.method === 'POST') return json(await service.backfill(env), 202);
       return json({ error: 'Not found' }, 404);
     } catch (error) {
+      if (error instanceof QuizError) return json({ error: error.message }, error.status);
       return json({ error: error.message || '學習流程處理失敗' }, error.name === 'BudgetPaused' ? 429 : 400);
     }
   }

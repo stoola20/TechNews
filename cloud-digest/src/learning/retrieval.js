@@ -52,6 +52,9 @@ async function semanticRanking(env, text, exclude) {
   return ranked;
 }
 
+// 媒體解析切成多段時，第二段起在 ID 後面加上起點。
+export const mediaChunkId = (analysisId, start) => (start ? `media:${analysisId}:${start}` : `media:${analysisId}`);
+
 // 依片段紀錄從 D1 取出文字，組成追問片段。
 async function chunkUnit(env, chunk) {
   if (chunk.kind === 'body') {
@@ -106,7 +109,7 @@ async function chunkUnit(env, chunk) {
   return content
     ? {
         key: chunk.id,
-        id: `media:${chunk.ref_id}`,
+        id: mediaChunkId(chunk.ref_id, chunk.start),
         item_id: chunk.item_id,
         url: row.url,
         relation: 'media_evidence',

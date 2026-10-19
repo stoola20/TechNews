@@ -68,6 +68,8 @@ const env = {
   LEARNING_DEMO: 'true',
   PUBLIC_BASE_URL: 'https://example.org',
   LEARNING_MONTHLY_USD: '30',
+  // 出題與批改走 Gemini 路徑，但由下面的 demoGemini 回應合成內容，不連外。
+  GEMINI_API_KEY: 'demo-only',
   // 假的 embedding 模型與記憶體 Vectorize：讓相似文章、混合檢索與連結題可以在本機操作，不呼叫 Cloudflare。
   AI: embeddingModel(),
   LIBRARY_INDEX: vectorIndex(),
@@ -80,7 +82,57 @@ const DAY = 86400000,
     source.id === 'apple_developer_news'
       ? 'https://developer.apple.com/news/?id=' + slug
       : 'https://' + source.host + '/' + source.paths[0] + '/' + slug;
+// 示範用的 Gemini 回應：依送出的片段組出題目，依答案長度批改。內容都是合成資料。
+function demoGemini(body) {
+  const system = body.systemInstruction.parts[0].text,
+    input = JSON.parse(body.contents[0].parts[0].text.split('\n\n').at(-1));
+  let data;
+  if (system.includes('出題老師')) {
+    const own = input.chunks.filter((c) => c.article === '本篇'),
+      linked = input.related[0];
+    const pick = (n) => own[n % own.length];
+    data = {
+      questions: [0, 1, 2].map((n) => ({
+        type: 'article',
+        question: `示範第 ${n + 1} 題：用自己的話說明這段的重點與理由——「${pick(n).content.replace(/\s+/g, ' ').slice(0, 40)}…」`,
+        reference: '示範參考答案：' + pick(n).content.replace(/\s+/g, ' ').slice(0, 160),
+        citations: [pick(n).ref],
+      })),
+    };
+    if (linked) {
+      const other = input.chunks.find((c) => c.article === linked.ref);
+      data.questions.push({
+        type: 'link',
+        related: linked.ref,
+        question: `示範連結題：這篇和「${linked.title}」講的做法有什麼關係？`,
+        reference: '示範參考答案：兩篇從不同角度討論同一類問題。',
+        citations: [pick(0).ref, other.ref],
+      });
+    }
+  } else
+    data = {
+      results: input.questions.map((q) => ({
+        number: q.number,
+        verdict: q.answer.length >= 20 ? 'correct' : q.answer.length >= 6 ? 'partial' : 'incorrect',
+        feedback:
+          q.answer.length >= 20
+            ? '示範回饋：你說出了重點與理由。'
+            : '示範回饋：方向可以，但還缺少「為什麼」的說明，對照參考答案補上。',
+        citations: [input.chunks[0].ref],
+        needs_web: false,
+        claim: '',
+      })),
+    };
+  return Response.json({
+    candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(data) }] } }],
+    usageMetadata: { promptTokenCount: 1200, candidatesTokenCount: 300, thoughtsTokenCount: 0 },
+  });
+}
 const handler = createLearningHandler({
+  fetcher: async (url, options) => {
+    if (new URL(url).hostname === 'generativelanguage.googleapis.com') return demoGemini(JSON.parse(options.body));
+    throw new Error('本機示範不連外：' + url);
+  },
   discoverSource: async (source) => {
     if (source.id === 'anthropic_engineering') throw new Error('Source HTTP 403');
     return [
