@@ -75,7 +75,7 @@ export function createLearningHandler(deps={}) {
           if(action==='fail')return json(await fail(env,data.job_id,data.attempt_token,data.error,data.retryable!==false));
           if(action==='release')return json(await release(env,data.job_id,data.attempt_token,data.error));
           if(action==='complete'){
-            const result=await complete(env,data,{articleCompleted:async()=>{const work=service.flush(env).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},sourceFetched:(env,id)=>service.enqueue(env,id),...service.localHooks});
+            const result=await complete(env,data,{articleCompleted:async(env,id)=>{const work=service.classify(env,id).then(()=>service.flush(env)).catch(()=>{});if(ctx.waitUntil)ctx.waitUntil(work);else await work;},sourceFetched:(env,id)=>service.enqueue(env,id),...service.localHooks});
             return json(result);
           }
         }catch(error){
@@ -204,7 +204,7 @@ export function createLearningHandler(deps={}) {
         if(match[2]==='/renotify'&&request.method==='POST'){
           // 重送通知：用目前保存的文章內容再發一次，不重新生成。
           if(!['ready','partial'].includes(current.status) || current.edition!=='detailed')return json({error:'只有已完成的詳細文章可以重送通知。'},409);
-          await query(env,'INSERT INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,?,?,?,?)',crypto.randomUUID(),JSON.stringify([{id,revision:current.revision}]),'resend',articleMessage(env,current,'complete'),nowIso()).run();
+          await query(env,'INSERT INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,?,?,?,?)',crypto.randomUUID(),JSON.stringify([{id,revision:current.revision}]),'resend',articleMessage(env,current,'complete',await topicList(env)),nowIso()).run();
           await service.flush(env);return json({ok:true});
         }
         if(match[2]==='/retry'&&request.method==='POST'){

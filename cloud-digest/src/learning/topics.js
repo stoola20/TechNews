@@ -51,28 +51,50 @@ export async function classify(env,topics,article){
   return {primary:value.primary,secondary};
 }
 
-// 維護排程每輪分類有限篇數，新加入的先處理；失敗延後重試，五次後停在未分類，直到內容更新或重新分類全部。
+// 需要分類的文章：已完成、不是手動設定，且還沒分到目前版本或主要主題已被刪除。
+function pendingCondition(ids){
+  return `status IN ('ready','partial') AND topic_source IS NOT 'manual'
+      AND (topic_revision IS NULL OR topic_revision<revision OR (topic_primary IS NOT NULL AND topic_primary NOT IN (${ids.map(()=>'?').join(',')})))`;
+}
+
+// 分類一篇；失敗延後重試，五次後停在未分類，直到內容更新或重新分類全部。
+async function classifyRow(env,topics,row,deps){
+  try{
+    const result=await (deps.classifyTopics || classify)(env,topics,classifierInput(row));
+    await query(env,"UPDATE learning_items SET topic_primary=?,topic_secondary=?,topic_source='model',topic_revision=?,topic_attempts=0,topic_next_at=NULL WHERE id=? AND topic_source IS NOT 'manual'",
+      result.primary,result.secondary,row.revision,row.id).run();
+    return true;
+  }catch(error){
+    const attempts=row.topic_attempts+1,giveUp=attempts>=MAX_ATTEMPTS;
+    await query(env,'UPDATE learning_items SET topic_attempts=?,topic_next_at=?,topic_revision=? WHERE id=?',
+      giveUp?0:attempts,giveUp?null:new Date(now()+5*60e3*2**attempts).toISOString(),giveUp?row.revision:null,row.id).run();
+    console.log(JSON.stringify({event:'topic_classification_failed',attempts,error:String(error.message).slice(0,200)}));
+    return false;
+  }
+}
+
+// 文章寫成後立刻分類，再建立通知。這是新版本的第一次嘗試，不等先前失敗留下的延後時間。
+export async function classifyCompleted(env,id,deps={}){
+  const topics=await topicList(env),ids=topics.map(t=>t.id);
+  const row=await query(env,`SELECT id,title,body,article_json,revision,topic_attempts FROM learning_items WHERE id=? AND ${pendingCondition(ids)}`,id,...ids).first();
+  return row?classifyRow(env,topics,row,deps):null;
+}
+
+// 維護排程每輪分類有限篇數，新加入的先處理：重試到期的、「重新分類全部」排入的，以及尚未分類的既有文章。
 export async function classifyPending(env,deps={},limit=BATCH){
   const topics=await topicList(env),ids=topics.map(t=>t.id),at=nowIso();
   const candidates=await rows(env,`SELECT id,title,body,article_json,revision,topic_attempts FROM learning_items
-    WHERE status IN ('ready','partial') AND topic_source IS NOT 'manual' AND (topic_next_at IS NULL OR topic_next_at<=?)
-      AND (topic_revision IS NULL OR topic_revision<revision OR (topic_primary IS NOT NULL AND topic_primary NOT IN (${ids.map(()=>'?').join(',')})))
-    ORDER BY created_at DESC LIMIT ?`,at,...ids,limit);
+    WHERE ${pendingCondition(ids)} AND (topic_next_at IS NULL OR topic_next_at<=?)
+    ORDER BY created_at DESC LIMIT ?`,...ids,at,limit);
   let classified=0;
-  for(const row of candidates){
-    try{
-      const result=await (deps.classifyTopics || classify)(env,topics,classifierInput(row));
-      await query(env,"UPDATE learning_items SET topic_primary=?,topic_secondary=?,topic_source='model',topic_revision=?,topic_attempts=0,topic_next_at=NULL WHERE id=? AND topic_source IS NOT 'manual'",
-        result.primary,result.secondary,row.revision,row.id).run();
-      classified++;
-    }catch(error){
-      const attempts=row.topic_attempts+1,giveUp=attempts>=MAX_ATTEMPTS;
-      await query(env,'UPDATE learning_items SET topic_attempts=?,topic_next_at=?,topic_revision=? WHERE id=?',
-        giveUp?0:attempts,giveUp?null:new Date(now()+5*60e3*2**attempts).toISOString(),giveUp?row.revision:null,row.id).run();
-      console.log(JSON.stringify({event:'topic_classification_failed',attempts,error:String(error.message).slice(0,200)}));
-    }
-  }
+  for(const row of candidates)if(await classifyRow(env,topics,row,deps))classified++;
   return {classified,checked:candidates.length};
+}
+
+// 通知第一行的主題標籤：主要主題在前、次要主題在後；Telegram hashtag 不接受的字元換成底線。
+export function topicTags(row,topics){
+  return [row.topic_primary,row.topic_secondary].filter(Boolean).map(id=>topics.find(t=>t.id===id)?.name).filter(Boolean)
+    .map(name=>name.replace(/[^\p{L}\p{N}\p{M}_]+/gu,'_').replace(/^_+|_+$/g,'')).filter(Boolean).map(tag=>'#'+tag).join(' ');
 }
 
 // 手動設定主題後不再被自動分類覆寫；auto=true 交還給下一輪維護排程重新分類。

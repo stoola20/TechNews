@@ -25,8 +25,9 @@ flowchart TD
   RUNNER --> OLLAMA["Ollama Gemma<br/>只聽 127.0.0.1"]
   OLLAMA -->|"complete / fail"| ITEM
   GEMINI --> ITEM
+  ITEM --> TOPIC["Workers AI Gemma 4<br/>完成就分類"]
+  TOPIC --> NOTIFY["Telegram 通知<br/>主題標籤＋精簡介紹＋連結"]
   ITEM --> LIB["文章庫<br/>閱讀、筆記、追問"]
-  ITEM --> NOTIFY["Telegram 通知<br/>精簡介紹＋連結"]
 ```
 
 | 平台 | 責任 |
@@ -37,11 +38,18 @@ flowchart TD
 | Gemini Flash | 只負責理解圖片與影片，保存證據；預設也負責文字寫作 |
 | Mac 執行器 | 主動領取文字工作，呼叫本機 Ollama，回報結果。細節見 [runner/README.md](../cloud-digest/runner/README.md) |
 | D1 | 保存來源、文章、筆記版本、工作狀態、通知狀態與費用帳本 |
+| Workers AI | 用 Gemma 4 為完成的文章分主題，不記入預算 |
 
 兩個行為決定了工作會不會消失或被誤用：
 
 - 切到 `local` 後，Mac 離線時工作保持「等待本機」，不會自動改用雲端文字模型。
 - 執行器使用 `LEARNING_RUNNER_TOKEN`，與網站的 `RUN_TOKEN` 分開。網站登入憑證不能呼叫執行器端點。
+
+## 分類時機
+
+文章寫成已完成或部分完成後，同一個處理流程立刻分類，再建立通知。Gemini 寫作在處理工作內分類；Mac 執行器回報完成時，Worker 在回應後的背景工作裡先分類再送通知。分類失敗不擋通知：通知照常發出、不附主題，失敗次數與延後時間記在文章上。
+
+每 5 分鐘的維護排程仍有分類步驟，只處理重試到期的文章、「重新分類全部」排入的文章，以及尚未分類的既有文章。手動設定的主題不會被自動分類覆寫。
 
 ## 官方來源紀錄
 

@@ -5,7 +5,7 @@ import {prepareMedia,expireMedia,skipDecorative} from './media.js';
 import {generate} from './gemini.js';
 import {syncBookmarks,registerMedia,startFullScan,saveArticle,failureDetail,bookmarksEnabled,authorRecheckEnabled} from './x.js';
 import {libraryUrl,itemIdForUrl,migrateLibrary,saveVersion,backfillPublished} from './library.js';
-import {classifyPending} from './topics.js';
+import {classifyPending,classifyCompleted} from './topics.js';
 import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './linking.js';
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
@@ -102,6 +102,7 @@ export function createLearningService(deps={}) {
       if(revision!==row.revision)await saveVersion(env,row,'superseded');
       await query(env,`UPDATE learning_items SET title=?,body=?,article_json=?,gaps_json=?,status=?,revision=?,edition='detailed',stage=NULL,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=?,recheck_at=COALESCE(recheck_at,?) WHERE id=?`,
         article.title,article.body,JSON.stringify(article),JSON.stringify(gaps),gaps.length?'partial':'ready',revision,nowIso(),row.kind==='x'?new Date(now()+86400000).toISOString():null,id).run();
+      await classify(env,id);
       return {done:true};
     }catch(error){
       const paused=error.name==='BudgetPaused',attempts=paused?row.attempts:row.attempts+1;
@@ -168,6 +169,10 @@ export function createLearningService(deps={}) {
     await queueArticleNotifications(env);
     await sendPending(env,send);
   }
+  // 文章完成後先分類再通知；分類失敗不擋通知，由維護排程依延後時間重試。
+  async function classify(env,id){
+    try{return await classifyCompleted(env,id,deps);}catch(error){console.log(JSON.stringify({event:'topic_classification_failed',error:String(error.message).slice(0,200)}));return false;}
+  }
   async function ask(env,question,articleId=null){return askQuestion(env,question,articleId,{...deps,fetcher});}
   async function official(env){return discoverOfficial(env,collect,deps);}
   // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
@@ -216,7 +221,7 @@ export function createLearningService(deps={}) {
     }
   }
   // 每個對外入口都在注入的時鐘下執行；沒有注入時用系統時間。
-  const api={collect,process,sync,backfill,recover,flush,ask,scheduled,queue,enqueue,receipt,official,migrate:migrateLibrary};
+  const api={collect,process,sync,backfill,recover,flush,classify,ask,scheduled,queue,enqueue,receipt,official,migrate:migrateLibrary};
   for(const [name,fn] of Object.entries(api))api[name]=(...args)=>withClock(deps.now,()=>fn(...args));
   return {...api,localHooks:{completeQuestion}};
 }

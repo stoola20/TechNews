@@ -1,5 +1,6 @@
 import {query,rows,hash,nowIso} from './store.js';
 import {now} from './clock.js';
+import {topicList,topicTags} from './topics.js';
 
 const STATES={queued:'等待處理',processing:'處理中',waiting_local:'等待本機',generating:'本機生成中',error:'待重試',needs_attention:'需要處理',budget_paused:'費用暫停',paused:'手動暫停',awaiting_backfill:'等待確認回補'};
 
@@ -16,9 +17,10 @@ function baseUrl(env){
   return base.origin;
 }
 
-export function articleMessage(env,row,kind){
-  const article=JSON.parse(row.article_json || '{}'),gaps=JSON.parse(row.gaps_json || '[]');
-  const lines=[`${kind==='update'?'【更新】':kind==='merged'?'【已在文章庫】':''}${row.title.slice(0,120)}`,'',(article.intro || '').slice(0,800)];
+// 第一行是主題標籤（有分類結果時），接著標題、導讀與文章連結。
+export function articleMessage(env,row,kind,topics=[]){
+  const article=JSON.parse(row.article_json || '{}'),gaps=JSON.parse(row.gaps_json || '[]'),tags=topicTags(row,topics);
+  const lines=[...(tags?[tags]:[]),`${kind==='update'?'【更新】':kind==='merged'?'【已在文章庫】':''}${row.title.slice(0,120)}`,'',(article.intro || '').slice(0,800)];
   if(kind==='merged')lines.push('','你收藏或分享的 X 貼文連到這篇已整理的文章，已把貼文加進同一篇的來源，不重新生成。');
   if(kind==='update')lines.push('','補到新的來源或修復缺漏，已更新同一篇文章；舊版、筆記與已讀狀態都保留。');
   if(gaps.length)lines.push('',`來源有 ${gaps.length} 項缺漏，詳見文章上方說明。`);
@@ -31,6 +33,7 @@ export async function queueArticleNotifications(env){
   // 舊流程只在收件紀錄上標記已通知，兩邊都要算，避免搬移後重送。
   const candidates=await rows(env,`SELECT * FROM (SELECT i.*,MAX(i.notified_revision,COALESCE((SELECT MAX(notify_revision) FROM learning_intakes k WHERE k.item_id=i.id),0)) AS sent_revision
     FROM learning_items i WHERE status IN ('ready','partial') AND edition='detailed' AND EXISTS(SELECT 1 FROM learning_intakes k WHERE k.item_id=i.id)) WHERE revision>sent_revision ORDER BY updated_at`);
+  const topics=candidates.length?await topicList(env):[];
   for(const row of candidates){
     const article=JSON.parse(row.article_json || '{}');
     if(row.sent_revision>0 && row.notified_content && article.content_fingerprint===row.notified_content){
@@ -39,7 +42,7 @@ export async function queueArticleNotifications(env){
     }
     const kind=row.sent_revision>0?'update':'complete';
     await query(env,'INSERT OR IGNORE INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,?,?,?,?)',
-      await hash(`article:${row.id}:${row.revision}`),JSON.stringify([{id:row.id,revision:row.revision,content:article.content_fingerprint || null}]),kind,articleMessage(env,row,kind),nowIso()).run();
+      await hash(`article:${row.id}:${row.revision}`),JSON.stringify([{id:row.id,revision:row.revision,content:article.content_fingerprint || null}]),kind,articleMessage(env,row,kind,topics),nowIso()).run();
   }
 }
 

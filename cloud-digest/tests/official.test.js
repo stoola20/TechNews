@@ -373,3 +373,66 @@ test('來源連續兩次失敗發一則提醒：第三次不重發、恢復不�
   assert.equal(deliveries.length,2);assert.ok(deliveries.every(d=>d.item_ids_json==='[]'));
   assert.ok(!alerts().some(t=>t.includes('Apple Developer News')));
 });
+
+// Workers AI 替身：依標題回傳合成分類結果，fail 為 true 時模擬服務失敗。
+function topicAI(answer,order=[]){
+  const ai={calls:0,fail:false,async run(model,input){
+    ai.calls++;order.push('classify');
+    if(ai.fail)throw new Error('Workers AI 暫時無法使用');
+    return {choices:[{message:{content:JSON.stringify(answer(JSON.parse(input.messages[1].content).article))},finish_reason:'stop'}]};
+  }};
+  return ai;
+}
+const lesson=(env,sources)=>({title:'教材 '+sources[0].url.split('-').at(-1),body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]});
+
+test('Gemini 寫完就分類再通知：通知第一行是主題標籤，名稱裡的符號換成底線；手動設定的主題不被覆寫',async()=>{
+  const env=environment(),order=[],sent=[];
+  env.AI=topicAI(({title})=>title.endsWith('0')?{primary:'apple',secondary:'ai-coding'}:{primary:'models',secondary:null},order);
+  const handler=createLearningHandler({...recorder(),now,discoverSource:async source=>source.id==='openai_developer_blog'?entries.slice(0,2):[],
+    loadArticle:async(source,entry)=>({...entry,content:longContent,contentMethod:'article_html'}),generate:async(env,sources)=>lesson(env,sources),
+    sendTelegram:async(env,text)=>{order.push('send');sent.push(text);return sent.length;}});
+  await settings(env);
+  await handler.service.official(env);
+  await query(env,"UPDATE learning_items SET topic_primary='enterprise',topic_source='manual' WHERE url LIKE '%post-1'").run();
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued' ORDER BY url"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  assert.deepEqual(order,['classify','send','send']);
+  assert.deepEqual(sent.map(t=>t.split('\n').slice(0,2)),[['#iOS_Apple_開發 #AI_Coding_工具','教材 0'],['#企業導入案例','教材 1']]);
+  const manual=await query(env,"SELECT topic_primary,topic_source FROM learning_items WHERE url LIKE '%post-1'").first();
+  assert.deepEqual([manual.topic_primary,manual.topic_source],['enterprise','manual']);
+});
+
+test('Mac 執行器回報完成：先分類再通知',async()=>{
+  const s=setup(),order=[];await settings(s.env);await setTextProvider(s.env,'local');
+  s.env.AI=topicAI(()=>({primary:'agent-engineering',secondary:null}),order);
+  await s.handler.service.official(s.env);await drain(s);
+  const job=await claim(s.env,'mac');
+  const body='## 背景\n'+'這篇說明新 API 的機制與操作步驟。[S1]\n\n'.repeat(220)+'## 限制\n'+TAIL+' [S1]';
+  await complete(s,job,{publish:true,reason:'AI 開發工具更新',title:'官方詳細教材',intro:'新 API 的用途與限制。',body,citations:['S1']});
+  const sent=s.net.calls.filter(c=>c.url.includes('api.telegram.org')).map(c=>JSON.parse(c.options.body).text);
+  assert.equal(sent.length,1);assert.equal(s.env.AI.calls,1);
+  assert.deepEqual(sent[0].split('\n').slice(0,2),['#Agent_架構與工程實踐','官方詳細教材']);
+  const row=await query(s.env,'SELECT topic_primary,topic_source FROM learning_items WHERE id=(SELECT item_id FROM learning_jobs WHERE id=?)',job.id).first();
+  assert.deepEqual([row.topic_primary,row.topic_source],['agent-engineering','model']);
+});
+
+test('分類失敗時通知照常發出、不附主題；維護排程依延後時間重試成功',async()=>{
+  const env=environment(),sent=[];let today=NOW;
+  env.AI=topicAI(()=>({primary:'models',secondary:null}));env.AI.fail=true;
+  const handler=createLearningHandler({...recorder(),now:()=>today,discoverSource:async source=>source.id==='openai_developer_blog'?entries.slice(0,1):[],
+    loadArticle:async(source,entry)=>({...entry,content:longContent,contentMethod:'article_html'}),generate:async(env,sources)=>lesson(env,sources),
+    sendTelegram:async(env,text)=>{sent.push(text);return sent.length;}});
+  await settings(env);
+  await handler.service.official(env);
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  assert.equal(sent.length,1);assert.equal(sent[0].split('\n')[0],'教材 0');
+  let row=await query(env,'SELECT topic_primary,topic_attempts,topic_next_at FROM learning_items').first();
+  assert.deepEqual([row.topic_primary,row.topic_attempts,row.topic_next_at],[null,1,new Date(NOW+10*60e3).toISOString()]);
+  env.AI.fail=false;
+  today=NOW+5*60e3;await handler.scheduled(env,{tasks:['maintenance']});
+  assert.equal(env.AI.calls,1);
+  today=NOW+11*60e3;await handler.scheduled(env,{tasks:['maintenance']});
+  row=await query(env,'SELECT topic_primary,topic_attempts FROM learning_items').first();
+  assert.deepEqual([row.topic_primary,row.topic_attempts],['models',0]);
+  // 已送出的通知不重發。
+  assert.equal(sent.length,1);
+});
