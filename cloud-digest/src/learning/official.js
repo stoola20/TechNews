@@ -1,5 +1,5 @@
-import {discoverSource,initialSeenUrls,getSources,maxArticleAgeDays} from '../sources.js';
-import {effectiveEnvironment} from '../settings.js';
+import {discoverSource,initialSeenUrls,getSources,maxArticleAgeDays,sourceEnabled} from '../sources.js';
+import {effectiveEnvironment,readSettings} from '../settings.js';
 import {query,rows,nowIso} from './store.js';
 import {publishedBefore,normalizePublished} from './dates.js';
 import {now} from './clock.js';
@@ -18,15 +18,18 @@ export async function discoverOfficial(env,collect,deps={}){
   const discover=deps.discoverSource || discoverSource;
   const maxAge=maxArticleAgeDays(env);
   const result={queued:0,stale:0,initialized:[],errors:[]};
-  for(const source of getSources(effective)){
+  // 關閉的來源不發現、不寫執行紀錄，歷史紀錄照常保留。
+  for(const source of getSources(effective).filter(sourceEnabled)){
     const at=nowIso(),run={found:0,collected:0,stale:0,baseline:0};
     try{
       const entries=await discover(source);
       if(!entries.length)throw new Error('來源列表沒有找到任何文章');
       run.found=entries.length;
-      const state=await query(env,'SELECT source FROM source_state WHERE source=?',source.id).first();
-      // 新來源只回補近期文章，較舊的記為初次基準。
-      const baseline=new Set(state?[]:initialSeenUrls(entries,now(),maxAge));
+      const state=await query(env,'SELECT source,last_checked_at FROM source_state WHERE source=?',source.id).first();
+      // 新來源只回補近期文章，較舊的記為初次基準。關閉或故障超過保留期限的來源，網址紀錄可能已清掉，也重新建立基準，
+      // 避免列表上沒有日期的舊文被當成新文章收件。
+      const lapsed=!!state && (!state.last_checked_at || Date.parse(state.last_checked_at)<now()-RETENTION_DAYS*DAY);
+      const baseline=new Set(state && !lapsed?[]:initialSeenUrls(entries,now(),maxAge));
       if(!state){
         await query(env,"INSERT OR IGNORE INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES(?,?,?,'[]')",source.id,at,at).run();
         result.initialized.push(source.id);
@@ -35,7 +38,7 @@ export async function discoverOfficial(env,collect,deps={}){
       const listed=[];
       for(const entry of entries){
         if(known.has(entry.url)){listed.push(entry.url);continue;}
-        if(baseline.has(entry.url)){await recordEntry(env,source,entry,at,'baseline','新來源首次執行前就已在列表上');run.baseline++;continue;}
+        if(baseline.has(entry.url)){await recordEntry(env,source,entry,at,'baseline',lapsed?`超過 ${RETENTION_DAYS} 天沒有成功檢查，重新開始前就已在列表上`:'新來源首次執行前就已在列表上');run.baseline++;continue;}
         // 列表裡沒看過、但發表已久的文章（RSS 視窗變長、流程交接留下的積壓）只記為太舊略過，不收件、不通知。
         if(publishedBefore(entry.publishedAt,now(),maxAge)){await recordEntry(env,source,entry,at,'stale',`發表超過 ${maxAge} 天`);run.stale++;continue;}
         // receipt 固定為官方網址：重複的日次事件或同一篇再次出現都不會新增收件。收件成功才記錄，失敗時下一輪重試。
@@ -59,20 +62,20 @@ export async function discoverOfficial(env,collect,deps={}){
   return result;
 }
 
-// 管理頁「官方來源」：每個來源的最近一輪結果與狀態。
+// 管理頁「官方來源」：想收到的內容、來源設定，以及每個來源的最近一輪結果、狀態與最近 7 天條目。
 export async function officialOverview(env){
-  const effective=await effectiveEnvironment(env);
+  const settings=await readSettings(env);
   const sources=[];
-  for(const source of getSources(effective)){
+  for(const source of settings.sources){
     const state=await query(env,'SELECT initialized_at,last_checked_at FROM source_state WHERE source=?',source.id).first();
     const last=await query(env,'SELECT ran_at,found,collected,stale,baseline,ok,error FROM source_runs WHERE source=? ORDER BY ran_at DESC LIMIT 1',source.id).first();
     const entries=await rows(env,`SELECT url,title,published_at,decision,reason,item_id,manual,first_seen_at FROM source_entries
       WHERE source=? AND first_seen_at>=? ORDER BY first_seen_at DESC,url LIMIT 200`,source.id,new Date(now()-DETAIL_DAYS*DAY).toISOString());
-    sources.push({id:source.id,name:source.name,initialized_at:state?.initialized_at || null,last_checked_at:state?.last_checked_at || null,
-      last_run:last?{...last,ok:!!last.ok}:null,status:!last?'never':last.ok?'ok':'failed',
+    sources.push({id:source.id,name:source.name,enabled:source.enabled,initialized_at:state?.initialized_at || null,last_checked_at:state?.last_checked_at || null,
+      last_run:last?{...last,ok:!!last.ok}:null,status:!source.enabled?'disabled':!last?'never':last.ok?'ok':'failed',
       entries:entries.map(e=>({...e,published_at:normalizePublished(e.published_at),manual:!!e.manual}))});
   }
-  return {max_age_days:maxArticleAgeDays(env),retention_days:RETENTION_DAYS,detail_days:DETAIL_DAYS,sources};
+  return {max_age_days:maxArticleAgeDays(env),retention_days:RETENTION_DAYS,detail_days:DETAIL_DAYS,settings,sources};
 }
 
 // 紀錄保留 30 天：執行紀錄依時間清除；網址條目只在 30 天內都沒再出現在列表時才刪，避免仍在列表上的舊網址被當成沒看過。

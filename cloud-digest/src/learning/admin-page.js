@@ -8,7 +8,9 @@ main{max-width:1000px;margin:24px auto;padding:0 20px}h1{font-size:24px}h2{font-
 dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}dt{color:var(--muted);font-size:14px}dd{margin:0;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow:auto}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.switches{display:grid;gap:4px}
-.wide{grid-column:1/-1}tr.failed td:last-child{color:var(--danger);font-weight:600}
+.wide{grid-column:1/-1}tr.failed td:last-child{color:var(--danger);font-weight:600}tr.off td{color:var(--muted)}
+#sources .switch{min-height:36px}.advanced{margin-top:16px;border-top:1px solid var(--line)}.advanced summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}
+#sources-json{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;line-height:1.5}
 .entries{margin-top:12px}.entries details{border-top:1px solid var(--line)}.entries summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px;font-weight:600;list-style:none}.entries summary::-webkit-details-marker{display:none}.entries summary::before{content:'▸';color:var(--muted)}.entries details[open] summary::before{content:'▾'}
 .entry{display:grid;grid-template-columns:7em minmax(0,1fr) minmax(10em,auto);gap:4px 12px;align-items:center;padding:6px 0;font-size:14px;border-top:1px solid var(--line)}.entry a{overflow-wrap:anywhere}.entry .why{color:var(--muted)}.entry button{margin-left:8px}
 .topic-edit{display:grid;grid-template-columns:44px minmax(8em,14em) minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
@@ -28,7 +30,15 @@ ${LOGIN}
 <main id="app" class="hidden"><h1>管理</h1>
 <p class="muted">同步、模型分工、預算與故障處理集中在這裡；日常閱讀請回到文章庫。</p>
 <div class="grid">
-<section class="panel wide" aria-labelledby="sources-title"><h2 id="sources-title">官方來源</h2><p id="sources-rule" class="muted"></p><div id="sources"></div><div id="source-details" class="entries"></div></section>
+<section class="panel wide" aria-labelledby="sources-title"><h2 id="sources-title">官方來源</h2><p id="sources-rule" class="muted"></p>
+<label for="interests">想收到的內容</label><textarea id="interests" rows="4" maxlength="4000"></textarea>
+<p class="muted">官方文章整理時，文字模型依這段文字判斷是否相關；不相關的標為已略過、不通知。主動分享與收藏的文章不受影響。</p>
+<div class="actions"><button id="interests-save" class="primary">保存想收到的內容</button></div>
+<div id="sources"></div><div id="source-details" class="entries"></div>
+<details class="advanced"><summary>進階：編輯來源 JSON</summary>
+<p class="muted">新增、修改或刪除來源。保存時取代整份來源清單；格式有誤時顯示原因，原設定不變。欄位說明見 cloud-digest/SOURCES.md。</p>
+<label class="sr" for="sources-json">來源 JSON</label><textarea id="sources-json" rows="16" spellcheck="false" autocapitalize="off"></textarea>
+<div class="actions"><button id="sources-json-save">保存來源 JSON</button></div></details></section>
 <section class="panel" aria-labelledby="model-title"><h2 id="model-title">模型分工</h2><dl id="models"></dl>
 <p class="muted">「文字模型」負責官方主題判斷、詳細整理、通知介紹與來源追問。切到本機前請先完成代表素材驗收。Mac 離線時工作會等待，不會改用雲端文字模型。</p>
 <div class="actions"><button id="use-local">改用本機 Gemma</button><button id="use-gemini">改回 Gemini</button></div></section>
@@ -104,14 +114,28 @@ $('topic-reclassify').onclick=async e=>{
   if(!await askConfirm('所有非手動設定的文章會在接下來的維護排程中重新分類（每 5 分鐘最多 10 篇），期間保留目前主題。要繼續嗎？'))return;
   run(async()=>{const r=await api('admin/topics/reclassify','POST',{});message('已排入 '+r.queued+' 篇重新分類。');},button,'處理中…');
 };
-// 官方來源：每個來源最近一輪的找到、收件、太舊略過與狀態。
-const SOURCE_STATUS={ok:'正常',failed:'失敗',never:'尚未執行'};
-async function loadSources(){
-  const o=await api('admin/sources');
+// 官方來源：想收到的內容、每個來源的開關與最近一輪的找到、收件、太舊略過與狀態。設定儲存後下一輪排程生效。
+const SOURCE_STATUS={ok:'正常',failed:'失敗',never:'尚未執行',disabled:'已關閉'};
+let sourceSettings=null;
+async function loadSources(){renderSources(await api('admin/sources'));}
+async function saveSourceSettings(next){const o=await api('admin/settings','PUT',next);renderSources(o);return o;}
+function sourceToggle(s){
+  const box=el('input',{type:'checkbox','aria-label':'開啟 '+s.name});box.checked=s.enabled;
+  // 開關切換後立即保存；失敗時還原勾選狀態。
+  box.onchange=()=>{const on=box.checked;run(async()=>{
+    try{await saveSourceSettings({interests:sourceSettings.interests,sources:sourceSettings.sources.map(x=>x.id===s.id?{...x,enabled:on}:x)});}catch(error){box.checked=!on;throw error;}
+    message(s.name+(on?' 已開啟，下一輪排程生效。':' 已關閉，歷史紀錄保留。'));});};
+  return el('label',{class:'switch'},[box,s.name]);
+}
+function renderSources(o){
+  // 文字框有未保存的修改時不覆寫。
+  const prev=sourceSettings;sourceSettings=o.settings;
+  if(!prev||$('interests').value===prev.interests)$('interests').value=o.settings.interests;
+  if(!prev||$('sources-json').value===JSON.stringify(prev.sources,null,2))$('sources-json').value=JSON.stringify(o.settings.sources,null,2);
   $('sources-rule').textContent='只收 '+o.max_age_days+' 天內發表的文章。每天 08:00 檢查，紀錄保留 '+o.retention_days+' 天。點下方來源名稱看每篇的處理結果。';
-  const cells=s=>{const r=s.last_run;return [s.name,when(r?r.ran_at:s.last_checked_at),r?r.found:'—',r?r.collected:'—',r?r.stale:'—',s.status==='failed'?'失敗：'+(r.error||'原因不明'):SOURCE_STATUS[s.status]];};
+  const cells=s=>{const r=s.last_run;return [sourceToggle(s),when(r?r.ran_at:s.last_checked_at),r?r.found:'—',r?r.collected:'—',r?r.stale:'—',s.status==='failed'?'失敗：'+(r.error||'原因不明'):SOURCE_STATUS[s.status]];};
   $('sources').replaceChildren(el('table',{},[el('thead',{},[el('tr',{},['來源','最後檢查','找到','收件','太舊略過','狀態'].map(t=>el('th',{text:t})))]),
-    el('tbody',{},o.sources.map(s=>el('tr',{'data-source':s.id,class:s.status==='failed'?'failed':''},cells(s).map((v,i)=>el('td',{text:String(v),...([2,3,4].includes(i)?{'data-label':['','','找到','收件','太舊略過'][i]}:{})})))))]));
+    el('tbody',{},o.sources.map(s=>el('tr',{'data-source':s.id,class:s.status==='failed'?'failed':s.status==='disabled'?'off':''},cells(s).map((v,i)=>el('td',{...(typeof v==='object'?{}:{text:String(v)}),...([2,3,4].includes(i)?{'data-label':['','','找到','收件','太舊略過'][i]}:{})},typeof v==='object'?[v]:[])))))]));
   // 逐篇明細：重新整理後保留原本展開的來源。
   const open=new Set([...document.querySelectorAll('#source-details details[open]')].map(d=>d.dataset.source));
   $('source-details').replaceChildren(...o.sources.map(s=>{
@@ -120,6 +144,11 @@ async function loadSources(){
     d.open=open.has(s.id);return d;
   }));
 }
+$('interests-save').onclick=e=>run(async()=>{const o=await saveSourceSettings({interests:$('interests').value,sources:sourceSettings.sources});$('interests').value=o.settings.interests;message('想收到的內容已保存，下一輪排程生效。');},e.currentTarget,'保存中…');
+$('sources-json-save').onclick=e=>{
+  let sources;try{sources=JSON.parse($('sources-json').value);}catch(error){message('來源 JSON 格式錯誤：'+error.message,true);return;}
+  run(async()=>{const o=await saveSourceSettings({interests:sourceSettings.interests,sources});$('sources-json').value=JSON.stringify(o.settings.sources,null,2);message('來源清單已保存，下一輪排程生效。');},e.currentTarget,'保存中…');
+};
 // 一篇一列：發表日、標題（連原文）、處理結果；太舊略過的可以「仍要收件」，等同主動分享。
 const DECISION={collected:'收件',baseline:'初次基準',stale:'太舊略過'};
 function entryRow(s,e){

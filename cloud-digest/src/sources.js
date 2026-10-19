@@ -13,14 +13,30 @@ export const SOURCES = [
 
 export function getSources(env = {}) {
   const sources = env.SOURCES_JSON ? JSON.parse(env.SOURCES_JSON) : SOURCES;
-  if (!Array.isArray(sources) || !sources.length || sources.length > 12) throw new Error("SOURCES_JSON must contain 1–12 sources");
+  if (!Array.isArray(sources) || !sources.length || sources.length > 12) throw new Error("來源清單需要 1–12 個來源");
   const ids = new Set();
-  for (const source of sources) {
-    const url = new URL(source.indexUrl);
-    if (!source.id || ids.has(source.id) || !source.name || url.protocol !== "https:" || url.hostname !== source.host || !["rss", "blog"].includes(source.kind) || !Array.isArray(source.paths) || !source.paths.length) throw new Error("Invalid source configuration");
+  // 錯誤訊息會直接顯示在管理頁，指出第幾筆、哪個欄位有問題。
+  sources.forEach((source, index) => {
+    const at = `第 ${index + 1} 個來源${source?.id ? `（${source.id}）` : ""}`;
+    if (!source || typeof source !== "object" || Array.isArray(source)) throw new Error(`${at}必須是物件`);
+    if (!source.id || typeof source.id !== "string") throw new Error(`${at}缺少 id`);
+    if (ids.has(source.id)) throw new Error(`${at}的 id 重複`);
+    if (!source.name || typeof source.name !== "string") throw new Error(`${at}缺少 name`);
+    let url;
+    try { url = new URL(source.indexUrl); } catch { throw new Error(`${at}的 indexUrl 不是有效網址`); }
+    if (url.protocol !== "https:") throw new Error(`${at}的 indexUrl 必須是 https`);
+    if (url.hostname !== source.host) throw new Error(`${at}的 host 必須與 indexUrl 的網域相同`);
+    if (!["rss", "blog"].includes(source.kind)) throw new Error(`${at}的 kind 只能是 rss 或 blog`);
+    if (!Array.isArray(source.paths) || !source.paths.length || source.paths.some((path) => typeof path !== "string" || !path)) throw new Error(`${at}的 paths 需要至少一個文章路徑前綴`);
+    if (source.enabled !== undefined && typeof source.enabled !== "boolean") throw new Error(`${at}的 enabled 只能是 true 或 false`);
     ids.add(source.id);
-  }
+  });
   return sources;
+}
+
+// 舊設定沒有 enabled 欄位，視為開啟。
+export function sourceEnabled(source) {
+  return source.enabled !== false;
 }
 
 export function canonicalArticleUrl(value, source) {

@@ -279,3 +279,61 @@ test('逐篇明細與「仍要收件」：太舊略過的文章照主動分享�
   // 沒有來源紀錄的網址不能用這個入口收件。
   assert.equal((await handler.fetch(request('api/admin/sources/collect','POST',{source:'openai_developer_blog',url:'https://developers.openai.com/blog/unknown'}),env)).status,400);
 });
+
+test('管理頁儲存來源與想收到的內容：格式錯誤回 400 且原設定不變；關閉的來源不發現、不寫執行紀錄，列表顯示已關閉',async()=>{
+  const env=environment(),net=recorder(),discovered=[],seen=[];
+  const handler=createLearningHandler({...net,now,discoverSource:async source=>{discovered.push(source.id);return [{url:source.id==='openai_developer_blog'?'https://developers.openai.com/blog/today':'https://developer.apple.com/news/?id=today',title:'Today',publishedAt:daysAgo(0),content:null}];},
+    loadArticle:async(source,entry)=>({...entry,content:longContent,contentMethod:'article_html'}),
+    generate:async(env,sources,media,gaps,question,fetcher,{official}={})=>{seen.push(official?.interests);return {title:'詳細教材',body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]};}});
+  // 舊設定沒有 enabled：讀取時視為開啟。
+  await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('digest',?,?)",JSON.stringify({interests:'舊的關注',sources:SOURCES.slice(0,2),model_profile:'legacy'}),new Date(NOW).toISOString()).run();
+  const overview=async()=>(await handler.fetch(request('api/admin/sources'),env)).json();
+  let o=await overview();
+  assert.equal(o.settings.interests,'舊的關注');
+  assert.deepEqual(o.sources.map(s=>[s.id,s.enabled,s.status]),[['openai_developer_blog',true,'never'],['apple_developer_news',true,'never']]);
+
+  const save=value=>handler.fetch(request('api/admin/settings','PUT',value),env);
+  const broken=await save({interests:'新的關注',sources:[{...SOURCES[0],host:'example.org'}]});
+  assert.equal(broken.status,400);assert.match((await broken.json()).error,/第 1 個來源（openai_developer_blog）的 host/);
+  assert.equal((await save({interests:'新的關注',sources:[{...SOURCES[0],enabled:'no'}]})).status,400);
+  assert.equal((await save({interests:'',sources:SOURCES.slice(0,2)})).status,400);
+  o=await overview();
+  assert.equal(o.settings.interests,'舊的關注');assert.equal(o.sources.length,2);
+
+  const saved=await save({interests:'新的關注',sources:[SOURCES[0],{...SOURCES[1],enabled:false}]});
+  assert.equal(saved.status,200);
+  o=await saved.json();
+  assert.deepEqual(o.sources.map(s=>[s.id,s.enabled,s.status]),[['openai_developer_blog',true,'never'],['apple_developer_news',false,'disabled']]);
+  const stored=JSON.parse((await query(env,"SELECT value_json FROM settings WHERE key='digest'").first()).value_json);
+  assert.equal(stored.model_profile,undefined);assert.deepEqual(stored.sources.map(s=>s.enabled),[true,false]);
+
+  await handler.service.official(env);
+  assert.deepEqual(discovered,['openai_developer_blog']);
+  assert.deepEqual((await rows(env,'SELECT source FROM source_runs')).map(r=>r.source),['openai_developer_blog']);
+  o=await overview();
+  assert.deepEqual(o.sources.map(s=>s.status),['ok','disabled']);
+  // 官方文章的主題篩選使用新存的想收到的內容。
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  assert.deepEqual(seen,['新的關注']);
+});
+
+test('關閉超過 30 天後重新開啟：重新建立基準，列表上沒有日期的舊文不會被當成新文章',async()=>{
+  const env=environment(),net=recorder();let today=NOW,feed=[];
+  const handler=createLearningHandler({...net,now:()=>today,discoverSource:async source=>source.id==='openai_developer_blog'?feed:[]});
+  const configure=enabled=>handler.fetch(request('api/admin/settings','PUT',{interests:'AI',sources:[{...SOURCES[0],enabled}]}),env);
+  const post=key=>({url:'https://developers.openai.com/blog/'+key,title:key,publishedAt:null,content:null});
+  await configure(true);
+  feed=[post('first')];
+  assert.equal((await handler.service.official(env)).queued,1);
+  await configure(false);
+  // 關閉期間列表又多了幾篇沒有日期的文章；維護排程照常清掉超過 30 天沒出現的紀錄。
+  today=NOW+40*DAY;await handler.scheduled(env,{tasks:['maintenance']});
+  feed=[post('newest'),post('while-off-1'),post('while-off-2'),post('first')];
+  await configure(true);
+  const result=await handler.service.official(env);
+  assert.equal(result.queued,1);
+  const entries=(await (await handler.fetch(request('api/admin/sources'),env)).json()).sources[0].entries;
+  assert.deepEqual(entries.filter(e=>e.decision==='baseline').map(e=>e.url.split('/').at(-1)).sort(),['first','while-off-1','while-off-2']);
+  assert.match(entries.find(e=>e.decision==='baseline').reason,/超過 30 天沒有成功檢查/);
+  assert.deepEqual((await rows(env,"SELECT url FROM learning_items ORDER BY created_at")).map(r=>r.url.split('/').at(-1)),['first','newest']);
+});

@@ -14,28 +14,33 @@
 | Anthropic News | https://www.anthropic.com/news | 文章頁 |
 | Anthropic Engineering | https://www.anthropic.com/engineering | 文章頁 |
 
-「想收到的內容」與來源清單存在 D1 的 `settings` 表（key `digest`），下一輪排程生效，不需要重新部署。
+在管理頁（`/learning/admin`）的「官方來源」區塊設定：
 
-設定範例：
+- 上方文字框是「想收到的內容」，官方文章的主題篩選依這段文字判斷。
+- 每個來源一列，有開關。關閉的來源不發現、不寫執行紀錄，歷史紀錄保留，列表顯示「已關閉」。
+- 收合的「進階：編輯來源 JSON」可以新增、修改、刪除來源。
+
+設定存在 D1 的 `settings` 表（key `digest`），下一輪排程生效，不需要重新部署。格式有誤時管理頁會指出第幾個來源、哪個欄位，原設定不變。
+
+來源 JSON 範例：
 
 ```json
-{
-  "interests": "AI coding、agents、模型 API、iOS 開發與開發者活動。保留 DevDay，略過沒有產品或技術細節的商務新聞。",
-  "sources": [
-    {
-      "id": "claude_dev",
-      "name": "claude.dev",
-      "indexUrl": "https://claude.dev/rss.xml",
-      "kind": "rss",
-      "host": "claude.dev",
-      "paths": ["blog"],
-      "markdown": true
-    }
-  ]
-}
+[
+  {
+    "id": "claude_dev",
+    "name": "claude.dev",
+    "indexUrl": "https://claude.dev/rss.xml",
+    "kind": "rss",
+    "host": "claude.dev",
+    "paths": ["blog"],
+    "markdown": true,
+    "enabled": true
+  }
+]
 ```
 
-範例只含一個來源。儲存時會取代完整來源清單，保留其他來源時需把它們一起放進陣列。
+範例只含一個來源。保存時會取代完整來源清單，保留其他來源時需把它們一起放進陣列。
+`enabled` 省略時視為開啟。關閉或連續故障超過 30 天的來源重新開始時，像新來源一樣重新建立基準，避免列表上沒有日期的舊文被當成新文章。
 `kind` 可以是 `rss` 或 `blog`。目前 RSS 解析器支援 RSS 2.0 的 `item`，不支援 Atom。
 `paths` 是文章路徑前綴，目前只接受前綴之後一層的文章代稱。
 `contentSelector` 可以指定正文 CSS selector，供特殊網站使用。網站需要登入或內容擷取失敗時，不生成部分摘要。

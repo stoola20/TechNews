@@ -196,7 +196,7 @@ npx wrangler deploy
 ### 自訂
 
 - **修改推送時間**：編輯 `wrangler.jsonc` 的 `triggers.crons`（UTC 時間），再重新 `npx wrangler deploy`。
-- **新增或移除來源、調整想收到的內容**：設定存在 D1 的 `settings` 表，格式見 [`SOURCES.md`](cloud-digest/SOURCES.md)；特殊網站可指定 `contentSelector`，仍需確認能完整擷取。
+- **新增或移除來源、調整想收到的內容**：在管理頁的「官方來源」區塊設定，下一輪排程生效；來源格式見 [`SOURCES.md`](cloud-digest/SOURCES.md)。特殊網站可指定 `contentSelector`，仍需確認能完整擷取。
 - **切換文字模型**：在 `/learning/admin` 切換 Gemini 或本機 Gemma。
 - **查看執行紀錄**：`npx wrangler tail`，或到 Cloudflare Dashboard → Workers → Observability。
 
