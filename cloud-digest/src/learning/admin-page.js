@@ -132,8 +132,8 @@ function renderSources(o){
   const prev=sourceSettings;sourceSettings=o.settings;
   if(!prev||$('interests').value===prev.interests)$('interests').value=o.settings.interests;
   if(!prev||$('sources-json').value===JSON.stringify(prev.sources,null,2))$('sources-json').value=JSON.stringify(o.settings.sources,null,2);
-  $('sources-rule').textContent='只收 '+o.max_age_days+' 天內發表的文章。每天 08:00 檢查，紀錄保留 '+o.retention_days+' 天。點下方來源名稱看每篇的處理結果。';
-  const cells=s=>{const r=s.last_run;return [sourceToggle(s),when(r?r.ran_at:s.last_checked_at),r?r.found:'—',r?r.collected:'—',r?r.stale:'—',s.status==='failed'?'失敗：'+(r.error||'原因不明'):SOURCE_STATUS[s.status]];};
+  $('sources-rule').textContent='只收 '+o.max_age_days+' 天內發表的文章。每天 08:00 檢查，同一來源連續兩次失敗時發 Telegram 提醒；紀錄保留 '+o.retention_days+' 天。點下方來源名稱看每篇的處理結果。';
+  const cells=s=>{const r=s.last_run;return [sourceToggle(s),when(r?r.ran_at:s.last_checked_at),r?r.found:'—',r?r.collected:'—',r?r.stale:'—',s.status==='failed'?'失敗'+(s.consecutive_failures>1?'（連續 '+s.consecutive_failures+' 次）':'')+'：'+(r.error||'原因不明'):SOURCE_STATUS[s.status]];};
   $('sources').replaceChildren(el('table',{},[el('thead',{},[el('tr',{},['來源','最後檢查','找到','收件','太舊略過','狀態'].map(t=>el('th',{text:t})))]),
     el('tbody',{},o.sources.map(s=>el('tr',{'data-source':s.id,class:s.status==='failed'?'failed':s.status==='disabled'?'off':''},cells(s).map((v,i)=>el('td',{...(typeof v==='object'?{}:{text:String(v)}),...([2,3,4].includes(i)?{'data-label':['','','找到','收件','太舊略過'][i]}:{})},typeof v==='object'?[v]:[])))))]));
   // 逐篇明細：重新整理後保留原本展開的來源。

@@ -337,3 +337,39 @@ test('關閉超過 30 天後重新開啟：重新建立基準，列表上沒有�
   assert.match(entries.find(e=>e.decision==='baseline').reason,/超過 30 天沒有成功檢查/);
   assert.deepEqual((await rows(env,"SELECT url FROM learning_items ORDER BY created_at")).map(r=>r.url.split('/').at(-1)),['first','newest']);
 });
+
+test('來源連續兩次失敗發一則提醒：第三次不重發、恢復不通知、再故障重新提醒；送出失敗只重送同一份；關閉的來源不提醒',async()=>{
+  const env=environment(),attempts=[],sent=[];let today=NOW,down=true,telegramDown=false;
+  const handler=createLearningHandler({...recorder(),now:()=>today,
+    sendTelegram:async(env,text)=>{attempts.push(text);if(telegramDown)throw new Error('Telegram 暫時無法使用');sent.push(text);return sent.length;},
+    discoverSource:async source=>{
+      if(source.id==='apple_developer_news')throw new Error('不應該檢查關閉的來源');
+      if(down)throw new Error(today<NOW+4*DAY?'Source HTTP 403':'來源列表沒有找到任何文章');
+      return [{url:'https://developers.openai.com/blog/day-'+Math.round((today-NOW)/DAY),title:'Post',publishedAt:new Date(today).toUTCString(),content:null}];
+    }});
+  await query(env,"INSERT INTO settings(key,value_json,updated_at) VALUES('digest',?,?)",JSON.stringify({interests:'AI',sources:[SOURCES[0],{...SOURCES[1],enabled:false}]}),new Date(NOW).toISOString()).run();
+  const day=async n=>{today=NOW+n*DAY;await handler.scheduled(env,{tasks:['official']});};
+  const alerts=()=>sent.filter(t=>t.startsWith('【來源異常】'));
+  const status=async()=>(await (await handler.fetch(request('api/admin/sources'),env)).json()).sources[0];
+
+  await day(0);assert.equal(alerts().length,0);
+  // 第二天仍失敗：發一則提醒，但這次 Telegram 送不出去，下一輪重送同一份內容。
+  telegramDown=true;await assert.rejects(day(1),/Telegram 暫時無法使用/);
+  assert.equal(sent.length,0);assert.equal(attempts.length,1);
+  telegramDown=false;await day(2);
+  assert.equal(alerts().length,1);assert.equal(attempts[1],attempts[0]);
+  assert.match(alerts()[0],/^【來源異常】OpenAI Developer Blog 連續 2 次檢查失敗/);
+  assert.match(alerts()[0],/最近一次原因：Source HTTP 403/);assert.match(alerts()[0],/https:\/\/learning\.example\.org\/learning\/admin/);
+  assert.equal((await status()).consecutive_failures,3);
+  await day(3);assert.equal(alerts().length,1);
+  // 恢復：不另外通知，次數歸零。
+  down=false;await day(4);
+  assert.equal(alerts().length,1);assert.equal((await status()).consecutive_failures,0);
+  // 再故障（空列表也算失敗）：第一次不提醒，第二次重新提醒。
+  down=true;await day(5);assert.equal(alerts().length,1);
+  await day(6);assert.equal(alerts().length,2);assert.match(alerts()[1],/來源列表沒有找到任何文章/);
+  // 提醒不帶文章，不影響文章通知的去重。
+  const deliveries=await rows(env,"SELECT item_ids_json FROM learning_deliveries WHERE origin='source_alert'");
+  assert.equal(deliveries.length,2);assert.ok(deliveries.every(d=>d.item_ids_json==='[]'));
+  assert.ok(!alerts().some(t=>t.includes('Apple Developer News')));
+});

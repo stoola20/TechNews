@@ -43,6 +43,16 @@ export async function queueArticleNotifications(env){
   }
 }
 
+// 官方來源連續兩次檢查失敗：建立一則提醒，與文章通知共用保存與送出機制，但類型分開、不帶文章。
+// 只在剛好第二次時建立；第三次以後與恢復時都不發，恢復後再故障會重新從一開始計。
+export async function queueSourceAlert(env,source,runId,failures,error){
+  if(failures!==2)return false;
+  let link='';try{link=`\n管理頁：${baseUrl(env)}/learning/admin`;}catch{}
+  const body=[`【來源異常】${source.name} 連續 ${failures} 次檢查失敗`,'',`最近一次原因：${error.slice(0,300)}`,'',`恢復前不會再提醒；恢復後仍在列表上、未超過期限的文章會照常收件。${link}`].join('\n');
+  await query(env,"INSERT OR IGNORE INTO learning_deliveries(id,item_ids_json,origin,body,created_at) VALUES(?,'[]','source_alert',?,?)",await hash(`source-alert:${source.id}:${runId}`),body,nowIso()).run();
+  return true;
+}
+
 // 送出已保存的通知內容；失敗只重送同一份內容，不重新生成。
 export async function sendPending(env,send){
   for(const delivery of await rows(env,"SELECT * FROM learning_deliveries WHERE status='pending' AND origin!='receipt' ORDER BY created_at")){

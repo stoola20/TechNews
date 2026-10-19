@@ -3,8 +3,16 @@ import {effectiveEnvironment,readSettings} from '../settings.js';
 import {query,rows,nowIso} from './store.js';
 import {publishedBefore,normalizePublished} from './dates.js';
 import {now} from './clock.js';
+import {queueSourceAlert} from './notifications.js';
 
 const DAY=86400000,RETENTION_DAYS=30,DETAIL_DAYS=7,CHUNK=90;
+
+// 從最近一次往回數連續失敗的執行次數；成功一次就中斷。
+async function consecutiveFailures(env,sourceId,limit=RETENTION_DAYS+1){
+  const runs=await rows(env,'SELECT ok FROM source_runs WHERE source=? ORDER BY ran_at DESC,rowid DESC LIMIT ?',sourceId,limit);
+  const index=runs.findIndex(r=>r.ok);
+  return index<0?runs.length:index;
+}
 
 async function recordEntry(env,source,entry,at,decision,reason,itemId=null){
   await query(env,`INSERT INTO source_entries(source,url,first_seen_at,last_listed_at,title,published_at,decision,reason,item_id) VALUES(?,?,?,?,?,?,?,?,?)
@@ -54,8 +62,11 @@ export async function discoverOfficial(env,collect,deps={}){
       result.queued+=run.collected;result.stale+=run.stale;
     }catch(error){
       const message=error instanceof Error?error.message:'Unknown error';
-      await query(env,'INSERT INTO source_runs(id,source,ran_at,found,collected,stale,baseline,ok,error) VALUES(?,?,?,?,?,?,?,0,?)',crypto.randomUUID(),source.id,at,run.found,run.collected,run.stale,run.baseline,message.slice(0,500)).run();
+      const runId=crypto.randomUUID();
+      await query(env,'INSERT INTO source_runs(id,source,ran_at,found,collected,stale,baseline,ok,error) VALUES(?,?,?,?,?,?,?,0,?)',runId,source.id,at,run.found,run.collected,run.stale,run.baseline,message.slice(0,500)).run();
       result.errors.push({source:source.id,error:message});
+      try{if(await queueSourceAlert(env,source,runId,await consecutiveFailures(env,source.id,3),message))result.alerts=(result.alerts || 0)+1;}
+      catch(alertError){console.log(JSON.stringify({event:'source_alert_failed',source:source.id,error:alertError.message}));}
     }
   }
   console.log(JSON.stringify({event:'official_discovery',queued:result.queued,stale:result.stale,initialized:result.initialized,errors:result.errors.length}));
@@ -72,7 +83,7 @@ export async function officialOverview(env){
     const entries=await rows(env,`SELECT url,title,published_at,decision,reason,item_id,manual,first_seen_at FROM source_entries
       WHERE source=? AND first_seen_at>=? ORDER BY first_seen_at DESC,url LIMIT 200`,source.id,new Date(now()-DETAIL_DAYS*DAY).toISOString());
     sources.push({id:source.id,name:source.name,enabled:source.enabled,initialized_at:state?.initialized_at || null,last_checked_at:state?.last_checked_at || null,
-      last_run:last?{...last,ok:!!last.ok}:null,status:!source.enabled?'disabled':!last?'never':last.ok?'ok':'failed',
+      last_run:last?{...last,ok:!!last.ok}:null,status:!source.enabled?'disabled':!last?'never':last.ok?'ok':'failed',consecutive_failures:last && !last.ok?await consecutiveFailures(env,source.id):0,
       entries:entries.map(e=>({...e,published_at:normalizePublished(e.published_at),manual:!!e.manual}))});
   }
   return {max_age_days:maxArticleAgeDays(env),retention_days:RETENTION_DAYS,detail_days:DETAIL_DAYS,settings,sources};
