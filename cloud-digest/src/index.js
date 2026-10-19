@@ -1,4 +1,4 @@
-import { getSources, discoverSource, loadArticle, canonicalArticleUrl, readBoundedText, initialSeenUrls } from "./sources.js";
+import { getSources, discoverSource, loadArticle, canonicalArticleUrl, readBoundedText, initialSeenUrls, maxArticleAgeDays } from "./sources.js";
 import { tasksFor } from "./schedule.js";
 export { initialSeenUrls };
 import { formatFullDigest } from "./format.js";
@@ -7,6 +7,7 @@ import { MODEL_PROFILES, readSettings, saveSettings, effectiveEnvironment, apply
 import { SETTINGS_PAGE } from "./settings-page.js";
 import { timingSafeEqual } from "node:crypto";
 import { learning } from "./learning/http.js";
+import { publishedBefore } from "./learning/dates.js";
 
 const LEASE_MS = 10 * 60 * 1000;
 function log(event, details = {}) { console.log(JSON.stringify({ event, ...details })); }
@@ -92,8 +93,8 @@ export async function runDigest(env, dependencies = {}) {
   const discover = dependencies.discoverSource || discoverSource;
   const process = dependencies.processEntry || processEntry;
   const limit = Number(env.MAX_ARTICLES_PER_RUN || 6);
-  const lookback = Number(env.BACKFILL_DAYS || 14);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 6 || !Number.isFinite(lookback) || lookback < 0) throw new Error("Invalid run budget or backfill window");
+  const maxAge = maxArticleAgeDays(env);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 6) throw new Error("Invalid run budget");
   const result = { initialized: [], notified: 0, skipped: 0, deferred: 0, errors: [] };
   const queues = [];
   for (const source of getSources(env)) {
@@ -103,7 +104,7 @@ export async function runDigest(env, dependencies = {}) {
       const now = new Date().toISOString();
       let state = await env.DB.prepare("SELECT seen_urls_json FROM source_state WHERE source = ?").bind(source.id).first();
       if (!state) {
-        const baseline = initialSeenUrls(entries, Date.now(), lookback);
+        const baseline = initialSeenUrls(entries, Date.now(), maxAge);
         await env.DB.prepare("INSERT OR IGNORE INTO source_state (source, initialized_at, last_checked_at, seen_urls_json) VALUES (?, ?, ?, ?)")
           .bind(source.id, now, now, JSON.stringify(baseline)).run();
         state = { seen_urls_json: JSON.stringify(baseline) };
@@ -114,6 +115,8 @@ export async function runDigest(env, dependencies = {}) {
       // A deferred article must survive disappearing from the source's feed.
       for (const entry of entries) {
         if (seen.has(entry.url)) continue;
+        // 發表已久的文章只記為看過，不排進待處理清單。
+        if (publishedBefore(entry.publishedAt, Date.now(), maxAge)) { seen.add(entry.url); continue; }
         await env.DB.prepare("INSERT OR IGNORE INTO articles (source_url, source, title, published_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)")
           .bind(entry.url, source.id, entry.title || entry.url, entry.publishedAt, now, now).run();
       }
@@ -121,6 +124,13 @@ export async function runDigest(env, dependencies = {}) {
       const candidates = new Map();
       // Persisted failures are retried even after they disappear from a feed.
       for (const row of pending.results) {
+        // 積壓到超過期限的舊文章不再導讀，避免一次補送大量舊聞。
+        if (publishedBefore(row.published_at, Date.now(), maxAge)) {
+          await env.DB.prepare("UPDATE articles SET status = 'skipped', last_error = ?, updated_at = ? WHERE source_url = ? AND status = 'pending'")
+            .bind(`發表超過 ${maxAge} 天，不再導讀`, now, row.source_url).run();
+          seen.add(row.source_url);
+          continue;
+        }
         if (canonicalArticleUrl(row.source_url, source)) candidates.set(row.source_url, { url: row.source_url, title: row.title, publishedAt: row.published_at, content: null });
       }
       const items = [...candidates.values()].sort((a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0));

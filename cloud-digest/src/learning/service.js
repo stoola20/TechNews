@@ -10,7 +10,7 @@ import {linkedPostFor,mergeIntoLinkedArticle,mergeExistingDuplicates} from './li
 import {textProvider,articleInput,ensureJob,itemPriority} from './local.js';
 import {mediaEvidence} from './media-analysis.js';
 import {askQuestion,completeQuestion} from './questions.js';
-import {discoverOfficial,officialIntake} from './official.js';
+import {discoverOfficial,officialIntake,staleOfficialReason} from './official.js';
 import {queueArticleNotifications,sendPending,receiptMessage,contentFingerprint} from './notifications.js';
 import {effectiveEnvironment} from '../settings.js';
 import {getSources} from '../sources.js';
@@ -59,6 +59,14 @@ export function createLearningService(deps={}) {
       if(row.kind==='x'){
         const merged=await mergeIntoLinkedArticle(env,row);
         if(merged){if(merged.rewrite)await enqueue(env,merged.id);else await flush(env).catch(()=>{});return {done:true,merged:merged.id};}
+      }
+      // 官方文章抓到原文才確定發表時間：太舊的記為篩掉，不呼叫模型、不通知。
+      const primary=row.kind==='x'?null:acquisition.sources.find(s=>s.relation==='primary'&&s.status==='available');
+      const stale=primary?await staleOfficialReason(env,row,primary.published_at):null;
+      if(stale){
+        await query(env,"UPDATE learning_items SET status='filtered',stage=NULL,title=COALESCE(NULLIF(title,''),?),article_json=?,attempts=0,last_error=NULL,next_attempt_at=NULL,updated_at=? WHERE id=?",
+          JSON.parse(primary.metadata_json || '{}').title || row.url,JSON.stringify({publish:false,reason:stale}),nowIso(),id).run();
+        return {done:true};
       }
       await query(env,"UPDATE learning_items SET stage='media' WHERE id=?",id).run();
       // 本機文字路徑：Flash 只解析媒體並保存證據，寫作交給 Mac；純文字來源完全不呼叫 Flash。

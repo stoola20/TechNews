@@ -198,7 +198,7 @@ curl -X POST \
   https://developer-digest-cloud.<你的子網域>.workers.dev/run
 ```
 
-**新來源首次執行**會補收最近 14 天有日期的文章；沒有日期時只處理列表第一篇。每次最多嘗試 6 篇，其餘保存在 D1 待處理清單，下次繼續。擷取失敗時不使用 RSS 簡介代替全文。
+官方來源**只收發表 7 天內的文章**（`MAX_ARTICLE_AGE_DAYS`），新來源首次執行也只回補這段期間；沒有日期時只處理列表第一篇。每次最多嘗試 6 篇，其餘保存在 D1 待處理清單，下次繼續。擷取失敗時不使用 RSS 簡介代替全文。
 
 新增 D1 遷移後，部署前先執行 `npx wrangler d1 migrations apply developer-digest-cloud --remote`。只測本機時使用 `--local`。
 

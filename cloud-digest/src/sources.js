@@ -172,7 +172,14 @@ export async function loadArticle(source, entry, fetcher = fetch, env = {}) {
   return article;
 }
 
-export function initialSeenUrls(entries, now, lookbackDays = 14) {
+// 官方來源只收最近 N 天發表的文章：新來源首次回補、每日發現與抓到原文後的檢查共用同一個期限。
+export function maxArticleAgeDays(env = {}) {
+  const days = Number(env.MAX_ARTICLE_AGE_DAYS || 7);
+  if (!Number.isFinite(days) || days < 1) throw new Error("MAX_ARTICLE_AGE_DAYS must be at least 1");
+  return days;
+}
+
+export function initialSeenUrls(entries, now, lookbackDays = 7) {
   const cutoff = now - lookbackDays * 86400000;
   return entries.filter((entry, index) => {
     const published = Date.parse(entry.publishedAt);

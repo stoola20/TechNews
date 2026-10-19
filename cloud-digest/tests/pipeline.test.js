@@ -10,7 +10,8 @@ function database(){
  for(const name of ['0001_initial.sql','0002_article_content.sql','0003_settings.sql'])db.exec(readFileSync(new URL('../migrations/'+name,import.meta.url),'utf8'));
  return {prepare(sql){return {bind(...args){this.args=args;return this},async first(){return db.prepare(sql).get(...(this.args||[]))||null},async all(){return {results:db.prepare(sql).all(...(this.args||[]))}},async run(){return {meta:db.prepare(sql).run(...(this.args||[]))}}}}};
 }
-const entry={url:'https://developers.openai.com/blog/test',title:'Test',publishedAt:'2026-10-07',content:null};
+// 用相對日期，避免測試隨真實時間經過而落到新鮮度期限之外。
+const entry={url:'https://developers.openai.com/blog/test',title:'Test',publishedAt:new Date().toISOString().slice(0,10),content:null};
 const summary={publish:true,reason:'AI tooling',title_zh:'測試',body_zh:'導讀內容。'.repeat(80),provider:'workers_ai',model:'gemma'};
 function env(){return {DB:database(),TELEGRAM_BOT_TOKEN:'test',TELEGRAM_CHAT_ID:'test',RUN_TOKEN:'test'}};
 
@@ -53,6 +54,18 @@ test('batch cap defers unseen articles rather than dropping them',async()=>{
  const result=await runDigest(e,{discoverSource:async()=>entries,processEntry:async()=> 'notified'});
  assert.equal(result.notified,6);assert.equal(result.deferred,2);
  const state=await e.DB.prepare('SELECT seen_urls_json FROM source_state').first();assert.equal(JSON.parse(state.seen_urls_json).length,6);
+});
+test('legacy digest skips stale pending backlog instead of sending old news',async()=>{
+ const e=env();await saveSettings(e,{model_profile:'gemma4',interests:'Agents',sources:[SOURCES[0]]});
+ const old=new Date(Date.now()-60*86400000).toISOString();
+ await e.DB.prepare("INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,'[]')").bind(old,old).run();
+ await e.DB.prepare("INSERT INTO articles(source_url,source,title,published_at,status,created_at,updated_at) VALUES(?,?,?,?,'pending',?,?)").bind(entry.url+'-backlog','openai_developer_blog','Backlog',old,old,old).run();
+ const processed=[];
+ const result=await runDigest(e,{discoverSource:async()=>[{...entry,url:entry.url+'-fresh'},{...entry,url:entry.url+'-ancient',publishedAt:old}],processEntry:async(_e,_s,item)=>{processed.push(item.url);return 'notified';}});
+ assert.deepEqual(processed,[entry.url+'-fresh']);assert.equal(result.notified,1);
+ const backlog=await e.DB.prepare('SELECT status,last_error FROM articles WHERE source_url=?').bind(entry.url+'-backlog').first();
+ assert.equal(backlog.status,'skipped');assert.match(backlog.last_error,/超過 7 天/);
+ assert.equal(await e.DB.prepare('SELECT source_url FROM articles WHERE source_url=?').bind(entry.url+'-ancient').first(),null);
 });
 test('single message has notifications enabled and rejects overlong text',async()=>{
  let body;const id=await sendTelegram(env(),'Article',async(url,options)=>{body=JSON.parse(options.body);return Response.json({ok:true,result:{message_id:9}})});

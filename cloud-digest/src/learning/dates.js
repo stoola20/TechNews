@@ -15,3 +15,9 @@ export function normalizePublished(value){
   if(date.getUTCFullYear()<1990 || date.getUTCFullYear()>2100)return null;
   return date.toISOString();
 }
+
+// 發表時間是否早於「基準時間往前 days 天」。沒有日期或無法解析時回傳 false，交給抓到原文後再判斷。
+export function publishedBefore(value,reference,days){
+  const published=normalizePublished(value);
+  return !!published && Date.parse(published)<reference-days*86400000;
+}

@@ -108,3 +108,52 @@ test('Gemini 模式：官方文章也進文章庫詳細整理，不符合讀者�
   await handler.service.flush(env);
   assert.equal(net.calls.filter(c=>c.url.includes('api.telegram.org')).length,1);
 });
+
+const DAY=86400000;
+const daysAgo=n=>new Date(Date.now()-n*DAY).toUTCString();
+
+test('已初始化的來源突然冒出舊文章：發表超過期限的只記為看過，不收件也不通知',async()=>{
+  const env=environment(),net=recorder();
+  const feed=[
+    {url:'https://developers.openai.com/blog/fresh',title:'Fresh',publishedAt:daysAgo(1),content:null},
+    {url:'https://developers.openai.com/blog/last-november',title:'Old',publishedAt:daysAgo(340),content:null},
+    {url:'https://developers.openai.com/blog/eight-days',title:'Edge',publishedAt:daysAgo(8),content:null},
+    {url:'https://developers.openai.com/blog/undated',title:'Undated',publishedAt:null,content:null},
+  ];
+  const handler=createLearningHandler({...net,discoverSource:async source=>source.id==='openai_developer_blog'?feed:[]});
+  await settings(env);
+  // 模擬今天的狀況：來源早已初始化，但 seen 清單沒有這些舊網址（舊流程只記已處理過的）。
+  await query(env,"INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,'[]')",daysAgo(30),daysAgo(1)).run();
+  const result=await handler.service.official(env);
+  assert.equal(result.queued,2);assert.equal(result.stale,2);
+  assert.deepEqual((await rows(env,'SELECT url FROM learning_items ORDER BY url')).map(r=>r.url.split('/').at(-1)),['fresh','undated']);
+  const seen=JSON.parse((await query(env,"SELECT seen_urls_json FROM source_state WHERE source='openai_developer_blog'").first()).seen_urls_json);
+  assert.equal(seen.length,4);
+  // 下一次發現：全部都看過，不再收件。
+  assert.equal((await handler.service.official(env)).queued,0);
+});
+
+test('列表沒有日期的官方文章：抓到原文才發現太舊就篩掉，不呼叫模型、不通知；收件後的處理延誤不算過期',async()=>{
+  const env=environment(),net=recorder(),generated=[];
+  const published={old:daysAgo(60),fresh:daysAgo(2),delayed:daysAgo(12)};
+  const handler=createLearningHandler({...net,
+    discoverSource:async source=>source.id==='openai_developer_blog'?Object.keys(published).map(k=>({url:'https://developers.openai.com/blog/'+k,title:k,publishedAt:null,content:null})):[],
+    loadArticle:async(source,entry)=>({...entry,title:'Official '+entry.url.split('/').at(-1),publishedAt:published[entry.url.split('/').at(-1)],content:longContent,contentMethod:'article_html'}),
+    generate:async(env,sources)=>{generated.push(sources[0].url);return {title:'詳細教材',body:'## 背景\n\n正文',intro:'導讀',citations:[sources[0].id],observations:[]};}});
+  await settings(env);
+  await query(env,"INSERT INTO source_state(source,initialized_at,last_checked_at,seen_urls_json) VALUES('openai_developer_blog',?,?,'[]')",daysAgo(30),daysAgo(1)).run();
+  assert.equal((await handler.service.official(env)).queued,3);
+  // delayed：收件於 10 天前（例如 Mac 離線），當時文章才發表 2 天，仍算新知。
+  await query(env,"UPDATE learning_intakes SET created_at=? WHERE receipt='official:https://developers.openai.com/blog/delayed'",new Date(Date.now()-10*DAY).toISOString()).run();
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  const items=Object.fromEntries((await rows(env,'SELECT url,status,title,article_json FROM learning_items')).map(r=>[r.url.split('/').at(-1),r]));
+  assert.equal(items.old.status,'filtered');assert.match(JSON.parse(items.old.article_json).reason,/^發表於 \d{4}-\d{2}-\d{2}，收件時已超過 7 天/);
+  assert.equal(items.fresh.status,'ready');assert.equal(items.delayed.status,'ready');
+  assert.deepEqual(generated.map(u=>u.split('/').at(-1)).sort(),['delayed','fresh']);
+  await handler.service.flush(env);
+  assert.equal(net.calls.filter(c=>c.url.includes('api.telegram.org')).length,2);
+  // 使用者主動分享同一篇舊文：照常整理，不受新鮮度篩選。
+  await (await handler.fetch(request('api/collect','POST',{url:'https://developers.openai.com/blog/old'}),env)).json();
+  for(const row of await rows(env,"SELECT id FROM learning_items WHERE status='queued'"))await handler.queue({messages:[message({kind:'article',id:row.id})]},env);
+  assert.equal((await query(env,"SELECT status FROM learning_items WHERE url='https://developers.openai.com/blog/old'").first()).status,'ready');
+});
