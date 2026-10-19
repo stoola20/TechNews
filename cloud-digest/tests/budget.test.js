@@ -5,7 +5,10 @@ import {xRead} from '../src/learning/x.js';
 import {setTextProvider,claim} from '../src/learning/local.js';
 import {migrateLibrary} from '../src/learning/library.js';
 import {budget,reserve,setting,saveConnection,query,rows,item,saveEvidence} from '../src/learning/store.js';
-import {environment,recorder,request,message} from './helpers.js';
+import {environment,recorder,request,message,database} from './helpers.js';
+import {parseHTML} from 'linkedom';
+import vm from 'node:vm';
+import {ADMIN_PAGE} from '../src/learning/admin-page.js';
 
 const posts=Array.from({length:100},(_,i)=>({id:String(1000+i),text:'post '+i,author_id:'9'}));
 function xNetwork(){
@@ -16,6 +19,16 @@ function xNetwork(){
   });
 }
 async function connect(env){await saveConnection(env,'x',{user_id:'7',access_token:'x-access',refresh_token:'x-refresh',expires_at:Date.now()+86400000*90});}
+// 在 linkedom 裡執行管理頁腳本：API 請求交給同一個 handler，等畫面載入完成後回傳 document。
+async function adminPage(handler,env){
+  const {document}=parseHTML(ADMIN_PAGE);
+  const fetch=async(path,options={})=>handler.fetch(new Request('https://learning.example.org'+path,{...options,headers:{...options.headers,authorization:'Bearer private-test-token'}}),env);
+  vm.runInContext(ADMIN_PAGE.match(/<script>([\s\S]*)<\/script>/)[1],vm.createContext({document,fetch,location:{assign(){}},history:{replaceState(){}},console,setTimeout,clearTimeout,URL}));
+  for(let i=0;i<200&&document.getElementById('app').classList.contains('hidden');i++)await new Promise(r=>setTimeout(r,5));
+  assert.ok(!document.getElementById('app').classList.contains('hidden'),document.getElementById('feedback').textContent);
+  return document;
+}
+const shown=(doc,id)=>!doc.getElementById(id).classList.contains('hidden');
 const costs=async env=>(await rows(env,'SELECT month,category,amount_micro,status,usage_json FROM learning_costs ORDER BY created_at')).map(r=>({...r,usage:JSON.parse(r.usage_json)}));
 
 test('X 重讀依 UTC 日辨識：同日重讀記 $0、不再估算重讀風險，跨 UTC 日重新計首次讀取，月份依台灣時間',async t=>{
@@ -146,4 +159,61 @@ test('舊資料搬移不重複計費',async()=>{
   await migrateLibrary(env);await migrateLibrary(env);
   assert.equal((await budget(env)).metered_micro,before);
   assert.equal((await rows(env,'SELECT id FROM learning_costs')).length,0);
+});
+
+test('未確認費用可作廢：需要說明、只接受未確認；作廢後不算進預算但留在明細；預算為 0 時恢復失敗並提示先作廢，作廢後不自動恢復',async()=>{
+  const env=environment({LEARNING_MONTHLY_USD:'1'}),handler=createLearningHandler(recorder());await connect(env);
+  const summary=async()=>(await handler.fetch(request('api/budget'),env)).json();
+  let doc=await adminPage(handler,env);
+  assert.equal(shown(doc,'resume-box'),false);assert.equal(shown(doc,'pause'),true);
+  // X 逾時留下一筆未確認費用，剛好用完預算；下一個付費呼叫觸發費用暫停。
+  await assert.rejects(xRead(env,'/tweets/45',{},200,false,async()=>{throw new Error('The operation timed out');},null,'post'),/timed out/);
+  await assert.rejects(reserve(env,'gemini',1),{name:'BudgetPaused'});
+  let b=await summary();
+  assert.equal(b.pause_reason,'budget');assert.equal(b.remaining_micro,0);
+  assert.deepEqual(b.uncertain_items.map(c=>[c.category,c.amount_micro,c.context,c.reason]),[['x',1000000,'post','no_response']]);
+  doc=await adminPage(handler,env);
+  assert.equal(shown(doc,'resume-box'),true);
+  assert.match(doc.getElementById('resume-note').textContent,/暫停原因：費用不足。.*不會處理未確認費用。目前剩餘預算為 0，請先作廢未確認費用或調整月預算。/);
+  assert.equal(doc.querySelectorAll('#uncertain button').length,1);
+  const blocked=await handler.fetch(request('api/control','POST',{action:'resume'}),env);
+  assert.equal(blocked.status,429);assert.equal((await blocked.json()).error,'剩餘預算為 0，請先作廢未確認費用或調整月預算');
+
+  const id=b.uncertain_items[0].id,voidCost=data=>handler.fetch(request('api/admin/costs/void','POST',data),env);
+  assert.equal((await voidCost({id,note:'  '})).status,400);
+  await query(env,"INSERT INTO learning_costs(id,month,category,amount_micro,status,created_at) VALUES('settled-one',?,'gemini',0,'settled',?)",b.month,new Date().toISOString()).run();
+  assert.equal((await voidCost({id:'settled-one',note:'不該成功'})).status,400);
+  const voided=await voidCost({id,note:'已在 X 後台核對，這次沒有計費'});
+  assert.equal(voided.status,200);
+  b=await voided.json();
+  assert.equal(b.totals.voided_micro,1000000);assert.equal(b.totals.uncertain_micro,0);assert.equal(b.metered_micro,0);assert.equal(b.remaining_micro,1000000);
+  assert.deepEqual(b.voided_items.map(c=>[c.category,c.amount_micro,c.note]),[['x',1000000,'已在 X 後台核對，這次沒有計費']]);assert.ok(b.voided_items[0].voided_at);
+  // 作廢不會自動恢復；恢復後預留檢查也排除作廢的金額。
+  assert.equal(b.pause_reason,'budget');
+  assert.equal((await handler.fetch(request('api/control','POST',{action:'resume'}),env)).status,200);
+  assert.ok(await reserve(env,'gemini',900000));
+  doc=await adminPage(handler,env);
+  assert.equal(shown(doc,'resume-box'),false);
+  assert.match(doc.getElementById('voided').textContent,/已作廢：US\$1\.00（1 筆，不計入預算）/);
+  // 手動暫停：顯示恢復與原因，隱藏暫停按鈕。
+  await handler.fetch(request('api/control','POST',{action:'pause'}),env);
+  doc=await adminPage(handler,env);
+  assert.equal(shown(doc,'resume-box'),true);assert.equal(shown(doc,'pause'),false);
+  assert.match(doc.getElementById('resume-note').textContent,/^暫停原因：手動暫停。/);
+});
+
+test('升級時既有的 X 未確認費用（失敗預留與重讀風險估算）改為作廢；其他類別不動',async()=>{
+  const DB=database({beforeMigration:(name,sqlite)=>{
+    if(name!=='0017_void_costs.sql')return;
+    sqlite.prepare("INSERT INTO learning_months(month,limit_micro,base_micro) VALUES('2026-10',30000000,0)").run();
+    const add=sqlite.prepare("INSERT INTO learning_costs(id,month,category,amount_micro,status,created_at) VALUES(?,'2026-10',?,?,?,?)");
+    add.run('a','x',500000,'uncertain','2026-10-10T00:00:00Z');add.run('b','x-reread-risk',5000,'uncertain','2026-10-11T00:00:00Z');
+    add.run('c','gemini',20000,'uncertain','2026-10-12T00:00:00Z');add.run('d','x',10000,'settled','2026-10-13T00:00:00Z');
+  }});
+  const env=environment({DB}),handler=createLearningHandler({...recorder(),now:()=>Date.parse('2026-10-19T00:00:00Z')});
+  const b=await (await handler.fetch(request('api/budget'),env)).json();
+  assert.equal(b.totals.voided_micro,505000);assert.equal(b.totals.uncertain_micro,20000);assert.equal(b.metered_micro,30000);
+  assert.deepEqual(b.voided_items.map(c=>c.category),['x-reread-risk','x']);
+  assert.ok(b.voided_items.every(c=>c.note==='升級時作廢：X 失敗呼叫的預留或重讀風險估算'));
+  assert.deepEqual(b.uncertain_items.map(c=>c.category),['gemini']);
 });

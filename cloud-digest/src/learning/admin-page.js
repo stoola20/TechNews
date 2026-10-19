@@ -9,8 +9,9 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}dt{c
 table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow:auto}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.switches{display:grid;gap:4px}
 .wide{grid-column:1/-1}tr.failed td:last-child{color:var(--danger);font-weight:600}tr.off td{color:var(--muted)}
-#sources .switch{min-height:36px}.advanced{margin-top:16px;border-top:1px solid var(--line)}.advanced summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}
-ul.plain{margin:0 0 8px;padding:0;list-style:none;font-size:14px}ul.plain li{padding:6px 0;border-top:1px solid var(--line)}
+#sources .switch{min-height:36px}.advanced{margin-top:16px;border-top:1px solid var(--line)}.advanced summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px;font-weight:600;list-style:none}.advanced summary::-webkit-details-marker{display:none}.advanced summary::before{content:'▸';color:var(--muted)}.advanced[open] summary::before{content:'▾'}
+ul.plain{margin:0 0 8px;padding:0;list-style:none;font-size:14px}ul.plain li{padding:6px 0;border-top:1px solid var(--line)}ul.plain li.row{display:flex;align-items:center;justify-content:space-between;gap:8px}ul.plain li.row button{flex:none;white-space:nowrap}
+.subhead{font-weight:600;margin:14px 0 4px}
 #sources-json{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;line-height:1.5}
 .entries{margin-top:12px}.entries details{border-top:1px solid var(--line)}.entries summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px;font-weight:600;list-style:none}.entries summary::-webkit-details-marker{display:none}.entries summary::before{content:'▸';color:var(--muted)}.entries details[open] summary::before{content:'▾'}
 .entry{display:grid;grid-template-columns:7em minmax(0,1fr) minmax(10em,auto);gap:4px 12px;align-items:center;padding:6px 0;font-size:14px;border-top:1px solid var(--line)}.entry a{overflow-wrap:anywhere}.entry .why{color:var(--muted)}.entry button{margin-left:8px}
@@ -44,9 +45,10 @@ ${LOGIN}
 <p class="muted">「文字模型」負責官方主題判斷、詳細整理、通知介紹與來源追問。切到本機前請先完成代表素材驗收。Mac 離線時工作會等待，不會改用雲端文字模型。</p>
 <div class="actions"><button id="use-local">改用本機 Gemma</button><button id="use-gemini">改回 Gemini</button></div></section>
 <section class="panel" aria-labelledby="runner-title"><h2 id="runner-title">Mac 執行器</h2><dl id="runner"></dl><div id="queue"></div></section>
-<section class="panel" aria-labelledby="budget-title"><h2 id="budget-title">本月預算（台灣曆月）</h2><p id="budget-state"></p><dl id="budget"></dl><div id="categories"></div><div id="x-failures"></div>
+<section class="panel" aria-labelledby="budget-title"><h2 id="budget-title">本月預算（台灣曆月）</h2><p id="budget-state"></p><dl id="budget"></dl><div id="categories"></div><div id="uncertain"></div><div id="voided"></div><div id="x-failures"></div>
 <p class="muted">數字是控管估算，不是供應商帳單。X 回錯誤的呼叫沒有讀到資料，記 $0；只有沒收到回應，或收到後處理失敗的才列為未確認。同一 UTC 日重讀同一資源不計費。</p>
-<div class="actions"><button id="pause">暫停全部處理</button><button id="resume" class="primary">手動恢復</button></div></section>
+<div class="actions"><button id="pause">暫停全部處理</button></div>
+<div id="resume-box" class="hidden"><p id="resume-note" class="muted"></p><div class="actions"><button id="resume" class="primary">恢復處理</button></div></div></section>
 <section class="panel" aria-labelledby="sync-title"><h2 id="sync-title">X 書籤同步</h2>
 <div class="switches"><label class="switch"><input type="checkbox" id="x-bookmarks"> 書籤同步（每 10 分鐘局部檢查、每天完整核對）</label><label class="switch"><input type="checkbox" id="x-author"> 作者重查（完成 24 小時後重讀作者補充）</label></div>
 <p class="muted">兩項都會產生 X 讀取費用，預設關閉。手動分享 X 連結不受影響。</p><p id="sync-state" class="pre"></p><p id="setup" class="muted"></p>
@@ -63,6 +65,7 @@ ${HELPERS}
 const SKIPS={baseline_incomplete:'首次完整掃描完成前不做局部檢查',rate_limited:'X 限流，稍後再試',full_scan_running:'完整核對進行中，這次略過',partial_running:'上一次局部檢查仍在進行'};
 const CATEGORY={x:'X 讀取','x-reread-risk':'X 重讀風險',gemini:'Gemini 寫作','gemini-media':'Flash 媒體解析','r2-storage':'R2 保存'};
 const COST_STATUS={settled:'已結算估算',reserved:'預留中',uncertain:'未確認',adjustment:'人工核對調整'};
+const COST_REASON={no_response:'沒收到回應',after_response:'收到回應後處理失敗'};
 const X_READ={bookmarks:'書籤列表',post:'貼文',user:'使用者',search:'搜尋',other:'其他'};
 const X_CONTEXT={sync_full:'書籤完整核對',sync_partial:'書籤局部檢查',post:'整理貼文',author_profile:'查作者資料',author_replies:'作者補充',connect:'連接 X'};
 // X 失敗呼叫：次數、最近一次摘要，展開看每次的時間、讀取類型、狀態碼與情境。
@@ -73,6 +76,24 @@ function xFailures(f){
     el('details',{class:'advanced'},[el('summary',{text:'每次明細'+(f.count>f.items.length?'（最近 '+f.items.length+' 次）':'')}),
       el('ul',{class:'plain'},f.items.map(i=>el('li',{text:when(i.at)+'・'+(i.status?'HTTP '+i.status:'狀態不明')+'・'+(X_READ[i.read]||i.read||'—')+'・'+(X_CONTEXT[i.context]||i.context||'—')})))])]);
 }
+// 未確認費用逐筆列出，各有「作廢」按鈕；作廢需要說明，完成後重新讀取預算與暫停狀態，不自動恢復。
+function uncertainList(items){
+  if(!items.length)return null;
+  return el('div',{},[el('p',{class:'subhead',text:'未確認費用（'+items.length+' 筆）'}),el('ul',{class:'plain'},items.map(c=>{
+    const b=el('button',{type:'button',text:'作廢'});
+    b.onclick=async()=>{
+      const note=await askText('作廢這筆未確認費用','寫下作廢原因，例如「已在 X 後台核對，這次沒有計費」。作廢後不算進月預算，但會留在已作廢明細。','作廢');
+      if(!note)return;
+      run(async()=>{await api('admin/costs/void','POST',{id:c.id,note});await load();message('已作廢，預算已重新計算；處理不會自動恢復。');},b,'作廢中…');
+    };
+    return el('li',{class:'row'},[el('span',{text:when(c.at)+'・'+(CATEGORY[c.category]||c.category)+'・'+money(c.amount_micro)+(c.context?'・'+(X_CONTEXT[c.context]||c.context):'')+(c.reason?'（'+(COST_REASON[c.reason]||c.reason)+'）':'')}),b]);
+  }))]);
+}
+function voidedList(items,total){
+  if(!items.length)return null;
+  return el('details',{class:'advanced'},[el('summary',{text:'已作廢：'+money(total)+'（'+items.length+' 筆，不計入預算）'}),
+    el('ul',{class:'plain'},items.map(c=>el('li',{text:when(c.at)+'・'+(CATEGORY[c.category]||c.category)+'・'+money(c.amount_micro)+'・說明：'+(c.note||'—')+'（作廢於 '+when(c.voided_at)+'）'})))]);
+}
 function dl(id,pairs){$(id).replaceChildren(...pairs.flatMap(p=>[el('dt',{text:p[0]}),el('dd',{text:p[1]})]));}
 async function load(){
   const s=await api('status'),b=await api('budget'),l=s.local;
@@ -80,10 +101,16 @@ async function load(){
   dl('runner',[['狀態',l.online?'在線':'離線'],['最後心跳',when(l.last_seen_at)],['目前工作',l.current?(l.current.kind==='question'?'追問':'文章')+'・領取於 '+when(l.current.leased_at):'無'],['等待中',String(l.jobs.waiting_local||0)],['失敗待處理',String(l.jobs.failed||0)],['版本',l.info?(l.info.version||'—')+'・'+(l.info.model||'')+(l.info.model_digest?' ('+l.info.model_digest+')':''):'—']]);
   $('queue').replaceChildren(l.queue.length?el('table',{},[el('thead',{},[el('tr',{},['順序','類型','優先','有效優先','建立'].map(t=>el('th',{text:t})))]),el('tbody',{},l.queue.map(q=>el('tr',{},[q.position,q.kind==='question'?'追問':'文章',q.priority,q.effective_priority,when(q.created_at)].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'目前沒有排隊的本機工作。'}));
   $('budget-state').textContent=b.pause_reason==='manual'?'已手動暫停全部處理。':b.pause_reason==='budget'?'費用暫停：不呼叫付費服務；已取得證據的本機工作照常。跨月不會自動恢復。':'處理中。';
+  // 恢復只在暫停時出現，說明按下會做什麼；手動暫停時不再顯示暫停按鈕。
+  $('resume-box').classList.toggle('hidden',!b.pause_reason);$('pause').classList.toggle('hidden',b.pause_reason==='manual');
+  $('resume-note').textContent=(b.pause_reason==='manual'?'暫停原因：手動暫停。':'暫停原因：費用不足。')+'按下「恢復處理」會解除暫停、把暫停中的文章重新排隊，並續跑書籤同步；不會處理未確認費用。'
+    +(b.pause_reason==='budget'&&!b.remaining_micro?'目前剩餘預算為 0，請先作廢未確認費用或調整月預算。':'');
   dl('budget',[['月預算',money(b.limit_micro)],['基本費預留',money(b.base_micro)],['已使用估算',money(b.metered_micro)],['剩餘',money(b.remaining_micro)],['已結算估算',money(b.totals.settled_micro)],['預留中',money(b.totals.reserved_micro)],['未確認',money(b.totals.uncertain_micro)],['人工核對調整',money(b.totals.adjustment_micro)],['X 計價查核日',b.x_pricing.checked_at]]);
-  // 失敗呼叫固定 $0，另外在下方列出，不放進金額明細。
-  const lines=b.categories.filter(c=>c.status!=='failed');
+  // 失敗呼叫固定 $0、作廢的不計入預算，都另外在下方列出，不放進金額明細。
+  const lines=b.categories.filter(c=>!['failed','voided'].includes(c.status));
   $('categories').replaceChildren(lines.length?el('table',{},[el('thead',{},[el('tr',{},['項目','狀態','金額','筆數'].map(t=>el('th',{text:t})))]),el('tbody',{},lines.map(c=>el('tr',{},[CATEGORY[c.category]||c.category,COST_STATUS[c.status]||c.status,money(c.amount_micro),c.count].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'本月尚無費用紀錄。'}));
+  $('uncertain').replaceChildren(...[uncertainList(b.uncertain_items)].filter(Boolean));
+  $('voided').replaceChildren(...[voidedList(b.voided_items,b.totals.voided_micro)].filter(Boolean));
   $('x-failures').replaceChildren(xFailures(b.x_failures));
   const p=s.sync_partial||{},f=s.sync||{};
   $('x-bookmarks').checked=s.x_reads.bookmarks;$('x-author').checked=s.x_reads.author_recheck;
@@ -94,7 +121,7 @@ async function load(){
 $('use-local').onclick=async e=>{const button=e.currentTarget;if(!await askConfirm('改用本機 Gemma 後，文字整理與追問都交給 Mac；Mac 離線時工作會等待。確定已完成驗收？'))return;run(async()=>{await api('admin/text-provider','PUT',{provider:'local'});await load();message('文字模型已改為本機。');},button,'切換中…');};
 $('use-gemini').onclick=e=>run(async()=>{await api('admin/text-provider','PUT',{provider:'gemini'});await load();message('文字模型已改回 Gemini。');},e.currentTarget,'切換中…');
 $('pause').onclick=e=>run(async()=>{await api('control','POST',{action:'pause'});await load();message('已暫停全部處理；正在執行的請求可能仍會完成。');},e.currentTarget,'暫停中…');
-$('resume').onclick=e=>run(async()=>{await api('control','POST',{action:'resume'});await load();message('已恢復處理。');},e.currentTarget,'恢復中…');
+$('resume').onclick=e=>run(async()=>{try{await api('control','POST',{action:'resume'});}finally{await load();}message('已恢復處理。');},e.currentTarget,'恢復中…');
 $('connect').onclick=e=>run(async()=>{const r=await api('x/connect','POST',{});location.assign(r.url);},e.currentTarget,'前往 X 授權…');
 // 開關切換後立即保存；失敗時還原勾選狀態。
 for(const [id,key,label] of [['x-bookmarks','bookmarks','書籤同步'],['x-author','author_recheck','作者重查']])$(id).onchange=e=>{const box=e.currentTarget,on=box.checked;run(async()=>{try{await api('admin/x-reads','PUT',{[key]:on});}catch(error){box.checked=!on;throw error;}await load();message(label+(on?'已開啟。':'已關閉。'));});};

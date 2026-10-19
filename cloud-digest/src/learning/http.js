@@ -3,7 +3,7 @@ import {LEARNING_PAGE} from './page.js';
 import {ADMIN_PAGE} from './admin-page.js';
 import {createLearningService} from './service.js';
 import {equalSecret,authorized,createSession,cookie,mutationAllowed} from './auth.js';
-import {rows,query,item,evidence,setting,setSetting,budget,resume,hash,connection,saveConnection,nowIso} from './store.js';
+import {rows,query,item,evidence,setting,setSetting,budget,resume,voidCost,hash,connection,saveConnection,nowIso} from './store.js';
 import {exchange,xRead,bookmarksEnabled,xReads,setXReads} from './x.js';
 import {resetIncomplete} from './evidence.js';
 import {renderMarkdown} from './markdown.js';
@@ -104,6 +104,7 @@ export function createLearningHandler(deps={}) {
       if(route==='collect'&&request.method==='POST')return json({id:await service.collect(env,(await body(request)).url,'web')},202);
       if(route==='admin/migrate'&&request.method==='POST'){const library=await migrateLibrary(env),linked=await mergeExistingDuplicates(env);return json({...library,merged:library.merged+linked.merged,linked_checked:linked.checked});}
       if(route==='budget'&&request.method==='GET')return json(await budgetSummary(env,await budget(env)));
+      if(route==='admin/costs/void'&&request.method==='POST'){const data=await body(request);await voidCost(env,data.id,data.note);return json(await budgetSummary(env,await budget(env)));}
       if(route==='admin/budget-adjust'&&request.method==='POST'){
         // 與供應商帳單核對後的人工修正；可為負數，保留說明供日後查核。
         const data=await body(request),amount=Math.round(Number(data.amount_usd)*1e6);

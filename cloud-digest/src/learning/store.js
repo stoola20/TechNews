@@ -36,7 +36,7 @@ export async function unlock(env, id, token) { await query(env, 'UPDATE learning
 export function monthKey(time = now()) {
   return new Date(time+8*3600000).toISOString().slice(0,7);
 }
-export class BudgetPaused extends Error { constructor(){super('費用不足或處理已暫停，工作已保留，請手動恢復。');this.name='BudgetPaused';} }
+export class BudgetPaused extends Error { constructor(message='費用不足或處理已暫停，工作已保留，請手動恢復。'){super(message);this.name='BudgetPaused';} }
 export async function budget(env) {
   const month=monthKey();
   const limit=Math.round(Number(env.LEARNING_MONTHLY_USD ?? 30)*1e6);
@@ -44,7 +44,8 @@ export async function budget(env) {
   if (!Number.isSafeInteger(base) || base<0) throw new Error('基本費設定無效');
   if (!Number.isSafeInteger(limit) || limit<=0 || limit<base) throw new Error('月預算須大於零，且不得低於基本費');
   await query(env,'INSERT INTO learning_months(month,limit_micro,base_micro) VALUES(?,?,?) ON CONFLICT(month) DO UPDATE SET base_micro=excluded.base_micro',month,limit,base).run();
-  const b=await query(env,`SELECT m.*,COALESCE(SUM(c.amount_micro),0) AS metered_micro,
+  // 作廢的費用保留金額供對帳，但不算進已使用金額。
+  const b=await query(env,`SELECT m.*,COALESCE(SUM(CASE WHEN c.status!='voided' THEN c.amount_micro ELSE 0 END),0) AS metered_micro,
     COALESCE(SUM(CASE WHEN c.status IN ('reserved','uncertain') THEN c.amount_micro ELSE 0 END),0) AS unsettled_micro
     FROM learning_months m LEFT JOIN learning_costs c ON c.month=m.month WHERE m.month=? GROUP BY m.month`,month).first();
   const control=await setting(env,'control');
@@ -55,7 +56,7 @@ export async function reserve(env, category, amount) {
   if (!Number.isSafeInteger(amount) || amount<0) throw new Error('Invalid cost estimate');
   const result=await query(env,`INSERT INTO learning_costs(id,month,category,amount_micro,status,created_at)
     SELECT ?,?,?,?,'reserved',? FROM learning_months m WHERE m.month=?
-    AND m.base_micro+COALESCE((SELECT SUM(amount_micro) FROM learning_costs WHERE month=m.month),0)+?<=m.limit_micro
+    AND m.base_micro+COALESCE((SELECT SUM(amount_micro) FROM learning_costs WHERE month=m.month AND status!='voided'),0)+?<=m.limit_micro
     AND COALESCE((SELECT json_extract(value_json,'$.paused') FROM settings WHERE key='learning:control'),0)=0`,
     id,b.month,category,amount,nowIso(),b.month,amount).run();
   if(!result.meta.changes){await pauseForBudget(env);throw new BudgetPaused();}
@@ -77,10 +78,17 @@ export async function manuallyPaused(env){
 }
 // 對方回了錯誤（非 2xx）：沒有讀到資料，這次呼叫記 $0，並留下狀態碼與情境供管理頁列出。
 export async function failed(env, id, usage = {}) { await query(env,"UPDATE learning_costs SET amount_micro=0,status='failed',usage_json=? WHERE id=? AND status='reserved'",JSON.stringify(usage),id).run(); }
-export async function uncertain(env, id) { await query(env,"UPDATE learning_costs SET status='uncertain' WHERE id=? AND status='reserved'",id).run(); }
+export async function uncertain(env, id, usage = null) { await query(env,"UPDATE learning_costs SET status='uncertain',usage_json=COALESCE(?,usage_json) WHERE id=? AND status='reserved'",usage?JSON.stringify(usage):null,id).run(); }
+// 作廢：只接受未確認的費用，必須附說明。作廢後不自動恢復處理，由使用者決定。
+export async function voidCost(env, id, note) {
+  const text=typeof note==='string'?note.trim():'';
+  if(!text || text.length>500)throw new Error('作廢需要 1–500 字的說明');
+  const result=await query(env,"UPDATE learning_costs SET status='voided',voided_at=?,void_note=? WHERE id=? AND status='uncertain'",nowIso(),text,id).run();
+  if(!result.meta.changes)throw new Error('只能作廢未確認的費用');
+}
 export async function resume(env) {
   const b=await budget(env);
-  if(b.remaining_micro===0) throw new BudgetPaused();
+  if(b.remaining_micro===0) throw new BudgetPaused('剩餘預算為 0，請先作廢未確認費用或調整月預算');
   await setSetting(env,'control',{paused:false});
   await query(env,"UPDATE learning_items SET status='queued',next_attempt_at=NULL,attempts=0 WHERE status IN ('budget_paused','paused')").run();
   return budget(env);

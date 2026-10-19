@@ -46,12 +46,20 @@ async function xFailures(env,month){
   return {count,items};
 }
 
+// 本月未確認與已作廢的逐筆明細：未確認的可作廢，作廢的保留金額與說明。
+async function costItems(env,month,status){
+  return (await rows(env,"SELECT id,category,amount_micro,created_at,usage_json,voided_at,void_note FROM learning_costs WHERE month=? AND status=? ORDER BY created_at DESC,rowid DESC LIMIT 100",month,status))
+    .map(r=>{const usage=JSON.parse(r.usage_json || '{}');return {id:r.id,category:r.category,amount_micro:r.amount_micro,at:r.created_at,context:usage.context || null,reason:usage.reason || null,
+      ...(status==='voided'?{voided_at:r.voided_at,note:r.void_note}:{})};});
+}
+
 // 管理頁用的月預算明細（台灣曆月）：已結算估算、預留、未確認與人工核對調整分開列出。
 export async function budgetSummary(env,base){
   const lines=await rows(env,'SELECT category,status,SUM(amount_micro) AS amount_micro,COUNT(*) AS count FROM learning_costs WHERE month=? GROUP BY category,status ORDER BY category,status',base.month);
   const total=status=>lines.filter(l=>l.status===status).reduce((n,l)=>n+l.amount_micro,0);
   const control=await setting(env,'control');
   return {...base,pause_reason:control.paused?control.reason || 'manual':null,
-    totals:{settled_micro:total('settled'),reserved_micro:total('reserved'),uncertain_micro:total('uncertain'),adjustment_micro:total('adjustment')},
-    categories:lines,x_pricing:xPricing(env),x_failures:await xFailures(env,base.month)};
+    totals:{settled_micro:total('settled'),reserved_micro:total('reserved'),uncertain_micro:total('uncertain'),adjustment_micro:total('adjustment'),voided_micro:total('voided')},
+    categories:lines,x_pricing:xPricing(env),x_failures:await xFailures(env,base.month),
+    uncertain_items:await costItems(env,base.month,'uncertain'),voided_items:await costItems(env,base.month,'voided')};
 }

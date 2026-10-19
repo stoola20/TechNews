@@ -51,7 +51,7 @@ export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fet
     const url=new URL(`https://api.x.com/2${path}`);
     for(const [k,v] of Object.entries(params))if(v!=null)url.searchParams.set(k,String(v));
     response=await fetcher(url.href,{headers:{authorization:`Bearer ${auth}`},signal:AbortSignal.timeout(30000)});
-  }catch(error){await uncertain(env,id);throw error;}
+  }catch(error){await uncertain(env,id,{reason:'no_response',read:xReadType(path),context});throw error;}
   if(!response.ok){
     await failed(env,id,{status:response.status,read:xReadType(path),context,pricing_checked_at:pricing.checked_at});
     await response.body?.cancel();
@@ -69,7 +69,7 @@ export async function xRead(env,path,params={},maximum=1,owned=false,fetcher=fet
     await settle(env,id,amount,{utc_day:day,first_reads:main.first,rereads:main.reread,included_posts:includedPosts.length,included_users:includedUsers.length,
       rate_micro:rate,owned:discounted,pricing_checked_at:pricing.checked_at,errors:(data.errors || []).length,context});
     return data;
-  }catch(error){await uncertain(env,id);throw error;}
+  }catch(error){await uncertain(env,id,{reason:'after_response',read:xReadType(path),context});throw error;}
 }
 function videoVariant(media) {
   const variants=(media.variants || []).filter(v=>v.content_type==='video/mp4').sort((a,b)=>(b.bit_rate || b.bitrate || 0)-(a.bit_rate || a.bitrate || 0));
