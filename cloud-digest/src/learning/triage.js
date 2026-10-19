@@ -200,6 +200,7 @@ export async function purgeItem(env, id) {
     query(env, `DELETE FROM learning_evidence WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM learning_intakes WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM learning_versions WHERE item_id=? ${guard}`, id, id),
+    query(env, `DELETE FROM learning_chunks WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM learning_jobs WHERE item_id=? ${guard}`, id, id),
     query(env, `DELETE FROM settings WHERE key=? ${guard}`, `learning:context:${id}`, id),
     ...deliveries.map((d) => query(env, `DELETE FROM learning_deliveries WHERE id=? ${guard}`, d.id, id)),
@@ -209,11 +210,11 @@ export async function purgeItem(env, id) {
   return true;
 }
 
-// 維護排程：清除刪除超過 7 天的文章。正在處理中的文章（有有效 lease）等下一輪。
+// 維護排程：清除刪除超過 7 天的文章。正在處理中的文章（有有效 lease）與向量還沒移出索引的文章等下一輪。
 export async function purgeDeleted(env, limit = PURGE_BATCH) {
   const due = await rows(
     env,
-    "SELECT id FROM learning_items WHERE triage='deleted' AND deleted_at<=? AND (lease_until IS NULL OR lease_until<?) ORDER BY deleted_at LIMIT ?",
+    "SELECT id FROM learning_items WHERE triage='deleted' AND deleted_at<=? AND (lease_until IS NULL OR lease_until<?) AND indexed=0 ORDER BY deleted_at LIMIT ?",
     new Date(now() - PURGE_DAYS * DAY).toISOString(),
     nowIso(),
     limit,

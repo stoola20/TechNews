@@ -17,6 +17,8 @@
     }
   ],
   "ai": { "binding": "AI", "remote": true },
+  // 保留文章的 RAG 索引：512 維、cosine。建立指令見 docs/learning-setup.md。
+  "vectorize": [{ "binding": "LIBRARY_INDEX", "index_name": "technews-library", "remote": true }],
   "browser": { "binding": "BROWSER", "remote": true },
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "technews-learning-media" }],
   "queues": {

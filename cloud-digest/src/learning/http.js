@@ -29,6 +29,7 @@ import { mergeExistingDuplicates } from './linking.js';
 import { officialOverview, collectAnyway } from './official.js';
 import { saveSettings } from '../settings.js';
 import { applyTriage, pendingCount, purgeAt, triageQueue, TriageError, TRIAGE_COLUMNS } from './triage.js';
+import { indexStatus, rebuildIndex } from './rag-index.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -282,6 +283,9 @@ export function createLearningHandler(deps = {}) {
         const data = await body(request);
         return json(await collectAnyway(env, service.collect, data.source, data.url), 202);
       }
+      if (route === 'admin/index' && request.method === 'GET') return json(await indexStatus(env));
+      if (route === 'admin/index/rebuild' && request.method === 'POST')
+        return json({ ...(await rebuildIndex(env)), status: await indexStatus(env) });
       if (route === 'admin/topics' && request.method === 'GET') return json({ topics: await topicList(env) });
       if (route === 'admin/topics' && request.method === 'PUT')
         return json(await saveTopicList(env, await body(request)));

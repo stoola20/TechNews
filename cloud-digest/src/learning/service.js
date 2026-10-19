@@ -44,6 +44,7 @@ import {
 import { queueArticleNotifications, sendPending, receiptMessage, contentFingerprint } from './notifications.js';
 import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from './triage.js';
 import { handleTriageCallback } from './telegram-triage.js';
+import { maintainIndex } from './rag-index.js';
 import { effectiveEnvironment } from '../settings.js';
 import { getSources } from '../sources.js';
 import { now, withClock } from './clock.js';
@@ -555,6 +556,13 @@ export function createLearningService(deps = {}) {
         await purgeDeleted(env);
       } catch (error) {
         console.log(JSON.stringify({ event: 'triage_maintenance_failed', error: error.message }));
+      }
+    // RAG 索引：保留文章建立或更新索引，非保留文章移出。每輪最多建立 3 篇。
+    if (tasks.includes('maintenance'))
+      try {
+        await maintainIndex(env);
+      } catch (error) {
+        console.log(JSON.stringify({ event: 'rag_maintenance_failed', error: error.message }));
       }
     await recover(env);
     const syncState = await setting(env, 'sync');

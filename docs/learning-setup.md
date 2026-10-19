@@ -42,6 +42,18 @@ npx wrangler d1 migrations apply developer-digest-cloud --remote
 
 R2 建立指令若詢問是否自動加入設定檔，已設定 `MEDIA` binding 的專案選 `n`，避免新增不同名稱的 binding。R2 採 Standard 儲存，每月包含 10 GB-month 免費額度，與同帳號其他 bucket 共用；超出額度另計費。[官方價格](https://developers.cloudflare.com/r2/pricing/)。
 
+### 保留文章的 RAG 索引（Vectorize）
+
+保留文章的教材正文、原始來源與媒體解析會切成片段，用 Workers AI `@cf/google/embeddinggemma-300m` 產生向量，取前 512 維存進 Vectorize。索引名稱與 binding（`LIBRARY_INDEX`）已寫在 `wrangler.jsonc`，維度與距離建立後不能改：
+
+```bash
+npx wrangler vectorize create technews-library --dimensions=512 --metric=cosine
+```
+
+指令若詢問是否自動加入設定檔，選 `n`。沒有建立索引時，Worker 照常運作，只是不建立索引，追問與批改只用關鍵字檢索。管理頁「RAG 索引」顯示保留、已索引、等待中與失敗篇數，以及估計儲存維度占 Free 額度（5,000,000 維度，約 9,700 段）的比例；換模型或調整切塊後按「重建索引」。
+
+Vectorize Free 每月另含 3,000 萬查詢維度，embedding 與主題分類共用 Workers AI 每日 10,000 neurons，兩者都是整個 Cloudflare 帳號共用。[Vectorize 限制](https://developers.cloudflare.com/vectorize/platform/limits/)、[Vectorize 價格](https://developers.cloudflare.com/vectorize/platform/pricing/)。
+
 ## Gemini 設定
 
 從 Google AI Studio 建立可使用 Gemini API 的金鑰，確認付費與可用模型。使用互動輸入設定秘密：

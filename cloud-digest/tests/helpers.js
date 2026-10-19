@@ -138,3 +138,121 @@ export async function enableXReads(env, value = { bookmarks: true, author_rechec
     .bind(JSON.stringify(value), new Date().toISOString())
     .run();
 }
+
+// 決定性的假 embedding 模型：同義詞與中英對照的合成文字對到同一個概念，向量就接近。
+// 只放在前 512 維，模擬 Matryoshka 截斷後仍保留語意；後 256 維放雜訊，確認程式有截斷再正規化。
+const CONCEPTS = {
+  快取: 'cache',
+  cache: 'cache',
+  caching: 'cache',
+  緩存: 'cache',
+  重試: 'retry',
+  retry: 'retry',
+  retries: 'retry',
+  退避: 'backoff',
+  backoff: 'backoff',
+  佇列: 'queue',
+  queue: 'queue',
+  代理: 'agent',
+  agent: 'agent',
+  agents: 'agent',
+  工具: 'tool',
+  tool: 'tool',
+  tools: 'tool',
+  預算: 'budget',
+  budget: 'budget',
+  費用: 'budget',
+  cost: 'budget',
+  串流: 'stream',
+  streaming: 'stream',
+  stream: 'stream',
+};
+function concepts(text) {
+  const body = String(text)
+    .replace(/^task: search result \| query: /, '')
+    .replace(/^title: [^|]*\| text: /, '')
+    .toLowerCase();
+  const words = [...new Intl.Segmenter('zh-TW', { granularity: 'word' }).segment(body)]
+    .filter((s) => s.isWordLike)
+    .map((s) => s.segment);
+  return words.map((w) => CONCEPTS[w] || w);
+}
+function slot(word) {
+  let h = 2166136261;
+  for (const ch of word) h = Math.imul(h ^ ch.codePointAt(0), 16777619);
+  return (h >>> 0) % 512;
+}
+export function embeddingModel({ fail = () => false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async run(model, input) {
+      // 主題分類也走同一個 AI binding：固定回「模型發布與能力」。
+      if (model === '@cf/google/gemma-4-26b-a4b-it')
+        return { choices: [{ message: { content: '{"primary":"models","secondary":null}' }, finish_reason: 'stop' }] };
+      calls.push({ model, input });
+      if (model !== '@cf/google/embeddinggemma-300m') throw new Error('unexpected model ' + model);
+      if (fail(input)) throw new Error('Workers AI 暫時無法使用');
+      const texts = Array.isArray(input.text) ? input.text : [input.text];
+      if (texts.length > 100) throw new Error('batch too large');
+      return {
+        shape: [texts.length, 768],
+        data: texts.map((t) => {
+          const v = new Array(768).fill(0);
+          for (const c of concepts(t)) v[slot(c)] += CONCEPTS[c] || Object.values(CONCEPTS).includes(c) ? 3 : 1;
+          for (let i = 512; i < 768; i++) v[i] = 5;
+          v[511] += 0.01;
+          return v;
+        }),
+      };
+    },
+  };
+}
+// 記憶體 Vectorize：upsert、deleteByIds 與 cosine 前 K 筆查詢。
+export function vectorIndex({ fail = () => false } = {}) {
+  const vectors = new Map(),
+    calls = [];
+  const cosine = (a, b) => {
+    let dot = 0,
+      na = 0,
+      nb = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      na += a[i] * a[i];
+      nb += b[i] * b[i];
+    }
+    return dot / Math.sqrt(na * nb);
+  };
+  return {
+    vectors,
+    calls,
+    async upsert(list) {
+      calls.push({ op: 'upsert', count: list.length });
+      if (fail('upsert')) throw new Error('Vectorize upsert failed');
+      if (list.length > 1000) throw new Error('batch too large');
+      for (const v of list) {
+        if (new TextEncoder().encode(v.id).length > 64) throw new Error('vector id too long');
+        if (v.values.length !== 512) throw new Error('dimension mismatch');
+        vectors.set(v.id, v.values);
+      }
+      return { mutationId: 'm' + calls.length };
+    },
+    async deleteByIds(ids) {
+      calls.push({ op: 'delete', count: ids.length });
+      if (fail('delete')) throw new Error('Vectorize delete failed');
+      for (const id of ids) vectors.delete(id);
+      return { mutationId: 'm' + calls.length };
+    },
+    async query(values, { topK = 5, returnMetadata = 'none', returnValues = false } = {}) {
+      calls.push({ op: 'query', topK });
+      if (fail('query')) throw new Error('Vectorize query failed');
+      if (topK > ((returnMetadata !== 'none' && returnMetadata) || returnValues ? 50 : 100))
+        throw new Error('topK too large');
+      const matches = [...vectors]
+        .map(([id, v]) => ({ id, score: cosine(values, v) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, topK);
+      return { count: matches.length, matches };
+    },
+  };
+}
