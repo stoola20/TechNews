@@ -21,15 +21,32 @@ import {
 import { exchange, xRead, bookmarksEnabled, xReads, setXReads } from './x.js';
 import { resetIncomplete } from './evidence.js';
 import { renderMarkdown } from './markdown.js';
-import { resolveItemId, migrateLibrary, backfillPublished, ORIGINS, officialSources, publisherFor } from './library.js';
+import {
+  resolveItemId,
+  migrateLibrary,
+  backfillPublished,
+  ORIGINS,
+  officialSources,
+  publisherFor,
+  articleSummaries,
+} from './library.js';
 import { articleMessage } from './notifications.js';
 import { skipDecorative } from './media.js';
 import { topicList, setItemTopics, saveTopicList, reclassifyAll } from './topics.js';
 import { mergeExistingDuplicates } from './linking.js';
 import { officialOverview, collectAnyway } from './official.js';
 import { saveSettings } from '../settings.js';
-import { applyTriage, pendingCount, purgeAt, triageQueue, TriageError, TRIAGE_COLUMNS } from './triage.js';
+import {
+  applyTriage,
+  pendingCount,
+  purgeAt,
+  triageQueue,
+  articleQueryText,
+  TriageError,
+  TRIAGE_COLUMNS,
+} from './triage.js';
 import { indexStatus, rebuildIndex } from './rag-index.js';
+import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -414,11 +431,32 @@ export function createLearningHandler(deps = {}) {
           ),
         );
       }
-      const match = route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics|triage))?$/);
+      const match = route.match(
+        /^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics|triage|similar))?$/,
+      );
       if (match) {
         const id = await resolveItemId(env, match[1]),
           current = id && (await item(env, id));
         if (!current || current.status === 'dismissed') return json({ error: '文章不存在' }, 404);
+        // 篩選卡片的相似保留文章：只用查詢向量，不寫入索引；降級或沒有相似文章時回傳空清單。
+        if (match[2] === '/similar' && request.method === 'GET') {
+          const found = await relatedArticles(env, await articleQueryText(env, current), {
+            exclude: [id],
+            min: SIMILAR_MIN,
+            limit: 3,
+          });
+          const summaries = await articleSummaries(
+            env,
+            found.articles.map((a) => a.item_id),
+          );
+          return json({
+            degraded: found.degraded,
+            items: summaries.map(({ intro, url, ...s }) => ({
+              ...s,
+              score: Math.round(found.articles.find((a) => a.item_id === s.id).score * 1000) / 1000,
+            })),
+          });
+        }
         if (match[2] === '/triage' && request.method === 'PUT') {
           try {
             return json(await applyTriage(env, id, (await body(request)).action, { enqueue: service.enqueue }));

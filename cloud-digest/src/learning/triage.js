@@ -245,6 +245,23 @@ export async function pendingCount(env) {
   ).count;
 }
 
+// 判斷相似時的查詢文字：標題加導讀；等待確認回補的文章沒有導讀，改用保存的主要原文前 600 字。
+export async function articleQueryText(env, row) {
+  let intro = '';
+  try {
+    intro = JSON.parse(row.article_json || '{}').intro || '';
+  } catch {}
+  if (!intro) {
+    const primary = await query(
+      env,
+      "SELECT substr(content,1,600) AS content FROM learning_evidence WHERE item_id=? AND relation='primary' AND status='available' LIMIT 1",
+      row.id,
+    ).first();
+    intro = primary?.content || '';
+  }
+  return [row.title, intro].filter(Boolean).join('\n');
+}
+
 // 篩選模式的待決定清單：只列可以篩選的文章，順序與列表預設相同（發表時間新到舊，沒有時用加入時間）。
 // 導讀用教材的 intro；等待確認回補的文章還沒有教材，改用保存的主要原文前 600 字。
 export async function triageQueue(env, offset = 0, limit = 20) {

@@ -140,3 +140,33 @@ test('全庫追問：預設只查保留、可勾「也查未保留」；出處�
   ).json();
   assert.equal(single.sources[0].item_id, C);
 });
+
+test('篩選卡片的相似文章：只回保留文章、排除本篇、達門檻才列；只查詢不寫入索引；降級時回空清單', async () => {
+  const s = await setup();
+  const P = 'e'.repeat(32);
+  await add(s.env, P, { triage: 'pending', title: '快取', body: '待決定。', source: '待決定。' });
+  await query(
+    s.env,
+    'UPDATE learning_items SET article_json=? WHERE id=?',
+    JSON.stringify({ intro: '快取 cache 快取失效' }),
+    P,
+  ).run();
+  const upserts = () => s.env.LIBRARY_INDEX.calls.filter((c) => c.op === 'upsert').length;
+  const before = upserts();
+  const r = await (await s.handler.fetch(request('api/items/' + P + '/similar'), s.env)).json();
+  assert.equal(r.degraded, false);
+  assert.deepEqual(
+    r.items.map((i) => i.id),
+    [A],
+  );
+  assert.equal(r.items[0].title, '快取失效策略');
+  assert.equal(r.items[0].publisher, 'example.org');
+  assert.ok(r.items[0].score >= 0.55);
+  assert.equal(upserts(), before);
+  // 保留文章查相似時排除自己。
+  const self = await (await s.handler.fetch(request('api/items/' + A + '/similar'), s.env)).json();
+  assert.ok(!self.items.some((i) => i.id === A));
+  const down = await setup({ down: (input) => input.text[0].startsWith('task:') });
+  const degraded = await (await down.handler.fetch(request('api/items/' + C + '/similar'), down.env)).json();
+  assert.deepEqual(degraded, { degraded: true, items: [] });
+});

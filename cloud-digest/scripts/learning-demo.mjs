@@ -4,6 +4,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createLearningHandler } from '../src/learning/http.js';
 import { setTextProvider } from '../src/learning/local.js';
 import { SOURCES } from '../src/sources.js';
+import { maintainIndex } from '../src/learning/rag-index.js';
+import { embeddingModel, vectorIndex } from '../tests/helpers.js';
 
 // 此入口僅提供本機操作驗證，不讀取任何真實金鑰或呼叫外部服務。
 const sqlite = new DatabaseSync(':memory:');
@@ -66,6 +68,9 @@ const env = {
   LEARNING_DEMO: 'true',
   PUBLIC_BASE_URL: 'https://example.org',
   LEARNING_MONTHLY_USD: '30',
+  // 假的 embedding 模型與記憶體 Vectorize：讓相似文章、混合檢索與連結題可以在本機操作，不呼叫 Cloudflare。
+  AI: embeddingModel(),
+  LIBRARY_INDEX: vectorIndex(),
 };
 // DEMO_LOCAL=1：文字工作交給本機執行器（runner/runner.mjs，TECHNEWS_RUNNER_TOKEN=demo-runner）。
 if (process.env.DEMO_LOCAL === '1') await setTextProvider(env, 'local');
@@ -335,6 +340,8 @@ for (const [key, title, status, gaps, error] of states) {
       .run(at(-(n * 4 + 1) * day), n ? 'expired' : 'manual', id),
   );
 }
+// 保留文章先建立索引。
+while ((await maintainIndex(env, 20)).indexed);
 jobs.length = 0;
 for (const suffix of ['keep', 'remove'])
   await handler.service.collect(env, 'https://example.org/awaiting-' + suffix, 'backfill', 'demo:' + suffix, {

@@ -80,6 +80,7 @@ body.app:not([data-mode=""]) #reader{padding-bottom:40px}body.app:not([data-mode
 kbd{font:12px ui-monospace,SFMono-Regular,monospace;border:1px solid currentColor;border-radius:4px;padding:0 5px;opacity:.75}
 .keys{margin:0 0 12px;padding:12px 16px;border:1px dashed var(--line);border-radius:8px;font-size:14px;line-height:1.9}.keys[hidden]{display:none}
 .done-box{text-align:center;padding:40px 16px}
+#similar .subhead{font-weight:700;font-size:14px;margin:12px 0 4px}.similar-list{margin:0;padding-left:1.2em;line-height:1.8;font-size:15px}
 @media(max-width:959px){body.app:not([data-mode=""]) .reader-wrap{display:block}body.app:not([data-mode=""]) .reader-bar{display:none}.decide{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
 .meta{color:var(--muted);font-size:14px;line-height:1.7}
@@ -484,6 +485,13 @@ const triageMode={
     const decide=el('div',{class:'decide',role:'group','aria-label':'決定這篇'},['keep','star','delete','skip'].map(a=>this.button(a)));
     box.replaceChildren(head,keys,card,decide,this.undoRow());
     this.focus();
+    this.similar(item.id);
+  },
+  // 相似的保留文章：避免同一件事保留兩篇。檢索降級或沒有相似文章時不顯示這一區。
+  async similar(id){
+    let r;try{r=await api('items/'+id+'/similar');}catch(e){return;}
+    const box=$('similar');if(!box||!this.queue[0]||this.queue[0].id!==id||!r.items.length)return;
+    box.replaceChildren(el('p',{class:'subhead',text:'相似的保留文章'}),el('ul',{class:'similar-list'},r.items.map(i=>{const a=el('a',{href:urlFor({...view,mode:'',article:i.id}),text:i.title||i.id});a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:i.id,mode:''},true));};return el('li',{},[a,el('span',{class:'muted',text:'・'+i.publisher+'・相似度 '+Math.round(i.score*100)+'%'})]);})));
   },
   button(action){const [label,key]=DECIDE[action],b=el('button',{type:'button',class:action==='keep'?'primary':action==='delete'?'danger':'','data-action':action,'aria-keyshortcuts':key},[document.createTextNode(label),el('kbd',{text:key,'aria-hidden':'true'})]);b.onclick=()=>this.decide(action);return b;},
   undoRow(){const b=this.button('undo');b.disabled=!this.history.length;return el('div',{class:'actions'},[b]);},
