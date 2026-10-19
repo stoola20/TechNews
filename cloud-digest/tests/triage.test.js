@@ -323,3 +323,33 @@ test('篩選相關的維護與列表查詢走索引', async () => {
     'learning_items_(triage|published)',
   );
 });
+
+test('篩選模式只列可以篩選的待決定文章，順序與列表預設相同；待回補文章用保存的原文前 600 字當導讀', async () => {
+  const s = setup();
+  await add(s.env, 'a', { at: '2026-09-01T00:00:00.000Z' });
+  await add(s.env, 'b', { status: 'partial', at: '2026-09-03T00:00:00.000Z' });
+  await add(s.env, 'c', { status: 'queued', at: '2026-09-04T00:00:00.000Z' });
+  await add(s.env, 'd', { triage: 'kept', at: '2026-09-05T00:00:00.000Z' });
+  await add(s.env, 'e', { status: 'filtered', at: '2026-09-06T00:00:00.000Z' });
+  await add(s.env, 'f', { at: '2026-09-07T00:00:00.000Z' });
+  await act(s, 'f', 'delete');
+  await query(s.env, "UPDATE learning_items SET published_at='2026-08-01T00:00:00.000Z' WHERE id=?", id('b')).run();
+  await s.handler.service.collect(s.env, 'https://example.org/wait', 'backfill', 'w', {
+    defer: true,
+    source: { url: 'https://example.org/wait', relation: 'primary', content: '原文'.repeat(400), media: [] },
+  });
+  const r = await (await s.handler.fetch(request('api/triage'), s.env)).json();
+  assert.equal(r.total, 3);
+  assert.deepEqual(
+    r.items.map((i) => i.status),
+    ['awaiting_backfill', 'ready', 'partial'],
+  );
+  assert.equal(r.items[1].intro, '導讀 a');
+  assert.equal(r.items[0].preview.length, 600);
+  assert.equal(r.items[1].publisher, 'example.org');
+  assert.ok(r.items[0].triage_deadline);
+  assert.equal((await s.handler.fetch(request('api/triage?offset=-1'), s.env)).status, 400);
+  // 處理中的文章完成後才出現。
+  await query(s.env, "UPDATE learning_items SET status='ready' WHERE id=?", id('c')).run();
+  assert.equal((await (await s.handler.fetch(request('api/triage'), s.env)).json()).total, 4);
+});

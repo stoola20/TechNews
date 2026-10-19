@@ -243,3 +243,31 @@ export async function pendingCount(env) {
     ).first()
   ).count;
 }
+
+// 篩選模式的待決定清單：只列可以篩選的文章，順序與列表預設相同（發表時間新到舊，沒有時用加入時間）。
+// 導讀用教材的 intro；等待確認回補的文章還沒有教材，改用保存的主要原文前 600 字。
+export async function triageQueue(env, offset = 0, limit = 20) {
+  const marks = READABLE.map(() => '?').join(',');
+  const total = (
+    await query(
+      env,
+      `SELECT COUNT(*) AS count FROM learning_items WHERE triage='pending' AND status IN (${marks})`,
+      ...READABLE,
+    ).first()
+  ).count;
+  const items = await rows(
+    env,
+    `SELECT id,url,kind,title,status,published_at,created_at,triage_deadline,topic_primary,topic_secondary,
+      json_extract(article_json,'$.intro') AS intro,
+      (SELECT substr(e.content,1,600) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' AND e.status='available' LIMIT 1) AS preview,
+      (SELECT json_extract(k.metadata_json,'$.source_id') FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin='official' AND json_extract(k.metadata_json,'$.source_id') IS NOT NULL LIMIT 1) AS source_id,
+      (SELECT COALESCE(json_extract(e.metadata_json,'$.author_username'),(SELECT json_extract(s.value_json,'$.username') FROM settings s WHERE s.key='learning:author:'||e.author_id))
+        FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' AND learning_items.kind='x' LIMIT 1) AS author_username
+    FROM learning_items WHERE triage='pending' AND status IN (${marks})
+    ORDER BY COALESCE(published_at,created_at) DESC,id DESC LIMIT ? OFFSET ?`,
+    ...READABLE,
+    limit,
+    offset,
+  );
+  return { total, items };
+}

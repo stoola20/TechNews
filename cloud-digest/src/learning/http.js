@@ -28,7 +28,7 @@ import { topicList, setItemTopics, saveTopicList, reclassifyAll } from './topics
 import { mergeExistingDuplicates } from './linking.js';
 import { officialOverview, collectAnyway } from './official.js';
 import { saveSettings } from '../settings.js';
-import { applyTriage, pendingCount, purgeAt, TriageError, TRIAGE_COLUMNS } from './triage.js';
+import { applyTriage, pendingCount, purgeAt, triageQueue, TriageError, TRIAGE_COLUMNS } from './triage.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -381,6 +381,19 @@ export function createLearningHandler(deps = {}) {
             publisher: publisherFor({ ...row, source_id, author_username }, sources),
           })),
         );
+      }
+      if (route === 'triage' && request.method === 'GET') {
+        const offset = Number(url.searchParams.get('offset') || 0);
+        if (!Number.isInteger(offset) || offset < 0 || offset > 100000) throw new Error('篩選參數無效');
+        const queue = await triageQueue(env, offset, 20),
+          sources = await officialSources(env);
+        return json({
+          total: queue.total,
+          items: queue.items.map(({ source_id, author_username, ...row }) => ({
+            ...row,
+            publisher: publisherFor({ ...row, source_id, author_username }, sources),
+          })),
+        });
       }
       if (route === 'items/states' && request.method === 'GET') {
         // 輕量狀態刷新：只回狀態，不重建正文或筆記。

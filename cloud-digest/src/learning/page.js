@@ -56,6 +56,24 @@ body.app{display:flex;flex-direction:column}
 .triage-bar button{min-height:40px;padding:6px 14px}
 .triage-bar button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
 .triage-bar .muted{margin-left:4px}
+/* 一次一篇的模式（篩選、複習、週回顧）：隱藏列表與筆記追問，內容置中。 */
+body.app:not([data-mode=""]) #library,body.app:not([data-mode=""]) #dock{display:none}
+body.app:not([data-mode=""]) .layout{grid-template-columns:minmax(0,1fr)}
+body.app:not([data-mode=""]) #reader{padding-bottom:40px}
+#mode{max-width:760px;margin:0 auto}#mode[hidden]{display:none}
+.mode-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px}
+.mode-head h1{font-size:20px;margin:0}.mode-head .links{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.mode-head .links button{min-height:36px;padding:4px 12px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:20px clamp(16px,3vw,28px)}
+.card h2{font-size:22px;line-height:1.45;margin:6px 0 8px;outline:none;overflow-wrap:anywhere}
+.card .intro{font-size:16px;line-height:1.85;white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0}
+.card .waiting{font-size:14px;color:var(--warn)}
+.decide{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:14px 0 0}
+.decide button,#mode .actions button{display:inline-flex;align-items:center;justify-content:center;gap:8px}
+kbd{font:12px ui-monospace,SFMono-Regular,monospace;border:1px solid currentColor;border-radius:4px;padding:0 5px;opacity:.75}
+.keys{margin:0 0 12px;padding:12px 16px;border:1px dashed var(--line);border-radius:8px;font-size:14px;line-height:1.9}.keys[hidden]{display:none}
+.done-box{text-align:center;padding:40px 16px}
+@media(max-width:959px){body.app:not([data-mode=""]) .reader-wrap{display:block}body.app:not([data-mode=""]) .reader-bar{display:none}.decide{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #article-title{font-size:28px;line-height:1.45;margin:0 0 8px;outline:none}
 .meta{color:var(--muted);font-size:14px;line-height:1.7}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
@@ -103,7 +121,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
   #article-title{font-size:23px}.article-body{font-size:16px}
   .top{padding:10px 12px}.top form{order:3;flex-basis:100%;max-width:none}
 }
-</style></head><body class="app" data-view="list">
+</style></head><body class="app" data-view="list" data-mode="">
 <header class="top"><a class="brand" href="/learning">TechNews 文章庫</a>
 <form id="collect-form"><label class="sr" for="url">分享連結</label><input id="url" type="url" placeholder="貼上 X 貼文或文章網址" required><button class="primary">加入文章庫</button></form>
 <nav><span id="runner-pill" class="pill" role="status">狀態載入中</span><a href="/learning/admin">管理</a><button id="logout" class="hidden">登出</button></nav></header>
@@ -134,6 +152,7 @@ ${LOGIN}
 <div class="reader-wrap">
 <div id="reader" tabindex="-1" aria-label="閱讀區">
   <div class="reader-bar"><button id="back">← 返回列表</button></div>
+  <div id="mode" hidden></div>
   <div id="article"><div class="empty"><h1 style="font-size:22px">選一篇文章開始閱讀</h1><p>官方文章、X 書籤與分享都在左側列表。處理狀態會自動更新。</p></div></div>
 </div>
 <section id="dock" aria-label="筆記與追問">
@@ -159,21 +178,32 @@ ${LOGIN}
 </main>
 <script>
 ${HELPERS}
-let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',triage:'kept',article:null},listKey=null,listItems=[],topicData={topics:[],unclassified:0,total:0},hasMore=false,loadingMore=false,current=null,openSeq=0,pollTimer=null,statusTimer=null;
+let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',triage:'kept',article:null,mode:''},listKey=null,listItems=[],topicData={topics:[],unclassified:0,total:0},hasMore=false,loadingMore=false,current=null,openSeq=0,pollTimer=null,statusTimer=null;
 const narrow=matchMedia('(max-width: 959px)');
 // 篩選檢視：保留是預設；選擇存在網址，重新整理或返回時維持同一個檢視。
 const VIEWS=[['kept','保留'],['starred','★ 常用'],['pending','待決定'],['all','全部'],['deleted','最近刪除']];
 const TRIAGE_LABEL={pending:'待決定',kept:'保留',starred:'保留 ★',deleted:'最近刪除'};
-function readView(){const p=new URLSearchParams(location.search),t=p.get('triage');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article')};}
-function urlFor(v){const p=new URLSearchParams();if(v.triage&&v.triage!=='kept')p.set('triage',v.triage);if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
+const MODE_NAMES=['triage'];
+function readView(){const p=new URLSearchParams(location.search),t=p.get('triage'),m=p.get('view');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article'),mode:MODE_NAMES.includes(m)&&!p.get('article')?m:''};}
+function urlFor(v){const p=new URLSearchParams();if(v.mode&&!v.article)p.set('view',v.mode);if(v.triage&&v.triage!=='kept')p.set('triage',v.triage);if(v.q)p.set('q',v.q);if(v.unread)p.set('unread','1');if(v.origin)p.set('origin',v.origin);if(v.state)p.set('state',v.state);if(v.sort==='added')p.set('sort','added');if(v.topic)p.set('topic',v.topic);if(v.article)p.set('article',v.article);const s=p.toString();return '/learning'+(s?'?'+s:'');}
 function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTop;}
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
-function navigate(next,fromList){history.replaceState({...(history.state||{}),listScroll:listScroll()},'',location.href);view={...view,...next};history.pushState({fromList:!!fromList},'',urlFor(view));return apply();}
+function navigate(next,fromList){history.replaceState({...(history.state||{}),listScroll:listScroll()},'',location.href);view={...view,...('article' in next&&next.article?{mode:''}:{}),...next};history.pushState({fromList:!!fromList},'',urlFor(view));return apply();}
 function renderViews(){$('views').replaceChildren(...VIEWS.map(([value,label])=>{const b=el('button',{type:'button','aria-pressed':String(view.triage===value),'data-triage':value,text:label});b.onclick=()=>run(()=>navigate({triage:value,article:null}));return b;}));}
 function syncControls(){renderViews();$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;$('manage-toggle').classList.toggle('active',!!(view.origin||view.state));}
 async function apply(){
   syncControls();
+  document.body.dataset.mode=view.mode||'';
+  // 一次一篇的模式：隱藏列表與閱讀內容，模式內容放在閱讀區。
+  if(view.mode){
+    document.body.dataset.view='reader';
+    if(current)clearArticle();
+    $('article').hidden=true;$('mode').hidden=false;
+    await MODES[view.mode].open();
+    return;
+  }
+  $('mode').hidden=true;$('article').hidden=false;
   const key=JSON.stringify([view.triage,view.q,view.unread,view.origin,view.state,view.sort,view.topic]);
   if(key!==listKey){listKey=key;await loadList();}
   document.body.dataset.view=view.article?'reader':'list';
@@ -218,6 +248,7 @@ async function loadMore(){
 const WEEKDAYS=['日','一','二','三','四','五','六'];
 function twDate(iso){const d=new Date(Date.parse(iso)+8*3600e3);return {year:d.getUTCFullYear(),month:d.getUTCMonth()+1,day:d.getUTCDate(),week:d.getUTCDay()};}
 function shortDate(iso){const d=twDate(iso);return d.month+'/'+d.day;}
+function fullDate(iso){const d=twDate(iso);return d.year+'/'+d.month+'/'+d.day;}
 function itemDate(i){return i.published_at?shortDate(i.published_at):'日期未知・加入於 '+shortDate(i.created_at);}
 function groupTime(i){return view.triage==='deleted'?i.deleted_at:view.sort==='added'?i.created_at:(i.published_at||i.created_at);}
 function dayLabel(iso){const d=twDate(iso),year=twDate(new Date().toISOString()).year;return (d.year!==year?d.year+' 年 ':'')+d.month+' 月 '+d.day+' 日（週'+WEEKDAYS[d.week]+'）';}
@@ -303,7 +334,6 @@ function renderArticle(result){
   nodes.push(el('h1',{id:'article-title',tabindex:'-1',text:item.title||(result.sources.find(s=>s.relation==='primary')||{content:''}).content.slice(0,100)||'處理中的來源'}));
   const origins=[...new Set((result.intakes||[]).map(i=>ORIGINS[i.origin]||i.origin))];
   // 文章資訊：發布者與時間在前；收件入口、既有導讀與整理模型等管理資訊放在第二行。
-  const fullDate=iso=>{const d=twDate(iso);return d.year+'/'+d.month+'/'+d.day;};
   nodes.push(topicRow(item));
   nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
   nodes.push(el('p',{class:'meta'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
@@ -403,6 +433,84 @@ async function triage(id,action){
   refreshEntries();
   return result;
 }
+// 篩選模式：一次一篇待決定文章，看導讀決定保留、保留並 ★、刪除或略過。略過只在這次瀏覽有效，不改狀態。
+const DECIDE={keep:['保留','K'],star:['保留並 ★','S'],delete:['刪除','D'],skip:['略過','J'],undo:['復原上一篇','U']};
+const triageMode={
+  queue:[],skipped:new Set(),history:[],total:0,busy:false,help:false,
+  async open(){this.queue=[];await this.fill();this.render();},
+  // 從頭依序補滿：已決定的文章不再是待決定，所以每次從第一頁開始，跳過這次略過的與已在佇列中的。
+  async fill(){
+    for(let offset=0;this.queue.length<5;){
+      const r=await api('triage?offset='+offset);this.total=r.total;
+      for(const i of r.items)if(!this.skipped.has(i.id)&&!this.queue.some(q=>q.id===i.id))this.queue.push(i);
+      offset+=r.items.length;if(r.items.length<20)break;
+    }
+  },
+  render(){
+    const item=this.queue[0],box=$('mode');
+    const help=el('button',{type:'button','aria-expanded':String(this.help),'aria-controls':'triage-keys',text:'按鍵說明 ?'});help.onclick=()=>this.toggleHelp();
+    const back=el('a',{href:urlFor({...view,mode:'',article:null}),text:'回到列表'});back.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:'',article:null}));};
+    const head=el('div',{class:'mode-head'},[el('h1',{text:'篩選待決定'}),el('div',{class:'links'},[el('span',{class:'muted',id:'triage-left','aria-live':'polite',text:'還剩 '+this.total+' 篇'}),help,back])]);
+    const keys=el('div',{class:'keys',id:'triage-keys',hidden:''},[document.createTextNode('K 保留・S 保留並 ★・D 刪除・J 或 → 略過・U 復原上一篇・? 顯示或隱藏說明。輸入框有焦點時不觸發。')]);
+    if(this.help)keys.removeAttribute('hidden');
+    if(!item){
+      const rest=this.total;
+      const content=rest&&this.skipped.size?el('div',{class:'card done-box'},[el('h2',{tabindex:'-1',text:'剩下的 '+rest+' 篇這次都略過了'}),el('p',{class:'muted',text:'略過不會改變篩選結果。'}),this.restartButton()]):
+        el('div',{class:'card done-box'},[el('h2',{tabindex:'-1',text:'待決定已清空'}),el('p',{},[back.cloneNode(true)])]);
+      const link=content.querySelector('a');if(link)link.onclick=back.onclick;
+      box.replaceChildren(head,keys,content,this.undoRow());this.focus();return;
+    }
+    const names=topicNames(item),meta=[item.publisher,item.published_at?'發表 '+fullDate(item.published_at):'發表日期未知',item.triage_deadline?'還有 '+leftText(item.triage_deadline)+'自動移到最近刪除':''].filter(Boolean).join('・');
+    const open=el('a',{href:urlFor({...view,mode:'',article:item.id}),text:'開啟全文'});open.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:item.id,mode:''},true));};
+    const intro=item.status==='awaiting_backfill'?(item.preview||''):(item.intro||item.preview||'');
+    const card=el('article',{class:'card','data-id':item.id,'aria-labelledby':'triage-title'},[
+      names.length?el('div',{class:'topic-row'},names.map(n=>el('span',{class:'topic-tag',text:n}))):null,
+      el('h2',{id:'triage-title',tabindex:'-1',text:item.title||item.url}),
+      el('p',{class:'meta',text:meta}),
+      item.status==='awaiting_backfill'?el('p',{class:'waiting',text:'等待確認回補：還沒呼叫模型，下面是保存的原文前 600 字。按保留才開始整理（會產生模型費用）。'}):null,
+      el('div',{class:'intro',text:intro||'沒有導讀，請開啟全文判斷。'}),
+      el('p',{},[open]),
+      el('div',{id:'similar'})]);
+    const decide=el('div',{class:'decide',role:'group','aria-label':'決定這篇'},['keep','star','delete','skip'].map(a=>this.button(a)));
+    box.replaceChildren(head,keys,card,decide,this.undoRow());
+    this.focus();
+  },
+  button(action){const [label,key]=DECIDE[action],b=el('button',{type:'button',class:action==='keep'?'primary':action==='delete'?'danger':'','data-action':action,'aria-keyshortcuts':key},[document.createTextNode(label),el('kbd',{text:key,'aria-hidden':'true'})]);b.onclick=()=>this.decide(action);return b;},
+  undoRow(){const b=this.button('undo');b.disabled=!this.history.length;return el('div',{class:'actions'},[b]);},
+  restartButton(){const b=el('button',{type:'button',class:'primary',text:'從頭再看一次'});b.onclick=()=>run(async()=>{this.skipped.clear();await this.open();});return b;},
+  focus(){const t=$('triage-title')||$('mode').querySelector('h2');if(t)t.focus({preventScroll:true});$('reader').scrollTop=0;if(narrow.matches)window.scrollTo(0,0);},
+  toggleHelp(){this.help=!this.help;const k=$('triage-keys');if(k)k.hidden=!this.help;const b=$('mode').querySelector('[aria-controls=triage-keys]');if(b)b.setAttribute('aria-expanded',String(this.help));},
+  async decide(action){
+    if(this.busy)return;
+    if(action==='undo')return this.undo();
+    const item=this.queue[0];if(!item)return;
+    this.busy=true;
+    try{
+      await run(async()=>{
+        if(action==='skip'){this.skipped.add(item.id);this.queue.shift();}
+        else{
+          const r=await api('items/'+item.id+'/triage','PUT',{action});
+          this.history.push({item,action});this.queue.shift();this.total=Math.max(0,this.total-1);listKey=null;
+          message(TRIAGE_DONE[action]+(r.status==='queued'&&action!=='delete'?'已開始整理這篇。':''));refreshEntries();
+        }
+        await this.fill();this.render();
+      });
+    }finally{this.busy=false;}
+  },
+  async undo(){
+    const last=this.history[this.history.length-1];
+    if(!last){message('還沒有可以復原的決定。');return;}
+    this.busy=true;
+    try{
+      await run(async()=>{
+        await api('items/'+last.item.id+'/triage','PUT',{action:last.action==='delete'?'restore':'pending'});
+        this.history.pop();this.queue=this.queue.filter(q=>q.id!==last.item.id);this.queue.unshift(last.item);this.skipped.delete(last.item.id);this.total++;listKey=null;
+        message('已復原「'+(last.item.title||last.item.url)+'」，回到待決定。');refreshEntries();this.render();
+      });
+    }finally{this.busy=false;}
+  },
+};
+const MODES={triage:triageMode};
 function actions(item){
   const row=el('div',{class:'actions'});
   const read=el('button',{text:item.read_at?'標記未讀':'標記已讀'});
@@ -457,9 +565,9 @@ function textModelName(){return !textModel?'目前設定的文字模型':textMod
 // 列表頂端的入口：待決定篇數。
 function renderEntries(s){
   const links=[];
-  if(s.triage_pending)links.push(el('a',{href:urlFor({...view,triage:'pending',article:null}),'data-entry':'triage'},[document.createTextNode('待決定'),el('strong',{text:s.triage_pending+' 篇'})]));
+  if(s.triage_pending)links.push(el('a',{href:urlFor({...view,mode:'triage',article:null}),'data-entry':'triage','data-mode':'triage'},[document.createTextNode('待決定'),el('strong',{text:s.triage_pending+' 篇'})]));
   $('entry-bar').replaceChildren(...links);$('entry-bar').hidden=!links.length;
-  for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({triage:'pending',article:null}));};
+  for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,article:null}));};
 }
 async function refreshEntries(){try{renderEntries(await api('status'));}catch(e){}}
 async function runnerStatus(){
@@ -630,6 +738,12 @@ $('back').onclick=()=>{if(history.state&&history.state.fromList)history.back();e
 $('collect-form').onsubmit=e=>{e.preventDefault();run(async()=>{const r=await api('collect','POST',{url:$('url').value});$('url').value='';message('已收到並保存連結。完成後會透過 Telegram 通知。');listKey=null;await navigate({article:r.id});},e.submitter||e.target.querySelector('button'),'加入中…');};
 document.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  // 篩選模式的按鍵只在這個模式有效；焦點在輸入框或按著修飾鍵時不觸發。
+  if(view.mode==='triage'&&!typing&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!document.querySelector('dialog[open]')){
+    const key={k:'keep',s:'star',d:'delete',j:'skip',arrowright:'skip',u:'undo'}[e.key.toLowerCase()];
+    if(key){e.preventDefault();triageMode.decide(key);return;}
+    if(e.key==='?'){e.preventDefault();triageMode.toggleHelp();return;}
+  }
   // Escape 先關閉筆記與追問對話框並把焦點還給展開按鈕，這次不觸發手機版的返回列表。
   if(e.key==='Escape'&&dock.isOpen()){e.preventDefault();dock.toggle(false,true);return;}
   if(e.key==='/'&&!typing){e.preventDefault();$('search').focus();}
