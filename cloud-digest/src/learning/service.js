@@ -42,6 +42,14 @@ import {
   pruneSourceRecords,
 } from './official.js';
 import { queueArticleNotifications, sendPending, receiptMessage, contentFingerprint } from './notifications.js';
+import { startTriageClock, expirePending, purgeDeleted, reviveFromDeleted } from './triage.js';
+import { handleTriageCallback } from './telegram-triage.js';
+import { maintainIndex } from './rag-index.js';
+import { createQuiz, submitAttempt, completeQuiz, completeGrade, completeWebCheck, QuizError } from './quiz.js';
+import { search, relatedArticles, RELATED_MIN } from './retrieval.js';
+import { articleSummaries } from './library.js';
+import { articleQueryText } from './triage.js';
+import { applyReviews, reviewForAttempt } from './reviews.js';
 import { effectiveEnvironment } from '../settings.js';
 import { getSources } from '../sources.js';
 import { now, withClock } from './clock.js';
@@ -83,7 +91,11 @@ export function createLearningService(deps = {}) {
       time,
       time,
     ).run();
-    if ((await item(env, id)).status === 'dismissed' && !['share', 'web'].includes(origin)) return id;
+    // 已清除或在最近刪除的文章：書籤同步與官方來源不再收件；主動分享與網站加入照常收件，回到待決定。
+    const before = await item(env, id),
+      manual = ['share', 'web'].includes(origin);
+    if ((before.status === 'dismissed' || before.triage === 'deleted') && !manual) return id;
+    if (manual && before.triage === 'deleted') await reviveFromDeleted(env, id);
     await query(
       env,
       'INSERT OR IGNORE INTO learning_intakes(receipt,item_id,origin,metadata_json,created_at) VALUES(?,?,?,?,?)',
@@ -110,6 +122,8 @@ export function createLearningService(deps = {}) {
     }
     const current = await item(env, id);
     if (!options.defer && ['queued', 'error'].includes(current.status)) await enqueue(env, id);
+    // 等待確認回補的書籤一收進來就可以閱讀，待決定期限從這時起算。
+    if (current.status === 'awaiting_backfill') await startTriageClock(env, id);
     return id;
   }
   async function process(env, id) {
@@ -383,20 +397,41 @@ export function createLearningService(deps = {}) {
     ))
       await enqueue(env, row.id);
   }
-  async function send(env, text) {
-    if (deps.sendTelegram) return deps.sendTelegram(env, text);
-    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) throw new Error('Telegram 通知設定未完成');
-    const result = await apiJson(
-      await fetcher(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  async function send(env, text, extra = {}) {
+    if (deps.sendTelegram) return deps.sendTelegram(env, text, extra);
+    if (!env.TELEGRAM_CHAT_ID) throw new Error('Telegram 通知設定未完成');
+    const result = await telegram(env, 'sendMessage', {
+      chat_id: env.TELEGRAM_CHAT_ID,
+      text,
+      link_preview_options: { is_disabled: true },
+      ...extra,
+    });
+    if (!result.ok || !result.result?.message_id) throw new Error('Telegram 通知未確認成功');
+    return result.result.message_id;
+  }
+  async function telegram(env, method, body) {
+    if (!env.TELEGRAM_BOT_TOKEN) throw new Error('Telegram 通知設定未完成');
+    return apiJson(
+      await fetcher(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         signal: AbortSignal.timeout(20000),
-        body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text, link_preview_options: { is_disabled: true } }),
+        body: JSON.stringify(body),
       }),
       64000,
     );
-    if (!result.ok || !result.result?.message_id) throw new Error('Telegram 通知未確認成功');
-    return result.result.message_id;
+  }
+  // 通知上的篩選按鈕：套用到文章庫，回覆短提示並改按鈕。Bot API 失敗時不影響已套用的結果。
+  async function triageCallback(env, callback) {
+    return handleTriageCallback(
+      env,
+      callback,
+      (method, body) =>
+        telegram(env, method, body).catch((error) => {
+          console.log(JSON.stringify({ event: 'telegram_callback_reply_failed', method, error: error.message }));
+        }),
+      { enqueue },
+    );
   }
   async function receipt(env, chatId, ids, key) {
     if (!ids.length) return;
@@ -443,6 +478,7 @@ export function createLearningService(deps = {}) {
   }
   // 文章完成後先分類再通知；分類失敗不擋通知，由維護排程依延後時間重試。
   async function classify(env, id) {
+    await startTriageClock(env, id);
     try {
       return await classifyCompleted(env, id, deps);
     } catch (error) {
@@ -450,11 +486,60 @@ export function createLearningService(deps = {}) {
       return false;
     }
   }
-  async function ask(env, question, articleId = null) {
-    return askQuestion(env, question, articleId, { ...deps, fetcher });
+  async function ask(env, question, articleId = null, options = {}) {
+    return askQuestion(env, question, articleId, { ...deps, fetcher }, options);
   }
   async function official(env) {
     return discoverOfficial(env, collect, deps);
+  }
+  // 批改完成後的後續步驟：需要時上網查證，再建立或更新複習。本機批改由 Mac 回報後也走這裡。
+  async function graded(env, attemptId) {
+    await completeWebCheck(env, attemptId, fetcher);
+    await applyReviews(env, attemptId);
+  }
+  // 連結題：用本篇標題與導讀查詢 RAG，排除本篇，取文章層級分數達門檻的前 2 篇，附標題、導讀與各自最相關的 3 段。
+  // 檢索降級時沒有相關文章，照常出題，只是沒有連結題。
+  async function related(env, row) {
+    const found = await relatedArticles(env, await articleQueryText(env, row), {
+      exclude: [row.id],
+      min: RELATED_MIN,
+      limit: 2,
+    });
+    const summaries = await articleSummaries(
+      env,
+      found.articles.map((a) => a.item_id),
+    );
+    const articles = summaries.map((s, i) => ({ ref: `R${i + 1}`, id: s.id, title: s.title, intro: s.intro }));
+    const chunks = found.articles.flatMap((a) => {
+      const ref = articles.find((x) => x.id === a.item_id)?.ref;
+      return ref ? a.chunks.map((c) => ({ ...c, related: ref })) : [];
+    });
+    return { articles, chunks };
+  }
+  // 批改第二層：用「題目＋答案」查詢 RAG，只取其他保留文章，最多 6 段；檢索降級時不用第二層。
+  async function library(env, itemId, text) {
+    const found = await search(env, { query: text, scope: 'kept', exclude: [itemId], limit: 6 });
+    return found.degraded ? [] : found.chunks;
+  }
+  const quizDeps = () => ({ fetcher, related, library, hooks: { graded } });
+  async function quiz(env, itemId, options = {}) {
+    return createQuiz(env, itemId, options, quizDeps());
+  }
+  async function attempt(env, quizId, data, options = {}) {
+    return submitAttempt(env, quizId, data, quizDeps(), options);
+  }
+  // 複習一次一題：走同一套批改流程，情境為 review。
+  async function review(env, reviewId, data) {
+    const found = await reviewForAttempt(env, reviewId);
+    if (found.error) throw new QuizError(...found.error);
+    const { review: r } = found;
+    return submitAttempt(
+      env,
+      r.quiz_id,
+      { answers: [{ number: r.number, answer: data?.answer, unsure: data?.unsure === true }] },
+      quizDeps(),
+      { context: 'review', numbers: [r.number], reviewId: r.id },
+    );
   }
   // options 可為舊版 boolean（true 代表日次書籤工作）或 {tasks}。
   async function scheduled(env, options = false) {
@@ -517,6 +602,34 @@ export function createLearningService(deps = {}) {
       } catch (error) {
         console.log(JSON.stringify({ event: 'source_prune_failed', error: error.message }));
       }
+    // 篩選：補上待決定期限的起算點、逾期移到最近刪除、清除刪除超過 7 天的文章。每一步都有篇數上限。
+    if (tasks.includes('maintenance'))
+      try {
+        await startTriageClock(env);
+        await expirePending(env);
+        await purgeDeleted(env);
+      } catch (error) {
+        console.log(JSON.stringify({ event: 'triage_maintenance_failed', error: error.message }));
+      }
+    // 網路查證卡住（Worker 在查證途中中斷）超過 10 分鐘的作答，重新查證；每輪最多 3 筆。
+    if (tasks.includes('maintenance'))
+      try {
+        for (const row of await rows(
+          env,
+          "SELECT id FROM learning_attempts WHERE status='web_check' AND updated_at<? ORDER BY updated_at LIMIT 3",
+          new Date(now() - 600000).toISOString(),
+        ))
+          await graded(env, row.id);
+      } catch (error) {
+        console.log(JSON.stringify({ event: 'web_check_recovery_failed', error: error.message }));
+      }
+    // RAG 索引：保留文章建立或更新索引，非保留文章移出。每輪最多建立 3 篇。
+    if (tasks.includes('maintenance'))
+      try {
+        await maintainIndex(env);
+      } catch (error) {
+        console.log(JSON.stringify({ event: 'rag_maintenance_failed', error: error.message }));
+      }
     await recover(env);
     const syncState = await setting(env, 'sync');
     if (bookmarks && syncState.running && env.LEARNING_JOBS && !(await budget(env)).paused)
@@ -571,8 +684,22 @@ export function createLearningService(deps = {}) {
     enqueue,
     receipt,
     official,
+    graded,
+    triageCallback,
+    quiz,
+    attempt,
+    review,
     migrate: migrateLibrary,
   };
   for (const [name, fn] of Object.entries(api)) api[name] = (...args) => withClock(deps.now, () => fn(...args));
-  return { ...api, localHooks: { completeQuestion } };
+  return {
+    ...api,
+    localHooks: {
+      completeQuestion,
+      completeQuiz,
+      // background(work) 讓網路查證在回報之後繼續執行；沒有提供時直接等待。
+      completeGrade: (env, job, input, data, background = (work) => work) =>
+        completeGrade(env, job, input, data, { graded: (env, id) => background(api.graded(env, id)) }),
+    },
+  };
 }

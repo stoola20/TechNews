@@ -58,12 +58,18 @@ ${LOGIN}
 <p class="muted">分類模型依名稱與說明從這份表中選主題。改名、說明與顏色不影響已分類的文章；刪除主題時，受影響的文章會重新分類。新增主題後可按「重新分類全部」，手動設定的文章不受影響。</p>
 <div id="topic-rows"></div>
 <div class="actions"><button id="topic-add" type="button">新增主題</button><button id="topic-save" class="primary">保存主題表</button><button id="topic-reclassify" type="button">重新分類全部</button></div></section>
+<section class="panel" aria-labelledby="webcheck-title"><h2 id="webcheck-title">精讀問答的網路查證</h2>
+<div class="switches"><label class="switch"><input type="checkbox" id="web-check"> 網路查證（Gemini Google 搜尋）</label></div>
+<p class="muted">批改時，答案裡有說法超出本篇與其他保留文章、無法判斷對錯，才對那一題上網查證。固定使用 Gemini，本機模式也一樣；沒有設定 GEMINI_API_KEY 時不查證。</p><dl id="web-check-usage"></dl></section>
+<section class="panel" aria-labelledby="index-title"><h2 id="index-title">RAG 索引</h2><dl id="rag-index"></dl><div id="rag-errors"></div>
+<p class="muted">只索引保留文章的教材正文、原始來源與媒體解析；筆記、追問與作答不收錄。維護排程每 5 分鐘最多建立 3 篇。Vectorize Free 方案可存 5,000,000 個維度（每段 512 維，約 9,700 段），與帳號內其他用途共用。</p>
+<div class="actions"><button id="rag-rebuild">重建索引</button></div></section>
 <section class="panel" aria-labelledby="ops-title"><h2 id="ops-title">維運</h2><p class="muted">一次執行舊資料整理：搬移舊官方導讀、合併重複文章、補上發表時間、清掉外部網頁裝飾圖片造成的缺漏。只寫資料庫，不呼叫模型、不讀外部來源、不發通知，可重複執行；5 分鐘維護排程不會自動做這些事。</p><div class="actions"><button id="migrate">執行舊資料整理</button></div><p id="migrate-result" class="muted"></p></section>
 </div></main>
 <script>
 ${HELPERS}
 const SKIPS={baseline_incomplete:'首次完整掃描完成前不做局部檢查',rate_limited:'X 限流，稍後再試',full_scan_running:'完整核對進行中，這次略過',partial_running:'上一次局部檢查仍在進行'};
-const CATEGORY={x:'X 讀取','x-reread-risk':'X 重讀風險',gemini:'Gemini 寫作','gemini-media':'Flash 媒體解析','r2-storage':'R2 保存'};
+const CATEGORY={x:'X 讀取','x-reread-risk':'X 重讀風險',gemini:'Gemini 寫作、追問與問答','gemini-media':'Flash 媒體解析','gemini-search':'Gemini Google 搜尋（網路查證）','r2-storage':'R2 保存'};
 const COST_STATUS={settled:'已結算估算',reserved:'預留中',uncertain:'未確認',adjustment:'人工核對調整'};
 const COST_REASON={no_response:'沒收到回應',after_response:'收到回應後處理失敗'};
 const X_READ={bookmarks:'書籤列表',post:'貼文',user:'使用者',search:'搜尋',other:'其他'};
@@ -203,7 +209,25 @@ function entryRow(s,e){
   }else why.append(DECISION[e.decision]||e.decision);
   return el('div',{class:'entry'},[el('span',{class:'muted',text:e.published_at?e.published_at.slice(0,10):'沒有日期'}),safeLink(e.url,e.title||e.url),why]);
 }
+// 網路查證：開關立即保存；本月搜尋次數、費用與免費額度。
+async function loadWebCheck(){
+  const r=await api('admin/web-check');
+  $('web-check').checked=r.enabled;$('web-check').disabled=!r.configured;
+  dl('web-check-usage',[['狀態',!r.configured?'沒有設定 GEMINI_API_KEY，不查證':r.enabled?'開啟':'關閉'],['本月搜尋',r.queries+' 次（免費 '+r.free_per_month.toLocaleString('en-US')+' 次，之後每 1,000 次 US$'+r.usd_per_1k+'）'],['本月搜尋費用',money(r.amount_micro)]]);
+}
+$('web-check').onchange=e=>{const box=e.currentTarget,on=box.checked;run(async()=>{try{await api('admin/web-check','PUT',{enabled:on});}catch(error){box.checked=!on;throw error;}await loadWebCheck();message('網路查證'+(on?'已開啟。':'已關閉。'));});};
+// RAG 索引狀態：保留、已索引、等待中、失敗篇數與估計儲存維度占 Free 額度的比例。
+async function loadIndex(){
+  const r=await api('admin/index'),pct=r.free_stored_dimensions?(r.stored_dimensions/r.free_stored_dimensions*100):0;
+  dl('rag-index',[['狀態',r.configured?'已設定（'+r.model+'，'+r.dimensions+' 維）':'未設定 Vectorize 或 Workers AI，不建立索引'],['保留篇數',String(r.kept)],['已索引',String(r.indexed)],['等待中',String(r.waiting)],['失敗（已停止重試）',String(r.failed)],['片段數',String(r.chunks)],['估計儲存維度',r.stored_dimensions.toLocaleString('en-US')+'（Free 額度 '+pct.toFixed(1)+'%）']]);
+  $('rag-errors').replaceChildren(...(r.errors.length?[el('p',{class:'subhead',text:'最近的索引錯誤'}),el('ul',{class:'plain'},r.errors.map(e=>el('li',{},[el('a',{href:'/learning?article='+encodeURIComponent(e.id),text:e.title||e.id}),document.createTextNode('・'+e.index_error+'（'+e.index_attempts+' 次）')])))]:[]));
+}
+$('rag-rebuild').onclick=async e=>{
+  const button=e.currentTarget;
+  if(!await askConfirm('所有保留文章會重新排入索引，維護排程每 5 分鐘處理 3 篇，期間舊向量仍可檢索。要繼續嗎？'))return;
+  run(async()=>{const r=await api('admin/index/rebuild','POST',{});await loadIndex();message('已排入 '+r.queued+' 篇重建索引。');},button,'處理中…');
+};
 bindLogin(boot);
-async function boot(){await load();await loadSources();await loadTopics();showApp();}
+async function boot(){await load();await loadSources();await loadTopics();await loadIndex();await loadWebCheck();showApp();}
 run(boot);
 </script></body></html>`;

@@ -21,13 +21,36 @@ import {
 import { exchange, xRead, bookmarksEnabled, xReads, setXReads } from './x.js';
 import { resetIncomplete } from './evidence.js';
 import { renderMarkdown } from './markdown.js';
-import { resolveItemId, migrateLibrary, backfillPublished, ORIGINS, officialSources, publisherFor } from './library.js';
+import {
+  resolveItemId,
+  migrateLibrary,
+  backfillPublished,
+  ORIGINS,
+  officialSources,
+  publisherFor,
+  articleSummaries,
+} from './library.js';
 import { articleMessage } from './notifications.js';
 import { skipDecorative } from './media.js';
 import { topicList, setItemTopics, saveTopicList, reclassifyAll } from './topics.js';
 import { mergeExistingDuplicates } from './linking.js';
 import { officialOverview, collectAnyway } from './official.js';
 import { saveSettings } from '../settings.js';
+import {
+  applyTriage,
+  pendingCount,
+  purgeAt,
+  triageQueue,
+  articleQueryText,
+  TriageError,
+  TRIAGE_COLUMNS,
+} from './triage.js';
+import { indexStatus, rebuildIndex } from './rag-index.js';
+import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
+import { listQuizzes, quizView, attemptView, QuizError } from './quiz.js';
+import { webCheckSummary, setWebCheck } from './web-check.js';
+import { todayReviews, todayCount } from './reviews.js';
+import { weekStats } from './week-stats.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
 const STATE_GROUPS = {
@@ -39,6 +62,14 @@ const STATE_GROUPS = {
   awaiting_backfill: ['awaiting_backfill'],
   filtered: ['filtered'],
   legacy: ['ready', 'partial'],
+};
+// 列表的篩選檢視：保留（預設）、★、待決定、全部（不含最近刪除）、最近刪除。
+const TRIAGE_VIEWS = {
+  kept: "triage='kept'",
+  starred: "triage='kept' AND starred=1",
+  pending: "triage='pending'",
+  all: "triage!='deleted'",
+  deleted: "triage='deleted'",
 };
 import { listQuestions, questionView } from './questions.js';
 import { budgetSummary, recordCost } from './pricing.js';
@@ -83,6 +114,8 @@ export function createLearningHandler(deps = {}) {
         const update = await body(request),
           message = update.message || update.channel_post;
         if (!Number.isSafeInteger(update.update_id)) return json({ error: 'Webhook 缺少有效 update_id' }, 400);
+        // 通知上的篩選按鈕：只處理通知頻道或允許對話傳來的回呼，其他回 200 並忽略。
+        if (update.callback_query) return json(await service.triageCallback(env, update.callback_query));
         const allowed = (env.TELEGRAM_ALLOWED_CHAT_IDS || '').split(',').map((s) => s.trim());
         if (!message || !allowed.includes(String(message.chat?.id))) return json({ ok: true, ignored: true });
         const text = message.text || message.caption || '';
@@ -153,6 +186,18 @@ export function createLearningHandler(deps = {}) {
           if (action === 'release') return json(await release(env, data.job_id, data.attempt_token, data.error));
           if (action === 'complete') {
             const result = await complete(env, data, {
+              ...service.localHooks,
+              // 本機批改完成後由 Worker 在背景接著做網路查證，不讓執行器的回報等待搜尋。
+              completeGrade: (env, job, input, data) =>
+                service.localHooks.completeGrade(env, job, input, data, (work) => {
+                  const done = work.catch((error) =>
+                    console.log(
+                      JSON.stringify({ event: 'web_check_failed', error: String(error.message).slice(0, 200) }),
+                    ),
+                  );
+                  if (ctx.waitUntil) ctx.waitUntil(done);
+                  else return done;
+                }),
               articleCompleted: async (env, id) => {
                 const work = service
                   .classify(env, id)
@@ -162,7 +207,6 @@ export function createLearningHandler(deps = {}) {
                 else await work;
               },
               sourceFetched: (env, id) => service.enqueue(env, id),
-              ...service.localHooks,
             });
             return json(result);
           }
@@ -207,6 +251,8 @@ export function createLearningHandler(deps = {}) {
           sync_partial: await setting(env, 'sync-partial'),
           x_reads: await xReads(env),
           awaiting_backfill: count.count,
+          triage_pending: await pendingCount(env),
+          reviews_today: await todayCount(env),
           local: await runnerStatus(env),
           demo: env.LEARNING_DEMO === 'true',
           configured: {
@@ -270,6 +316,14 @@ export function createLearningHandler(deps = {}) {
         const data = await body(request);
         return json(await collectAnyway(env, service.collect, data.source, data.url), 202);
       }
+      if (route === 'admin/web-check' && request.method === 'GET') return json(await webCheckSummary(env));
+      if (route === 'admin/web-check' && request.method === 'PUT') {
+        await setWebCheck(env, (await body(request)).enabled);
+        return json(await webCheckSummary(env));
+      }
+      if (route === 'admin/index' && request.method === 'GET') return json(await indexStatus(env));
+      if (route === 'admin/index/rebuild' && request.method === 'POST')
+        return json({ ...(await rebuildIndex(env)), status: await indexStatus(env) });
       if (route === 'admin/topics' && request.method === 'GET') return json({ topics: await topicList(env) });
       if (route === 'admin/topics' && request.method === 'PUT')
         return json(await saveTopicList(env, await body(request)));
@@ -290,8 +344,10 @@ export function createLearningHandler(deps = {}) {
           origin = url.searchParams.get('origin') || '',
           unread = url.searchParams.get('unread') === '1';
         const sort = url.searchParams.get('sort') || 'published',
-          topic = url.searchParams.get('topic') || '';
+          topic = url.searchParams.get('topic') || '',
+          triage = url.searchParams.get('triage') || 'kept';
         if (!['published', 'added'].includes(sort)) throw new Error('排序方式無效');
+        if (!TRIAGE_VIEWS[triage]) throw new Error('篩選結果無效');
         if (legacy && !['awaiting_backfill', 'ready', 'partial', 'needs_attention', 'filtered'].includes(legacy))
           throw new Error('文章篩選無效');
         if (group && !STATE_GROUPS[group]) throw new Error('狀態篩選無效');
@@ -306,6 +362,8 @@ export function createLearningHandler(deps = {}) {
           conditions.push(`status IN (${statuses.map(() => '?').join(',')})`);
           args.push(...statuses);
         } else conditions.push("status!='filtered'");
+        // 主題不符的文章不參與篩選；看「已略過」時不套用篩選檢視。
+        if (!(statuses?.length === 1 && statuses[0] === 'filtered')) conditions.push(TRIAGE_VIEWS[triage]);
         if (group === 'legacy') conditions.push("edition='legacy_digest'");
         if (unread) conditions.push('read_at IS NULL');
         if (origin) {
@@ -315,9 +373,9 @@ export function createLearningHandler(deps = {}) {
         if (term) {
           const pattern = `%${term.replace(/[\\%_]/g, (s) => '\\' + s)}%`;
           conditions.push(
-            "(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\'))",
+            "(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.content LIKE ? ESCAPE '\\'))",
           );
-          args.push(pattern, pattern, pattern, pattern);
+          args.push(pattern, pattern, pattern, pattern, pattern);
         }
         // 主題篇數依主題以外的條件計算，chip 上的數字和點下去看到的篇數一致；主要與次要主題都計入。
         if (route === 'topics') {
@@ -340,11 +398,16 @@ export function createLearningHandler(deps = {}) {
           conditions.push('(topic_primary=? OR topic_secondary=?)');
           args.push(topic, topic);
         }
-        // 發表時間排序：沒有發表時間的文章以加入時間排入；ID 作為次要排序，分頁才穩定。
-        const order = sort === 'added' ? 'created_at DESC,id DESC' : 'COALESCE(published_at,created_at) DESC,id DESC';
+        // 發表時間排序：沒有發表時間的文章以加入時間排入；ID 作為次要排序，分頁才穩定。最近刪除依刪除時間新到舊。
+        const order =
+          triage === 'deleted'
+            ? 'deleted_at DESC,id DESC'
+            : sort === 'added'
+              ? 'created_at DESC,id DESC'
+              : 'COALESCE(published_at,created_at) DESC,id DESC';
         const listed = await rows(
           env,
-          `SELECT id,url,kind,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,topic_primary,topic_secondary,
+          `SELECT id,url,kind,title,status,stage,edition,read_at,last_error,gaps_json,revision,published_at,created_at,updated_at,topic_primary,topic_secondary,${TRIAGE_COLUMNS},
           (SELECT substr(e.content,1,160) FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' LIMIT 1) AS preview,
           (SELECT group_concat(DISTINCT origin) FROM learning_intakes i WHERE i.item_id=learning_items.id) AS origins,
           (SELECT json_extract(k.metadata_json,'$.source_id') FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin='official' AND json_extract(k.metadata_json,'$.source_id') IS NOT NULL LIMIT 1) AS source_id,
@@ -358,9 +421,23 @@ export function createLearningHandler(deps = {}) {
         return json(
           listed.map(({ source_id, author_username, ...row }) => ({
             ...row,
+            purge_at: purgeAt(row.deleted_at),
             publisher: publisherFor({ ...row, source_id, author_username }, sources),
           })),
         );
+      }
+      if (route === 'triage' && request.method === 'GET') {
+        const offset = Number(url.searchParams.get('offset') || 0);
+        if (!Number.isInteger(offset) || offset < 0 || offset > 100000) throw new Error('篩選參數無效');
+        const queue = await triageQueue(env, offset, 20),
+          sources = await officialSources(env);
+        return json({
+          total: queue.total,
+          items: queue.items.map(({ source_id, author_username, ...row }) => ({
+            ...row,
+            publisher: publisherFor({ ...row, source_id, author_username }, sources),
+          })),
+        });
       }
       if (route === 'items/states' && request.method === 'GET') {
         // 輕量狀態刷新：只回狀態，不重建正文或筆記。
@@ -370,16 +447,51 @@ export function createLearningHandler(deps = {}) {
         return json(
           await rows(
             env,
-            `SELECT id,status,stage,revision,read_at,last_error,updated_at,note_updated_at FROM learning_items WHERE id IN (${ids.map(() => '?').join(',')})`,
+            `SELECT id,status,stage,revision,read_at,last_error,updated_at,note_updated_at,${TRIAGE_COLUMNS} FROM learning_items WHERE id IN (${ids.map(() => '?').join(',')})`,
             ...ids,
           ),
         );
       }
-      const match = route.match(/^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics))?$/);
+      const match = route.match(
+        /^items\/([a-f0-9]{32})(\/(?:retry|backfill|rewrite|renotify|source|topics|triage|similar|quizzes))?$/,
+      );
       if (match) {
         const id = await resolveItemId(env, match[1]),
           current = id && (await item(env, id));
         if (!current || current.status === 'dismissed') return json({ error: '文章不存在' }, 404);
+        // 篩選卡片的相似保留文章：只用查詢向量，不寫入索引；降級或沒有相似文章時回傳空清單。
+        if (match[2] === '/similar' && request.method === 'GET') {
+          const found = await relatedArticles(env, await articleQueryText(env, current), {
+            exclude: [id],
+            min: SIMILAR_MIN,
+            limit: 3,
+          });
+          const summaries = await articleSummaries(
+            env,
+            found.articles.map((a) => a.item_id),
+          );
+          return json({
+            degraded: found.degraded,
+            items: summaries.map(({ intro, url, ...s }) => ({
+              ...s,
+              score: Math.round(found.articles.find((a) => a.item_id === s.id).score * 1000) / 1000,
+            })),
+          });
+        }
+        // 精讀問答：POST 出題（fresh=true 換一組新題目），GET 列出這篇的題組與作答摘要。
+        if (match[2] === '/quizzes' && request.method === 'POST') {
+          const quiz = await service.quiz(env, id, { fresh: (await body(request)).fresh === true });
+          return json(quiz, quiz.status === 'ready' || quiz.status === 'error' ? 200 : 202);
+        }
+        if (match[2] === '/quizzes' && request.method === 'GET') return json(await listQuizzes(env, id));
+        if (match[2] === '/triage' && request.method === 'PUT') {
+          try {
+            return json(await applyTriage(env, id, (await body(request)).action, { enqueue: service.enqueue }));
+          } catch (error) {
+            if (error instanceof TriageError) return json({ error: error.message }, error.status);
+            throw error;
+          }
+        }
         if (match[2] === '/backfill' && request.method === 'POST') {
           const changed = await query(
             env,
@@ -475,31 +587,6 @@ export function createLearningHandler(deps = {}) {
           await service.enqueue(env, id);
           return json({ ok: true }, 202);
         }
-        if (!match[2] && request.method === 'DELETE') {
-          if (current.status !== 'awaiting_backfill') return json({ error: '只能刪除等待確認回補的文章。' }, 409);
-          const assets = await rows(
-            env,
-            'SELECT object_key FROM learning_media WHERE item_id=? AND object_key IS NOT NULL',
-            id,
-          );
-          const guard = "AND EXISTS(SELECT 1 FROM learning_items WHERE id=? AND status='dismissed')";
-          const result = await env.DB.batch([
-            query(
-              env,
-              "UPDATE learning_items SET status='dismissed',title='',body=NULL,article_json=NULL,gaps_json='[]',note='',last_error=NULL,updated_at=? WHERE id=? AND status='awaiting_backfill'",
-              nowIso(),
-              id,
-            ),
-            query(env, `DELETE FROM learning_questions WHERE item_id=? ${guard}`, id, id),
-            query(env, `DELETE FROM learning_media WHERE item_id=? ${guard}`, id, id),
-            query(env, `DELETE FROM learning_evidence WHERE item_id=? ${guard}`, id, id),
-            query(env, `DELETE FROM learning_intakes WHERE item_id=? ${guard}`, id, id),
-            query(env, `DELETE FROM settings WHERE key=? ${guard}`, `learning:context:${id}`, id),
-          ]);
-          if (!result[0].meta.changes) return json({ error: '文章狀態已改變，請重新整理。' }, 409);
-          for (const asset of assets) if (env.MEDIA) await env.MEDIA.delete(asset.object_key);
-          return json({ ok: true });
-        }
         if (!match[2] && request.method === 'GET') {
           // 裝飾圖片不顯示；舊資料留下的對應缺漏也一併隱藏，下次整理時會正式移除。
           await skipDecorative(env, id);
@@ -526,7 +613,12 @@ export function createLearningHandler(deps = {}) {
             await officialSources(env),
           );
           return json({
-            item: { ...fresh, publisher, body_html: renderMarkdown(fresh.body || '') },
+            item: {
+              ...fresh,
+              publisher,
+              purge_at: purgeAt(fresh.deleted_at),
+              body_html: renderMarkdown(fresh.body || ''),
+            },
             requested_id: match[1],
             sources,
             media: await rows(
@@ -585,6 +677,29 @@ export function createLearningHandler(deps = {}) {
           return json({ ok: true, note_updated_at: noteUpdatedAt });
         }
       }
+      const quizMatch = route.match(/^quizzes\/([0-9a-f-]{36})(\/attempts)?$/);
+      if (quizMatch) {
+        const quiz = await query(env, 'SELECT * FROM learning_quizzes WHERE id=?', quizMatch[1]).first();
+        if (!quiz) return json({ error: '題組不存在' }, 404);
+        if (!quizMatch[2] && request.method === 'GET') return json(await quizView(env, quiz));
+        if (quizMatch[2] && request.method === 'POST') {
+          const attempt = await service.attempt(env, quiz.id, await body(request));
+          return json(attempt, attempt.status === 'done' || attempt.status === 'error' ? 200 : 202);
+        }
+      }
+      if (route === 'reviews/today' && request.method === 'GET') return json(await todayReviews(env));
+      if (route === 'stats/week' && request.method === 'GET')
+        return json(await weekStats(env, url.searchParams.get('start')));
+      const reviewMatch = route.match(/^reviews\/([0-9a-f-]{36})\/attempts$/);
+      if (reviewMatch && request.method === 'POST') {
+        const attempt = await service.review(env, reviewMatch[1], await body(request));
+        return json(attempt, attempt.status === 'done' || attempt.status === 'error' ? 200 : 202);
+      }
+      const attemptMatch = route.match(/^attempts\/([0-9a-f-]{36})$/);
+      if (attemptMatch && request.method === 'GET') {
+        const attempt = await query(env, 'SELECT * FROM learning_attempts WHERE id=?', attemptMatch[1]).first();
+        return attempt ? json(await attemptView(env, attempt)) : json({ error: '作答不存在' }, 404);
+      }
       if (route.startsWith('media/') && request.method === 'GET') {
         const asset = await query(env, 'SELECT * FROM learning_media WHERE id=?', route.slice(6)).first();
         if (!asset?.object_key || !env.MEDIA) return json({ error: '原始媒體不可取得' }, 404);
@@ -623,7 +738,7 @@ export function createLearningHandler(deps = {}) {
         const data = await body(request);
         if (data.item_id && !(await item(env, data.item_id))) return json({ error: '文章不存在' }, 404);
         const itemId = data.item_id ? await resolveItemId(env, data.item_id) : null;
-        const result = await service.ask(env, data.question, itemId);
+        const result = await service.ask(env, data.question, itemId, { includeUnkept: data.include_unkept === true });
         return json(result, result.status === 'done' ? 200 : 202);
       }
       if (route === 'questions' && request.method === 'GET') {
@@ -676,6 +791,7 @@ export function createLearningHandler(deps = {}) {
       if (route === 'x/backfill' && request.method === 'POST') return json(await service.backfill(env), 202);
       return json({ error: 'Not found' }, 404);
     } catch (error) {
+      if (error instanceof QuizError) return json({ error: error.message }, error.status);
       return json({ error: error.message || '學習流程處理失敗' }, error.name === 'BudgetPaused' ? 429 : 400);
     }
   }

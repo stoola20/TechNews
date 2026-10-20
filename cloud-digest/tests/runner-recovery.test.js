@@ -237,7 +237,7 @@ test('處理階段寫入文章狀態，網站可看出卡在哪一步', async ()
   ).json();
   await handler.queue({ messages: [message({ kind: 'article', id })] }, s.env);
   assert.equal(seen, 'source');
-  const list = await (await handler.fetch(request('api/items'), s.env)).json();
+  const list = await (await handler.fetch(request('api/items?triage=all'), s.env)).json();
   assert.equal(list[0].stage, 'text');
   assert.equal(list[0].status, 'waiting_local');
 });

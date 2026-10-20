@@ -8,8 +8,15 @@ import { now } from './clock.js';
 export const LEASE_MS = 120000;
 export const RUNNER_ONLINE_MS = 180000;
 export const MAX_MODEL_ATTEMPTS = 3;
-// 數字越小越優先：追問、主動分享、例行官方／新書籤、舊回補。
-export const PRIORITY = { question: 0, share: 1, web: 1, official: 2, bookmark: 2, backfill: 3 };
+// 數字越小越優先：追問（出題、批改同級）、主動分享、例行官方／新書籤、舊回補。
+export const PRIORITY = { question: 0, quiz: 0, grade: 0, share: 1, web: 1, official: 2, bookmark: 2, backfill: 3 };
+
+// 追問、出題與批改工作的目標：question_id 欄位存目標的識別碼，各自的表與「處理中」「失敗」狀態名稱。
+const TARGETS = {
+  question: { table: 'learning_questions', working: 'generating', failed: 'failed' },
+  quiz: { table: 'learning_quizzes', working: 'generating', failed: 'error' },
+  grade: { table: 'learning_attempts', working: 'grading', failed: 'error' },
+};
 
 export class JobConflict extends Error {
   constructor(message, code) {
@@ -185,12 +192,15 @@ export async function claim(env, runnerId, info = {}, kinds = DEFAULT_KINDS) {
         at,
         job.item_id,
       ).run();
-    if (job.question_id)
+    const target = TARGETS[job.kind];
+    if (target && job.question_id)
       await query(
         env,
-        "UPDATE learning_questions SET status='generating',updated_at=? WHERE id=? AND status IN ('waiting_local','generating')",
+        `UPDATE ${target.table} SET status=?,updated_at=? WHERE id=? AND status IN ('waiting_local',?)`,
+        target.working,
         at,
         job.question_id,
+        target.working,
       ).run();
     return {
       id: job.id,
@@ -260,15 +270,16 @@ export async function fail(env, jobId, token, error, retryable = true) {
           ),
         ]
       : []),
-    ...(job.question_id
+    ...(TARGETS[job.kind] && job.question_id
       ? [
           query(
             env,
-            "UPDATE learning_questions SET status=?,error=?,updated_at=? WHERE id=? AND status IN ('waiting_local','generating')",
-            final ? 'failed' : 'waiting_local',
+            `UPDATE ${TARGETS[job.kind].table} SET status=?,error=?,updated_at=? WHERE id=? AND status IN ('waiting_local',?)`,
+            final ? TARGETS[job.kind].failed : 'waiting_local',
             message,
             time,
             job.question_id,
+            TARGETS[job.kind].working,
           ),
         ]
       : []),
@@ -310,13 +321,14 @@ export async function release(env, jobId, token, error) {
           ),
         ]
       : []),
-    ...(job.question_id
+    ...(TARGETS[job.kind] && job.question_id
       ? [
           query(
             env,
-            "UPDATE learning_questions SET status='waiting_local',updated_at=? WHERE id=? AND status='generating'",
+            `UPDATE ${TARGETS[job.kind].table} SET status='waiting_local',updated_at=? WHERE id=? AND status=?`,
             time,
             job.question_id,
+            TARGETS[job.kind].working,
           ),
         ]
       : []),
@@ -342,7 +354,8 @@ export async function complete(env, data, hooks = {}) {
   }
   const input = JSON.parse(job.input_json);
   if (job.kind === 'article') return completeArticle(env, job, input, data, hooks);
-  if (hooks.completeQuestion) return hooks.completeQuestion(env, job, input, data);
+  const hook = { question: hooks.completeQuestion, quiz: hooks.completeQuiz, grade: hooks.completeGrade }[job.kind];
+  if (hook) return hook(env, job, input, data);
   throw new JobConflict('未知工作類型', 'invalid');
 }
 

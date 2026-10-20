@@ -43,7 +43,7 @@ async function seed(env) {
   await add('7'.repeat(32), 'ready', 'official', { edition: 'legacy_digest' });
 }
 const ids = async (handler, env, q) =>
-  (await (await handler.fetch(request('api/items' + q), env)).json())
+  (await (await handler.fetch(request('api/items?triage=all' + q.replace('?', '&')), env)).json())
     .map((i) => i.id[0])
     .sort()
     .join('');

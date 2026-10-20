@@ -4,6 +4,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { createLearningHandler } from '../src/learning/http.js';
 import { setTextProvider } from '../src/learning/local.js';
 import { SOURCES } from '../src/sources.js';
+import { maintainIndex } from '../src/learning/rag-index.js';
+import { embeddingModel, vectorIndex } from '../tests/helpers.js';
 
 // 此入口僅提供本機操作驗證，不讀取任何真實金鑰或呼叫外部服務。
 const sqlite = new DatabaseSync(':memory:');
@@ -66,6 +68,11 @@ const env = {
   LEARNING_DEMO: 'true',
   PUBLIC_BASE_URL: 'https://example.org',
   LEARNING_MONTHLY_USD: '30',
+  // 出題與批改走 Gemini 路徑，但由下面的 demoGemini 回應合成內容，不連外。
+  GEMINI_API_KEY: 'demo-only',
+  // 假的 embedding 模型與記憶體 Vectorize：讓相似文章、混合檢索與連結題可以在本機操作，不呼叫 Cloudflare。
+  AI: embeddingModel(),
+  LIBRARY_INDEX: vectorIndex(),
 };
 // DEMO_LOCAL=1：文字工作交給本機執行器（runner/runner.mjs，TECHNEWS_RUNNER_TOKEN=demo-runner）。
 if (process.env.DEMO_LOCAL === '1') await setTextProvider(env, 'local');
@@ -75,7 +82,77 @@ const DAY = 86400000,
     source.id === 'apple_developer_news'
       ? 'https://developer.apple.com/news/?id=' + slug
       : 'https://' + source.host + '/' + source.paths[0] + '/' + slug;
+// 示範用的 Gemini 回應：依送出的片段組出題目，依答案長度批改。內容都是合成資料。
+function demoGemini(body) {
+  const system = body.systemInstruction.parts[0].text,
+    input = JSON.parse(body.contents[0].parts[0].text.split('\n\n').at(-1));
+  let data,
+    grounding = null;
+  if (system.includes('查證技術說法')) {
+    data = { verdict: 'partial', feedback: '示範網路查證：查到的公開文件只部分支持這個說法。' };
+    grounding = {
+      webSearchQueries: ['示範查詢'],
+      groundingChunks: [{ web: { uri: 'https://example.org/reference', title: '示範參考文件' } }],
+    };
+  } else if (system.includes('出題老師')) {
+    const own = input.chunks.filter((c) => c.article === '本篇'),
+      linked = input.related[0];
+    const pick = (n) => own[n % own.length];
+    data = {
+      questions: [0, 1, 2].map((n) => ({
+        type: 'article',
+        question: `示範第 ${n + 1} 題：用自己的話說明這段的重點與理由——「${pick(n).content.replace(/\s+/g, ' ').slice(0, 40)}…」`,
+        reference: '示範參考答案：' + pick(n).content.replace(/\s+/g, ' ').slice(0, 160),
+        citations: [pick(n).ref],
+      })),
+    };
+    if (linked) {
+      const other = input.chunks.find((c) => c.article === linked.ref);
+      data.questions.push({
+        type: 'link',
+        related: linked.ref,
+        question: `示範連結題：這篇和「${linked.title}」講的做法有什麼關係？`,
+        reference: '示範參考答案：兩篇從不同角度討論同一類問題。',
+        citations: [pick(0).ref, other.ref],
+      });
+    }
+  } else
+    data = {
+      results: input.questions.map((q) => ({
+        number: q.number,
+        verdict: q.answer.length >= 20 ? 'correct' : q.answer.length >= 6 ? 'partial' : 'incorrect',
+        feedback:
+          q.answer.length >= 20
+            ? '示範回饋：你說出了重點與理由。'
+            : '示範回饋：方向可以，但還缺少「為什麼」的說明，對照參考答案補上。',
+        citations: [
+          input.chunks[0].ref,
+          ...input.chunks
+            .filter((c) => c.from === '其他保留文章')
+            .slice(0, 1)
+            .map((c) => c.ref),
+        ],
+        // 答案提到 CDN 時示範「超出來源、需要上網查證」。
+        needs_web: /CDN/i.test(q.answer),
+        claim: /CDN/i.test(q.answer) ? q.answer.slice(0, 80) : '',
+      })),
+    };
+  return Response.json({
+    candidates: [
+      {
+        finishReason: 'STOP',
+        content: { parts: [{ text: JSON.stringify(data) }] },
+        ...(grounding ? { groundingMetadata: grounding } : {}),
+      },
+    ],
+    usageMetadata: { promptTokenCount: 1200, candidatesTokenCount: 300, thoughtsTokenCount: 0 },
+  });
+}
 const handler = createLearningHandler({
+  fetcher: async (url, options) => {
+    if (new URL(url).hostname === 'generativelanguage.googleapis.com') return demoGemini(JSON.parse(options.body));
+    throw new Error('本機示範不連外：' + url);
+  },
   discoverSource: async (source) => {
     if (source.id === 'anthropic_engineering') throw new Error('Source HTTP 403');
     return [
@@ -304,6 +381,54 @@ for (const [key, title, status, gaps, error] of states) {
       .run();
   }
 }
+// 篩選示範：範例教材與時間軸文章大多已保留，部分標 ★；幾篇留在待決定（含期限快到的），兩篇在最近刪除。
+{
+  const day = 86400000,
+    at = (offset) => new Date(Date.now() + offset).toISOString();
+  sqlite.exec(
+    "UPDATE learning_items SET triage='kept',kept_at=updated_at WHERE status IN ('ready','partial') AND (url LIKE 'https://example.org/%' OR id LIKE 'f%')",
+  );
+  sqlite.exec(
+    "UPDATE learning_items SET starred=1 WHERE triage='kept' AND (id LIKE 'f00%' OR url LIKE '%code-and-table')",
+  );
+  const pending = sqlite
+    .prepare("SELECT id FROM learning_items WHERE id LIKE 'f0%' AND triage='kept' ORDER BY id LIMIT 6")
+    .all()
+    .map((r) => r.id);
+  pending.forEach((id, n) =>
+    sqlite
+      .prepare("UPDATE learning_items SET triage='pending',starred=0,kept_at=NULL,triage_deadline=? WHERE id=?")
+      .run(at((n * 3 + 1) * day), id),
+  );
+  const deleted = sqlite
+    .prepare("SELECT id FROM learning_items WHERE id LIKE 'f05%' ORDER BY id LIMIT 2")
+    .all()
+    .map((r) => r.id);
+  deleted.forEach((id, n) =>
+    sqlite
+      .prepare(
+        "UPDATE learning_items SET triage='deleted',starred=0,kept_at=NULL,deleted_at=?,deleted_reason=?,deleted_from='pending' WHERE id=?",
+      )
+      .run(at(-(n * 4 + 1) * day), n ? 'expired' : 'manual', id),
+  );
+}
+// 保留文章先建立索引。
+while ((await maintainIndex(env, 20)).indexed);
+// 精讀與複習示範：兩篇範例教材各出一組題目並作答，答錯與不確定的題目放進今天的複習。
+for (const key of ['background-jobs', 'code-and-table']) {
+  const { id } = sqlite.prepare('SELECT id FROM learning_items WHERE url=?').get('https://example.org/' + key);
+  const quiz = await handler.service.quiz(env, id);
+  await handler.service.attempt(env, quiz.id, {
+    answers: quiz.questions.map((q) => ({
+      number: q.number,
+      answer: q.number === 1 ? '先保存再交給背景工作，失敗時才能用保存的結果重試，不必重付生成費用。' : '不確定',
+      unsure: q.number === 3,
+    })),
+  });
+}
+sqlite
+  .prepare('UPDATE learning_reviews SET due_date=?')
+  .run(new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10));
 jobs.length = 0;
 for (const suffix of ['keep', 'remove'])
   await handler.service.collect(env, 'https://example.org/awaiting-' + suffix, 'backfill', 'demo:' + suffix, {

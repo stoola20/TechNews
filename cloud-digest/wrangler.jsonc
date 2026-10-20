@@ -17,6 +17,8 @@
     }
   ],
   "ai": { "binding": "AI", "remote": true },
+  // 保留文章的 RAG 索引：512 維、cosine。建立指令見 docs/learning-setup.md。
+  "vectorize": [{ "binding": "LIBRARY_INDEX", "index_name": "technews-library", "remote": true }],
   "browser": { "binding": "BROWSER", "remote": true },
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "technews-learning-media" }],
   "queues": {
@@ -29,7 +31,10 @@
     "LEARNING_MODEL": "gemini-3.8-flash",
     "LEARNING_MONTHLY_USD": "30",
     "LEARNING_BASE_USD": "0",
-    "X_API_FIELDS_STYLE": "post"
+    "X_API_FIELDS_STYLE": "post",
+    // 網路查證的 Gemini Google 搜尋：每月免費次數與超過後每 1,000 次的美元價格。同一把金鑰也用在其他地方時，免費次數設為 0。
+    "LEARNING_SEARCH_FREE_PER_MONTH": "5000",
+    "LEARNING_SEARCH_USD_PER_1K": "14"
   },
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

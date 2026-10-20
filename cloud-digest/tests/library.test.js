@@ -156,7 +156,7 @@ test('兩套舊資料搬入共同文章庫：可重複執行、同網址合併�
   await handler.service.flush(env, 'bookmarks');
   assert.equal(net.calls.filter((c) => c.url.includes('api.telegram.org')).length, 0);
 
-  const list = await (await handler.fetch(request('api/items'), env)).json();
+  const list = await (await handler.fetch(request('api/items?triage=all'), env)).json();
   assert.equal(list.find((i) => i.id === legacy.id).edition, 'legacy_digest');
   assert.deepEqual(
     list
@@ -186,7 +186,7 @@ test('正式網址規則造成重複時合併到已整理文章，舊深層連�
   const opened = await (await handler.fetch(request('api/items/' + 'd'.repeat(32)), env)).json();
   assert.equal(opened.item.id, 'c'.repeat(32));
   assert.equal(opened.requested_id, 'd'.repeat(32));
-  const list = await (await handler.fetch(request('api/items'), env)).json();
+  const list = await (await handler.fetch(request('api/items?triage=all'), env)).json();
   assert.deepEqual(
     list.map((i) => i.id),
     ['c'.repeat(32)],

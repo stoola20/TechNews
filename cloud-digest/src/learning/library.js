@@ -92,6 +92,18 @@ export async function mergeItems(env, fromId, toId) {
       nowIso(),
       toId,
     ),
+    // 被併入的文章已保留時，合併後的文章也保留（★ 一併帶過去），避免篩選結果在合併時遺失。
+    ...(from.triage === 'kept'
+      ? [
+          query(
+            env,
+            "UPDATE learning_items SET triage='kept',starred=MAX(CASE WHEN triage='kept' THEN starred ELSE 0 END,?),kept_at=COALESCE(CASE WHEN triage='kept' THEN kept_at END,?),deleted_at=NULL,deleted_reason=NULL,deleted_from=NULL WHERE id=?",
+            from.starred,
+            from.kept_at || nowIso(),
+            toId,
+          ),
+        ]
+      : []),
     // url 有唯一限制；被合併的文章改用不會再被收件比對到的網址。
     query(
       env,
@@ -296,6 +308,25 @@ export async function backfillPublished(env, limit = 200) {
     updated++;
   }
   return updated;
+}
+
+// 幾篇文章的標題與發布者（相似文章、相關文章與複習題的出處用）。
+export async function articleSummaries(env, ids) {
+  if (!ids.length) return [];
+  const found = await rows(
+    env,
+    `SELECT id,url,kind,title,json_extract(article_json,'$.intro') AS intro,
+      (SELECT json_extract(k.metadata_json,'$.source_id') FROM learning_intakes k WHERE k.item_id=learning_items.id AND k.origin='official' AND json_extract(k.metadata_json,'$.source_id') IS NOT NULL LIMIT 1) AS source_id,
+      (SELECT COALESCE(json_extract(e.metadata_json,'$.author_username'),(SELECT json_extract(s.value_json,'$.username') FROM settings s WHERE s.key='learning:author:'||e.author_id))
+        FROM learning_evidence e WHERE e.item_id=learning_items.id AND e.relation='primary' AND learning_items.kind='x' LIMIT 1) AS author_username
+    FROM learning_items WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ...ids,
+  );
+  const sources = await officialSources(env);
+  return ids
+    .map((id) => found.find((r) => r.id === id))
+    .filter(Boolean)
+    .map((r) => ({ id: r.id, title: r.title, url: r.url, intro: r.intro || '', publisher: publisherFor(r, sources) }));
 }
 
 // 列表顯示的發布者：官方收件用來源名稱，X 文章用作者帳號，其他用網址網域。

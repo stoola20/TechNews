@@ -1,6 +1,7 @@
 import { query, rows, hash, nowIso } from './store.js';
 import { now } from './clock.js';
 import { topicList, topicTags } from './topics.js';
+import { notificationMarkup } from './telegram-triage.js';
 
 const STATES = {
   queued: '等待處理',
@@ -61,7 +62,7 @@ export async function queueArticleNotifications(env) {
   const candidates = await rows(
     env,
     `SELECT * FROM (SELECT i.*,MAX(i.notified_revision,COALESCE((SELECT MAX(notify_revision) FROM learning_intakes k WHERE k.item_id=i.id),0)) AS sent_revision
-    FROM learning_items i WHERE status IN ('ready','partial') AND edition='detailed' AND EXISTS(SELECT 1 FROM learning_intakes k WHERE k.item_id=i.id)) WHERE revision>sent_revision ORDER BY updated_at`,
+    FROM learning_items i WHERE status IN ('ready','partial') AND edition='detailed' AND triage!='deleted' AND EXISTS(SELECT 1 FROM learning_intakes k WHERE k.item_id=i.id)) WHERE revision>sent_revision ORDER BY updated_at`,
   );
   const topics = candidates.length ? await topicList(env) : [];
   for (const row of candidates) {
@@ -114,6 +115,17 @@ export async function queueSourceAlert(env, source, runId, failures, error) {
   return true;
 }
 
+// 文章通知送出前再確認一次：文章已在最近刪除或已清除時略過，不打擾使用者。
+async function stillWanted(env, items) {
+  if (!items.length) return true;
+  const row = await query(
+    env,
+    `SELECT COUNT(*) AS count FROM learning_items WHERE id IN (${items.map(() => '?').join(',')}) AND triage!='deleted' AND status!='dismissed'`,
+    ...items.map((i) => i.id),
+  ).first();
+  return row.count > 0;
+}
+
 // 送出已保存的通知內容；失敗只重送同一份內容，不重新生成。
 export async function sendPending(env, send) {
   for (const delivery of await rows(
@@ -130,8 +142,14 @@ export async function sendPending(env, send) {
     ).run();
     if (!acquired.meta.changes) continue;
     try {
-      const messageId = await send(env, delivery.body);
       const items = JSON.parse(delivery.item_ids_json);
+      if (!(await stillWanted(env, items))) {
+        await query(env, "UPDATE learning_deliveries SET status='skipped' WHERE id=?", delivery.id).run();
+        continue;
+      }
+      // 篩選按鈕在送出時才決定：只有這時仍是待決定的文章附「保留」「保留並 ★」「刪除」。
+      const markup = await notificationMarkup(env, items);
+      const messageId = await send(env, delivery.body, markup ? { reply_markup: markup } : {});
       await env.DB.batch([
         query(
           env,

@@ -10,6 +10,9 @@
 4. 列表預設依原文發表時間由新到舊、依發表日分組；排序可切換成加入時間。沒有發表時間的文章以加入時間排入，並標示「日期未知・加入於 M/D」。列表頂端的主題 chip 可篩選主題，與搜尋、未讀並用；收件入口與處理狀態在「管理篩選」。
 5. X 書籤同步與作者補充重查預設關閉，只在你主動分享 X 連結時讀取 X，見「[X 讀取範圍](#x-讀取範圍)」。在管理頁開啟後，新書籤每 10 分鐘局部檢查列表最前面一頁，每天台灣時間 08:00 另做完整核對，也可按「同步／續跑書籤」手動啟動。首次既有書籤先等待確認；「整理已取得的既有書籤」會開始整批回補，並非只處理目前選取的一篇。
 
+6. 每篇新文章先進「待決定」。列表頂端「待決定 N 篇」進入篩選模式，一次看一篇導讀，按保留（K）、保留並 ★（S）、刪除（D）或略過（J）；也可以直接按 Telegram 完成通知上的按鈕。列表預設只顯示保留的文章。刪除先進「最近刪除」，7 天內可以復原；待決定超過 14 天沒處理會自動移到最近刪除。
+7. 讀到正文結尾自動標已讀；閱讀列的「專注」隱藏列表與管理資訊。文末「開始問答」出 3–5 題簡答題，批改後答錯、部分正確或不確定的題目進入「今日複習」，依 1、3、7、21 天再出現。「每週回顧」整理一週的保留、答題與複習。細節見下方「[篩選、精讀問答與複習](#篩選精讀問答與複習)」。
+
 按鈕請求期間顯示 loading 圖示與操作文字，避免同一按鈕重複送出。書籤背景同步中會每 5 秒更新進度，切換到背景分頁時停止輪詢；教材整理或媒體處理可能繼續在背景執行，按鈕恢復不代表教材已完成。成功與錯誤提示顯示在頁面上方。
 
 RUN_TOKEN 若保存為本機 `.cloud-run-token`，檔案位於專案根目錄；本機 webhook secret 可保存在 `cloud-digest/.dev.vars`。這些檔案已由 git 排除，憑證值不得寫入公開文件或提交。Cloudflare 遠端 secret 無法透過 `secret list` 取回原值；不要為找回登入憑證直接重設 RUN_TOKEN，它也用於解密已保存的 X 授權。
@@ -41,6 +44,18 @@ npx wrangler d1 migrations apply developer-digest-cloud --remote
 資源名稱已在 Worker 設定中定義。若同名資源已存在，確認它是此專案的資源後重用，不刪除或覆蓋其他用途的資料。migration 只新增學習流程資料表。
 
 R2 建立指令若詢問是否自動加入設定檔，已設定 `MEDIA` binding 的專案選 `n`，避免新增不同名稱的 binding。R2 採 Standard 儲存，每月包含 10 GB-month 免費額度，與同帳號其他 bucket 共用；超出額度另計費。[官方價格](https://developers.cloudflare.com/r2/pricing/)。
+
+### 保留文章的 RAG 索引（Vectorize）
+
+保留文章的教材正文、原始來源與媒體解析會切成片段，用 Workers AI `@cf/google/embeddinggemma-300m` 產生向量，取前 512 維存進 Vectorize。索引名稱與 binding（`LIBRARY_INDEX`）已寫在 `wrangler.jsonc`，維度與距離建立後不能改：
+
+```bash
+npx wrangler vectorize create technews-library --dimensions=512 --metric=cosine
+```
+
+指令若詢問是否自動加入設定檔，選 `n`。沒有建立索引時，Worker 照常運作，只是不建立索引，追問與批改只用關鍵字檢索。管理頁「RAG 索引」顯示保留、已索引、等待中與失敗篇數，以及估計儲存維度占 Free 額度（5,000,000 維度，約 9,700 段）的比例；換模型或調整切塊後按「重建索引」。
+
+Vectorize Free 每月另含 3,000 萬查詢維度，embedding 與主題分類共用 Workers AI 每日 10,000 neurons，兩者都是整個 Cloudflare 帳號共用。[Vectorize 限制](https://developers.cloudflare.com/vectorize/platform/limits/)、[Vectorize 價格](https://developers.cloudflare.com/vectorize/platform/pricing/)。
 
 ## Gemini 設定
 
@@ -121,7 +136,7 @@ npx wrangler secret put TELEGRAM_ALLOWED_CHAT_IDS
 https://<Worker 網址>/learning/telegram
 ```
 
-同時設定與 Worker 完全一致的 `secret_token`，以及 `allowed_updates` 為 `message`、`channel_post`。兩邊使用同一份保存的值，不要各自產生一份。輪替時必須同步更新 Worker 與 Telegram，避免待送訊息持續驗證失敗。以下本機設定程序從互動輸入取得 Bot token 與 webhook secret，不把它們放進命令參數或文件：
+同時設定與 Worker 完全一致的 `secret_token`，以及 `allowed_updates` 為 `message`、`channel_post`、`callback_query`。`callback_query` 是完成通知上「保留」「保留並 ★」「刪除」按鈕的回呼；沒有加入時按鈕會一直轉圈，文章庫不會收到。兩邊使用同一份保存的值，不要各自產生一份。輪替時必須同步更新 Worker 與 Telegram，避免待送訊息持續驗證失敗。以下本機設定程序從互動輸入取得 Bot token 與 webhook secret，不把它們放進命令參數或文件：
 
 ```python
 import getpass
@@ -136,7 +151,7 @@ if not base_url.startswith("https://"):
 payload = json.dumps({
     "url": base_url + "/learning/telegram",
     "secret_token": secret,
-    "allowed_updates": ["message", "channel_post"],
+    "allowed_updates": ["message", "channel_post", "callback_query"],
 }).encode()
 request = urllib.request.Request(
     "https://api.telegram.org/bot" + token + "/setWebhook",
@@ -152,6 +167,8 @@ print("設定成功" if result.get("ok") else "設定未成功，請檢查 Teleg
 ```
 
 Webhook 和 `getUpdates` 不能同時用來收件。收件設定完成後，既有通知的 `sendMessage` 功能仍可使用。
+
+篩選按鈕只接受 `TELEGRAM_CHAT_ID`（通知頻道）或 `TELEGRAM_ALLOWED_CHAT_IDS` 裡的對話；其他對話按下時回 200 並忽略。通知頻道若是頻道，能看到頻道訊息的人都能按按鈕，請不要把通知頻道公開。
 
 `setWebhook` 成功只表示 Telegram 接受設定，不能證明 Worker 已接受 secret。啟用後需透過真實分享確認收件回覆、文章庫紀錄與完成通知；更新 webhook 時不要為排除錯誤直接丟棄待送更新。
 
@@ -199,6 +216,26 @@ X 讀取按次計費。預設只在你主動分享 X 連結（Telegram 或網站
 - 「整理全部待回補書籤」仍保留在 X 服務設定中，按下後須再確認，避免誤啟動整批。
 
 閱讀已保存原文不會額外呼叫 X 或 Gemini；重新同步書籤仍可能產生 X 讀取費。尚未保存原文的項目會明確提示改開原始來源。教材與追問答案會將 Markdown 渲染成標題、列表、表格與程式碼區塊，並移除可執行的 HTML。
+
+## 篩選、精讀問答與複習
+
+規格見 [文章篩選、精讀問答、間隔複習與保留文章 RAG](specs/curated-study.md)。升級到這個版本時依序做：
+
+1. 套用 migration（`0018` 到 `0024`）：`npx wrangler d1 migrations apply developer-digest-cloud --remote`。既有文章全部設為待決定；升級時已可閱讀的文章不套用 14 天自動過期，可以按自己的步調在篩選模式清理。
+2. 建立 Vectorize 索引（見上方「[保留文章的 RAG 索引](#保留文章的-rag-索引vectorize)」），再 `npx wrangler deploy`。保留文章由維護排程每 5 分鐘建立 3 篇索引；舊文章多時可在管理頁「RAG 索引」看進度。
+3. 重新設定 Telegram webhook，`allowed_updates` 加入 `callback_query`（見「[Telegram 收件與通知](#telegram-收件與通知)」），完成通知上的篩選按鈕才會生效。
+4. 文字模型是本機時，把 Mac 執行器更新到 1.2.0 以上再重新啟動，出題與批改才會被領取，見 [Mac 執行器](../cloud-digest/runner/README.md#精讀問答需要更新執行器)。
+5. 在管理頁「精讀問答的網路查證」決定是否開啟。沒有設定時，有 `GEMINI_API_KEY` 就是開啟。
+
+| 功能 | 怎麼用 | 注意 |
+| --- | --- | --- |
+| 篩選結果 | 待決定、保留（★ 是常用參考）、最近刪除；列表可切換保留、★、待決定、全部、最近刪除 | 主題不符・已略過的文章不參與篩選 |
+| 最近刪除 | 7 天內復原回到刪除前的結果；第 8 天清除正文、來源、媒體、筆記、問答與複習，只留網址 | 清除後書籤同步與官方來源不再加回來；手動分享仍可再次收件 |
+| 自動過期 | 待決定從第一次可閱讀起算 14 天，逾期移到最近刪除並標示「逾期移入」 | 處理中、等待本機與費用暫停期間不計時 |
+| 精讀問答 | 文末「開始問答」，待決定文章同時改成保留；可勾「不確定」；可重做或換一組新題目 | 有相關的保留文章時會出 1 題連結題；費用暫停時不出題也不批改 |
+| 網路查證 | 答案有說法超出本篇與保留文章時，才對那一題用 Gemini Google 搜尋查證 | 失敗時保留第一輪結果並註明 |
+| 今日複習 | 列表頂端「今日複習 N 題」，一次一題，每天最多 10 題 | 文章取消保留時暫停，重新保留後恢復 |
+| 全庫追問 | 預設只查保留文章；勾「也查未保留」時也比對待決定文章 | 語意檢索失敗時只比對關鍵字並標示 |
 
 ## 主題分類
 
@@ -261,6 +298,14 @@ X 讀取按次計費。預設只在你主動分享 X 連結（Telegram 或網站
 - 預算月份依台灣時間；X 去重依 UTC 日。兩者分開計算。
 - 與 X Developer Console 或 Google 帳單核對後，可用 `POST /learning/api/admin/budget-adjust`（`category`、`amount_usd`，可為負數、`note` 必填）記錄人工修正。
 
+### 精讀問答與網路查證
+
+出題、批改與網路查證的 Gemini 文字 token 記在 `gemini` 類別，和文章整理一樣先預留再結算。文字模型是本機時，出題與批改交給 Mac，不呼叫 Gemini；網路查證固定用 Gemini。
+
+網路查證的搜尋另外記在 `gemini-search`（查核日 2026-10-19，Gemini API 價格頁）：Gemini 3.x 每月前 5,000 次搜尋免費，各 3.x 模型共用；之後每 1,000 次 US$14。一個請求可能觸發多次搜尋，每次分別計費。程式依回應中實際執行的查詢數記帳，本月累計在免費額度內記 $0。部署變數 `LEARNING_SEARCH_FREE_PER_MONTH`（預設 5000）與 `LEARNING_SEARCH_USD_PER_1K`（預設 14）可調整；同一把金鑰也用在其他地方時，免費次數設為 0，避免低估。管理頁「精讀問答的網路查證」顯示本月搜尋次數與費用。
+
+RAG 索引用的 Workers AI embedding 與 Vectorize 不記入月預算，但會用到 Cloudflare 帳號共用的免費額度，見「[保留文章的 RAG 索引](#保留文章的-rag-索引vectorize)」。
+
 ### 兩種暫停
 
 | | 費用暫停 | 手動暫停 |
@@ -268,6 +313,7 @@ X 讀取按次計費。預設只在你主動分享 X 連結（Telegram 或網站
 | 觸發 | 預留會超過月預算 | 按「暫停全部處理」 |
 | 付費呼叫（X、Gemini、R2 下載） | 停止 | 停止 |
 | 已取得證據的 Mac 文字工作與追問 | 繼續 | 停止 |
+| 精讀出題與批改（含本機） | 停止，回覆暫停原因 | 停止，回覆暫停原因 |
 | 收件、閱讀、筆記、重送已保存通知 | 繼續 | 收件與閱讀繼續 |
 | 下個月 | 不自動恢復 | 不自動恢復 |
 

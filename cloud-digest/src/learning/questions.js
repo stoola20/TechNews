@@ -3,20 +3,21 @@ import { generate } from './gemini.js';
 import { textProvider, ensureJob, PRIORITY, localModel, fail, JobConflict } from './local.js';
 import { QUESTION_PROMPT_VERSION, validateAnswer } from './local-prompt.js';
 import { normalizeMarkdown, renderMarkdown } from './markdown.js';
+import { search, keywords } from './retrieval.js';
 
 const INSUFFICIENT = '目前沒有找到足夠的已保存來源，無法確認。請提供更具體的關鍵字或選擇文章。';
 
-function keywords(question) {
-  return [
-    ...new Set(
-      [...new Intl.Segmenter('zh-TW', { granularity: 'word' }).segment(question)]
-        .filter((s) => s.isWordLike && s.segment.length >= 2)
-        .map((s) => s.segment.toLowerCase()),
-    ),
-  ].slice(0, 12);
+// 片段所屬文章的來源缺漏，一起交給模型，避免把缺漏當成不存在。
+async function gapsFor(env, chunks) {
+  const gaps = [];
+  for (const id of new Set(chunks.map((c) => c.item_id))) {
+    const row = await query(env, 'SELECT gaps_json FROM learning_items WHERE id=?', id).first();
+    gaps.push(...JSON.parse(row?.gaps_json || '[]'));
+  }
+  return gaps;
 }
 
-// 沿用 D1 關鍵字檢索：已保存原文片段、媒體證據與舊版媒體觀察都有穩定引用身分。
+// 單篇追問：沿用 D1 關鍵字檢索。已保存原文片段、媒體證據與舊版媒體觀察都有穩定引用身分。
 export async function retrieve(env, question, articleId = null) {
   const terms = keywords(question);
   const rank = (column) =>
@@ -126,12 +127,7 @@ export async function retrieve(env, question, articleId = null) {
       }
     }
   }
-  const gaps = [];
-  for (const id of new Set(chunks.map((c) => c.item_id))) {
-    const row = await query(env, 'SELECT gaps_json FROM learning_items WHERE id=?', id).first();
-    gaps.push(...JSON.parse(row?.gaps_json || '[]'));
-  }
-  return { chunks, gaps };
+  return { chunks, gaps: await gapsFor(env, chunks) };
 }
 
 function sourcesFor(chunks, citations) {
@@ -144,6 +140,7 @@ function sourcesFor(chunks, citations) {
       relation: c.relation,
       range_start: c.range_start || 0,
       excerpt: c.content.slice(0, 500),
+      ...(typeof c.kept === 'boolean' ? { kept: c.kept } : {}),
     }));
 }
 
@@ -163,12 +160,21 @@ export function questionView(row) {
 }
 
 // 提問先保存再處理；本機模式回覆工作身分與進度，不依賴長時間開著的 HTTP 連線。
-export async function askQuestion(env, question, articleId = null, deps = {}) {
+// 全庫追問用混合檢索，預設只查保留文章；includeUnkept 時也用關鍵字查待決定文章。單篇追問維持關鍵字檢索。
+export async function askQuestion(env, question, articleId = null, deps = {}, { includeUnkept = false } = {}) {
   if (typeof question !== 'string' || !question.trim() || question.length > 2000)
     throw new Error('問題需為 1–2,000 個字元');
   const id = crypto.randomUUID(),
     time = nowIso();
-  const { chunks, gaps } = await retrieve(env, question, articleId);
+  let chunks,
+    gaps,
+    degraded = false;
+  if (articleId) ({ chunks, gaps } = await retrieve(env, question, articleId));
+  else {
+    ({ chunks, degraded } = await search(env, { query: question, scope: includeUnkept ? 'all' : 'kept' }));
+    gaps = await gapsFor(env, chunks);
+  }
+  const flags = articleId ? {} : { degraded, include_unkept: includeUnkept };
   const save = async (status, answer, extra = {}) => {
     await query(
       env,
@@ -177,9 +183,9 @@ export async function askQuestion(env, question, articleId = null, deps = {}) {
       id,
       articleId,
       question,
-      JSON.stringify(answer),
+      JSON.stringify({ ...flags, ...answer }),
       status,
-      articleId ? 'article' : 'library',
+      articleId ? 'article' : includeUnkept ? 'library_all' : 'library',
       extra.job_id || null,
       extra.error || null,
       time,
@@ -201,8 +207,10 @@ export async function askQuestion(env, question, articleId = null, deps = {}) {
         url: c.url,
         range_start: c.range_start || 0,
         content: c.content,
+        ...(typeof c.kept === 'boolean' ? { kept: c.kept } : {}),
       })),
       gaps,
+      ...flags,
     };
     const fingerprint = await hash(JSON.stringify({ input, model: localModel(env) }));
     const jobId = await ensureJob(env, {
@@ -236,6 +244,9 @@ export async function completeQuestion(env, job, input, data) {
   const chunks = input.chunks,
     time = nowIso();
   const answer = {
+    ...(typeof input.degraded === 'boolean'
+      ? { degraded: input.degraded, include_unkept: !!input.include_unkept }
+      : {}),
     answer: normalizeMarkdown(validated.answer),
     insufficient: validated.insufficient,
     citations: validated.citations,
