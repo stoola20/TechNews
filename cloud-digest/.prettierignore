@@ -1,0 +1,4 @@
+node_modules/
+.wrangler/
+# wrangler types 產生的型別檔，重新產生時會覆蓋。
+worker-configuration.d.ts

@@ -1,7 +1,7 @@
 // 文章庫與管理頁共用的樣式與前端小工具（原生 HTML／CSS／JS，不使用前端框架）。
 // 注意：這些字串會放進 String.raw 樣板，前端程式內不要使用反引號或 ${}。
 
-export const STYLE=String.raw`
+export const STYLE = String.raw`
 :root{--bg:#f3f6f5;--paper:#fff;--ink:#183a37;--muted:#4f615e;--line:#d3e0dd;--accent:#0f766e;--accent-ink:#fff;--warn-bg:#fff4df;--warn:#8b440a;--danger:#9f2525;--soft:#e6f3ef;--focus:#b45309;--top:64px;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg)}
 *{box-sizing:border-box}body{margin:0;background:var(--bg)}a{color:var(--accent);overflow-wrap:anywhere}
 button,input,textarea,select{font:inherit;color:inherit}
@@ -40,7 +40,7 @@ dialog.confirm p{margin:0 0 16px;line-height:1.7;white-space:pre-wrap}dialog.con
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.spinner{animation:none}}
 `;
 
-export const HELPERS=String.raw`
+export const HELPERS = String.raw`
 const $=id=>document.getElementById(id);
 const busyButtons=new WeakSet();let activeActions=0;
 function message(text,error){$('feedback').textContent=text||'';$('feedback').classList.toggle('error',!!error);}
@@ -102,10 +102,10 @@ function bindLogin(boot){
 const STATES={queued:'等待處理',processing:'處理中',awaiting_backfill:'等待確認回補',ready:'已完成',partial:'已完成・來源缺漏',error:'待重試',needs_attention:'需要處理',budget_paused:'費用暫停',paused:'手動暫停',waiting_local:'等待本機',generating:'本機生成中',filtered:'主題不符・已略過'};
 const STAGES={source:'取得來源',media:'解析媒體',text:'文字生成'};
 const ORIGINS={official:'官方來源',bookmark:'X 書籤',backfill:'書籤回補',share:'Telegram 分享',web:'網站加入'};
-const RELATIONS={primary:'主要來源',shared_post:'分享的 X 貼文',author_reply:'作者補充',quote:'引用',parent:'父貼文',repost:'轉貼',external:'外部文章',context_missing:'上下文缺漏',author_context_missing:'作者補充缺漏',model_media_observation:'媒體說明',media_evidence:'媒體證據'};
+const RELATIONS={primary:'主要來源',shared_post:'分享的 X 貼文',author_reply:'作者補充',quote:'引用',parent:'父貼文',repost:'轉貼',external:'外部文章',context_missing:'上下文缺漏',author_context_missing:'作者補充缺漏',model_media_observation:'媒體說明',media_evidence:'媒體證據',article_body:'教材正文'};
 const FINAL=['ready','partial','filtered','needs_attention','awaiting_backfill'];
 function stateLabel(i){return i.status==='processing'&&STAGES[i.stage]?'處理中・'+STAGES[i.stage]:(STATES[i.status]||i.status);}
 function stateTone(s){return ['needs_attention','error','partial'].includes(s)?'warn':['waiting_local','generating','queued','processing','budget_paused','paused'].includes(s)?'wait':'done';}
 `;
 
-export const LOGIN=String.raw`<section id="login" class="panel hidden" aria-labelledby="login-title"><h1 id="login-title" style="font-size:22px;margin-top:0">登入私人文章庫</h1><p class="muted">使用網站登入憑證（RUN_TOKEN）。通知連結不包含登入憑證。</p><form id="login-form"><label for="token">登入憑證</label><input id="token" type="password" autocomplete="current-password" required style="width:100%;margin:8px 0 16px"><button class="primary">登入</button></form></section>`;
+export const LOGIN = String.raw`<section id="login" class="panel hidden" aria-labelledby="login-title"><h1 id="login-title" style="font-size:22px;margin-top:0">登入私人文章庫</h1><p class="muted">使用網站登入憑證（RUN_TOKEN）。通知連結不包含登入憑證。</p><form id="login-form"><label for="token">登入憑證</label><input id="token" type="password" autocomplete="current-password" required style="width:100%;margin:8px 0 16px"><button class="primary">登入</button></form></section>`;
