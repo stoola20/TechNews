@@ -335,3 +335,26 @@ test('側邊欄寬度：可聚焦的拖曳把手，寬度記在這台裝置，�
   assert.match(script, /try\{localStorage\.setItem\('technews-side-width',String\(w\)\);\}catch\(e\)\{\}/);
   assert.match(script, /ArrowLeft:sideWidth\.now\(\)-16,ArrowRight:sideWidth\.now\(\)\+16,Home:sideWidth\.base/);
 });
+test('文章工具列：維運動作收進「⋯」選單，補取缺漏放在缺漏提醒旁，專注按鈕在工具列', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  assert.doesNotMatch(script, /function actions\(item\)/);
+  assert.match(html, /<div class="reader-bar"><button id="back">← 返回列表<\/button><\/div>/);
+  assert.match(script, /nodes\.push\(toolbar\(item\)\)/);
+  assert.match(script, /end\.append\(focusButton\);focusMode\.apply\(\);/);
+  // 「⋯」只在有可做的動作時出現，並有選單語意與鍵盤操作。
+  assert.match(script, /'aria-label':'更多動作','aria-haspopup':'menu','aria-expanded':'false'/);
+  assert.match(script, /if\(!entries\.length\)return null;/);
+  assert.match(
+    script,
+    /if\(e\.key==='Escape'\)\{e\.preventDefault\(\);e\.stopPropagation\(\);closeMenu\(menu,true\);\}/,
+  );
+  // 補取只出現在缺漏或錯誤提醒裡，等待回補的文章不顯示。
+  assert.match(
+    script,
+    /class:'notice process-note gap-note'\}[\s\S]*?item\.status==='awaiting_backfill'\?null:retryButton\(item\)/,
+  );
+  // 專注模式隱藏「⋯」與補取（都帶 manage）。
+  assert.match(script, /el\('div',\{class:'more manage'\},\[toggle,menu\]\)/);
+  assert.match(script, /el\('button',\{type:'button',class:'manage',text:'補取缺漏並整理'\}\)/);
+});

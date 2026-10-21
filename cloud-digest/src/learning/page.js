@@ -67,8 +67,8 @@ body.app:not([data-mode=""]) #side-handle,body.focus[data-view=reader][data-mode
 .topic-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:4px 0 12px}.topic-form label{display:block;font-size:13px;margin-bottom:4px}.topic-form select{min-height:40px}
 .topic-tag{display:inline-flex;align-items:center;font-size:13px;padding:2px 10px;margin:0 6px 6px 0}
 .reader-bar{display:none;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px}
-body[data-view=reader] .reader-bar{display:flex}#back{visibility:hidden}#read-end{height:1px}
-#focus-toggle{margin-left:auto;min-height:36px;padding:4px 14px}#focus-toggle[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+#read-end{height:1px}
+#focus-toggle[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
 /* 專注模式：只留標題、主題・發布者・發表日、篩選按鈕、正文、媒體、原始來源、問答與筆記追問。 */
 body.focus[data-view=reader][data-mode=""] #library,body.focus[data-view=reader][data-mode=""] header.top{display:none}
 body.focus[data-view=reader][data-mode=""] .layout{grid-template-columns:minmax(0,1fr)}
@@ -77,7 +77,14 @@ body.focus[data-view=reader][data-mode=""] #article{max-width:880px;margin:0 aut
 .star{color:#b45309;margin-right:4px}
 .deleted-row{display:flex;align-items:flex-start;gap:8px}.deleted-row a{flex:1;min-width:0}
 .deleted-row button{flex:none;min-height:36px;padding:4px 12px;margin-top:6px}
-.triage-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 4px}
+/* 文章工具列：左邊保留／常用／刪除，右邊標記已讀、「⋯」選單與專注。 */
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 16px;padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.toolbar-end{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto}.toolbar-end button{min-height:40px;padding:6px 14px}
+.more{position:relative}.more>button{width:40px;padding:0;font-size:18px;line-height:1}
+.menu{position:absolute;right:0;top:calc(100% + 6px);min-width:200px;z-index:6;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(24,58,55,.18);padding:6px}.menu[hidden]{display:none}
+.menu button{display:flex;width:100%;border:0;background:none;border-radius:8px;min-height:40px;padding:8px 12px;text-align:left}.menu button:hover,.menu button:focus-visible{background:var(--soft)}
+.gap-note{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px 12px}.gap-note>div{flex:1 1 260px;min-width:0}.gap-note>button{flex:none;background:var(--paper)}
+.triage-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .triage-bar button{min-height:40px;padding:6px 14px}
 .triage-bar button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
 .triage-bar .muted{margin-left:4px}
@@ -157,7 +164,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
   #dock{position:fixed;left:0;right:0;bottom:0;transform:none;width:auto;border-radius:16px 16px 0 0;border-bottom:0;padding-bottom:env(safe-area-inset-bottom)}
   #dock.open{height:auto;max-height:78vh;max-height:78dvh}
   #quick-ask{display:none}
-  .top{position:static}body[data-view=reader] .reader-bar{position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:2}#back{visibility:visible}
+  .top{position:static}body[data-view=reader] .reader-bar{display:flex;position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:2}#back{visibility:visible}
   #article-title{font-size:23px}.article-body{font-size:16px}
   body.app .top{display:flex;flex-wrap:wrap;padding:8px 12px;gap:8px}.top .long{display:none}
   #search-form{display:none;order:3;flex-basis:100%}body.searching #search-form{display:block}body.searching #search-open{background:rgba(255,255,255,.12)}
@@ -195,7 +202,7 @@ ${LOGIN}
 <div id="side-handle" role="separator" aria-orientation="vertical" aria-label="調整列表寬度" aria-controls="library" aria-valuemin="280" aria-valuemax="560" aria-valuenow="340" tabindex="0" title="拖曳調整列表寬度；雙擊還原"></div>
 <div class="reader-wrap">
 <div id="reader" tabindex="-1" aria-label="閱讀區">
-  <div class="reader-bar"><button id="back">← 返回列表</button><button type="button" id="focus-toggle" aria-pressed="false" title="隱藏列表與管理資訊；Esc 離開">專注</button></div>
+  <div class="reader-bar"><button id="back">← 返回列表</button></div>
   <div id="mode" hidden></div>
   <div id="article"><div class="empty"><h1 style="font-size:22px">選一篇文章開始閱讀</h1><p>官方文章、X 書籤與分享都在左側列表。處理狀態會自動更新。</p></div></div>
 </div>
@@ -388,12 +395,11 @@ function renderArticle(result){
   nodes.push(topicRow(item));
   nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge admin-info '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
   nodes.push(el('p',{class:'meta admin-info'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
-  const bar=triageBar(item);if(bar)nodes.push(bar);
-  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice process-note',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
+  nodes.push(toolbar(item));
+  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice process-note',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以從「⋯」選單的「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
   if(item.status==='waiting_local')nodes.push(el('p',{class:'notice process-note',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
   if(item.status==='budget_paused')nodes.push(el('p',{class:'notice process-note',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
-  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice process-note'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]));
-  nodes.push(actions(item));
+  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice process-note gap-note'},[el('div',{},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]),item.status==='awaiting_backfill'?null:retryButton(item)]));
   if(item.status==='awaiting_backfill'){
     nodes.push(el('p',{class:'notice',text:'這篇尚未呼叫模型。先閱讀同步時保存的原文，或開啟原始來源查看最新內容，再決定是否整理。'}));
     const originals=result.sources.filter(s=>s.status==='available'&&s.content);
@@ -787,14 +793,15 @@ const autoRead={
 };
 for(const target of [window,$('reader')])for(const type of ['scroll','wheel','touchmove'])target.addEventListener(type,()=>autoRead.interact(),{passive:true});
 document.addEventListener('keydown',e=>{if(['ArrowDown','PageDown','End',' '].includes(e.key))autoRead.interact();});
-// 專注模式：這台裝置記住開關；讀不到設定時預設關閉。
+// 專注模式：這台裝置記住開關；讀不到設定時預設關閉。按鈕放在文章工具列，每次畫文章時移入。
+const focusButton=el('button',{type:'button',id:'focus-toggle','aria-pressed':'false',title:'隱藏列表與管理資訊；Esc 離開',text:'專注'});
 const focusMode={
   on:false,
   load(){try{this.on=localStorage.getItem('technews-focus')==='1';}catch(e){this.on=false;}this.apply();},
   set(on){this.on=on;try{localStorage.setItem('technews-focus',on?'1':'0');}catch(e){}this.apply();},
-  apply(){document.body.classList.toggle('focus',this.on);const b=$('focus-toggle');b.setAttribute('aria-pressed',String(this.on));b.textContent=this.on?'離開專注':'專注';},
+  apply(){document.body.classList.toggle('focus',this.on);const b=focusButton;b.setAttribute('aria-pressed',String(this.on));b.textContent=this.on?'離開專注':'專注';},
 };
-$('focus-toggle').onclick=()=>focusMode.set(!focusMode.on);
+focusButton.onclick=()=>focusMode.set(!focusMode.on);
 // 列表寬度：桌機拖曳把手調整，這台裝置記住；雙擊或 Home 還原，方向鍵每次 16px。
 const sideWidth={
   min:280,max:560,base:340,
@@ -812,32 +819,45 @@ $('side-handle').ondblclick=()=>sideWidth.set(sideWidth.base,true);
 $('side-handle').onkeydown=e=>{const next={ArrowLeft:sideWidth.now()-16,ArrowRight:sideWidth.now()+16,Home:sideWidth.base}[e.key];if(next==null)return;e.preventDefault();sideWidth.set(next,true);};
 sideWidth.load();
 focusMode.load();
-function actions(item){
-  const row=el('div',{class:'actions'});
+// 文章工具列：只放閱讀時常用的動作；重寫與重送通知收進「⋯」，補取缺漏放在缺漏提醒旁。
+function toolbar(item){
+  const bar=el('div',{class:'toolbar','data-role':'toolbar'}),left=triageBar(item);if(left)bar.append(left);
+  const end=el('div',{class:'toolbar-end'});
   const read=el('button',{id:'read-toggle',text:item.read_at?'標記未讀':'標記已讀'});
   // 手動改回未讀：這次開啟不再自動標已讀。
   read.onclick=()=>run(async()=>{const next=!current.read_at;await api('items/'+item.id,'PATCH',{read:next});if(!next)autoRead.off=true;await refreshArticle();await updateListItem(item.id);},read,'更新中…');
-  row.append(read);
+  end.append(read);
   if(item.status==='awaiting_backfill'){
     const start=el('button',{class:'primary manage',text:'開始整理這篇'});
     start.onclick=()=>run(async()=>{await api('items/'+item.id+'/backfill','POST',{});message('已啟動這篇文章的整理，完成後會通知你。');await refreshArticle();await updateListItem(item.id);},start,'啟動整理…');
-    row.append(start);return row;
-  }
-  const retry=el('button',{class:'manage',text:'補取缺漏並整理'});
-  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
-  row.append(retry);
-  if(['ready','partial','needs_attention','error'].includes(item.status)){
-    const rewrite=el('button',{class:'manage',text:'只重寫文字'});
-    rewrite.onclick=async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
-    row.append(rewrite);
-  }
-  if(['ready','partial'].includes(item.status)&&item.edition==='detailed'){
-    const resend=el('button',{class:'manage',text:'重送通知'});
-    resend.onclick=async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},resend,'送出中…');};
-    row.append(resend);
-  }
-  return row;
+    end.append(start);
+  }else{const more=moreMenu(item);if(more)end.append(more);}
+  end.append(focusButton);focusMode.apply();
+  bar.append(end);return bar;
 }
+function retryButton(item){
+  const retry=el('button',{type:'button',class:'manage',text:'補取缺漏並整理'});
+  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
+  return retry;
+}
+// 「⋯」選單：只列這篇可以做的維運動作；都不符合時不顯示。Esc 或點外面關閉並把焦點還給按鈕。
+function moreMenu(item){
+  const toggle=el('button',{type:'button','aria-label':'更多動作','aria-haspopup':'menu','aria-expanded':'false',text:'⋯'});
+  const entries=[];
+  if(['ready','partial','needs_attention','error'].includes(item.status))entries.push(['只重寫文字',async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},toggle,'送出中…');}]);
+  if(['ready','partial'].includes(item.status)&&item.edition==='detailed')entries.push(['重送通知',async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},toggle,'送出中…');}]);
+  if(!entries.length)return null;
+  const menu=el('div',{class:'menu',role:'menu','aria-label':'更多動作',hidden:''},entries.map(([label,act])=>{const b=el('button',{type:'button',role:'menuitem',text:label});b.onclick=()=>{closeMenu(menu);act();};return b;}));
+  toggle.onclick=()=>{if(menu.hidden){menu.hidden=false;toggle.setAttribute('aria-expanded','true');menu.querySelector('button').focus();}else closeMenu(menu);};
+  menu.onkeydown=e=>{
+    const items=[...menu.querySelectorAll('button')],i=items.indexOf(document.activeElement);
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeMenu(menu,true);}
+    else if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();items[(i+(e.key==='ArrowDown'?1:items.length-1))%items.length].focus();}
+  };
+  return el('div',{class:'more manage'},[toggle,menu]);
+}
+function closeMenu(menu,returnFocus){menu.hidden=true;const t=menu.previousElementSibling;t.setAttribute('aria-expanded','false');if(returnFocus)t.focus();}
+document.addEventListener('pointerdown',e=>{for(const m of document.querySelectorAll('.more .menu:not([hidden])'))if(!m.parentElement.contains(e.target))closeMenu(m);});
 async function updateListItem(id){const [s]=await api('items/states?ids='+id);if(s)applyState(s);}
 function applyState(s){
   const i=listItems.find(x=>x.id===s.id);if(i)Object.assign(i,s);
