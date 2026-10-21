@@ -303,3 +303,17 @@ test('側邊欄篩選：三段分頁與篩選選單取代入口列、檢視分�
     /if\(e\.key==='Escape'\)\{e\.preventDefault\(\);e\.stopPropagation\(\);filterPop\(false,true\);\}/,
   );
 });
+test('列表只用藍色圓點表示未讀；主題 chips 與標籤用主題色淡底、選取時實心，chips 換行顯示', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  assert.doesNotMatch(html, /topic-dot/);
+  assert.match(script, /\[el\('span',\{class:'unread-dot','aria-hidden':'true'\}\),title,meta\]/);
+  assert.match(html, /\.day-items \.unread \.unread-dot\{background:var\(--unread,#2563eb\)\}/);
+  // chips 不再橫向捲動。
+  assert.match(html, /\.chips\{display:flex;flex-wrap:wrap;/);
+  assert.doesNotMatch(html.match(/\.chips\{[^}]*\}/)[0], /overflow-x/);
+  assert.match(html, /background:color-mix\(in srgb,var\(--c\) 12%,#fff\)/);
+  assert.match(html, /\.chips button\[aria-pressed=true\]\{background:var\(--c\);border-color:var\(--c\);color:#fff/);
+  assert.match(script, /'data-topic':value,\.\.\.\(color\?\{style:'--c:'\+color\}:\{\}\)/);
+  assert.match(script, /el\('span',\{class:'topic-tag',style:'--c:'\+t\.color,text:t\.name\}\)/);
+});

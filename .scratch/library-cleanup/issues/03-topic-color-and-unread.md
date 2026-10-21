@@ -4,10 +4,12 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 列表項目不輸出 `topic-dot`；未讀圓點用 `--unread`，已讀不顯示
-- [ ] chips 與 `.topic-tag` 用 `--c` 與 `color-mix` 上色；「全部」選取用 `--ink`，「未分類」中性灰
-- [ ] chips `flex-wrap: wrap`，移除橫向捲動
-- [ ] 管理頁主題設定加一句淺色的白字提醒
-- [ ] 結構測試；實際確認 7 個預設主題的顏色、選取狀態與換行
+- [x] 列表項目不輸出 `topic-dot`；未讀圓點用 `--unread`，已讀不顯示
+- [x] chips 與 `.topic-tag` 用 `--c` 與 `color-mix` 上色；「全部」選取用 `--ink`，「未分類」中性灰
+- [x] chips `flex-wrap: wrap`，移除橫向捲動
+- [x] 管理頁主題設定加一句淺色的白字提醒
+- [x] 結構測試；實際確認 7 個預設主題的顏色、選取狀態與換行
+
+**實作紀錄：** 不支援 `color-mix` 的瀏覽器先套白底與一般框線。篩選模式卡片的主題標籤也改用主題色。375px 時 8 個 chips 換成 5 行；之後若嫌太高，可以只在手機版改回單行捲動。

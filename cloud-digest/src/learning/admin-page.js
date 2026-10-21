@@ -55,7 +55,7 @@ ${LOGIN}
 <div class="actions"><button id="connect">連接 X</button><button id="sync">開始或續跑完整核對</button><button id="backfill">整理全部待回補書籤</button></div>
 <p class="muted">每 10 分鐘局部檢查列表最前面幾頁；每天 08:00 完整核對。新收藏的舊貼文可能要等完整核對才會出現。</p></section>
 <section class="panel wide" aria-labelledby="topics-title"><h2 id="topics-title">主題表</h2>
-<p class="muted">分類模型依名稱與說明從這份表中選主題。改名、說明與顏色不影響已分類的文章；刪除主題時，受影響的文章會重新分類。新增主題後可按「重新分類全部」，手動設定的文章不受影響。</p>
+<p class="muted">分類模型依名稱與說明從這份表中選主題。改名、說明與顏色不影響已分類的文章；刪除主題時，受影響的文章會重新分類。新增主題後可按「重新分類全部」，手動設定的文章不受影響。顏色用在文章庫主題按鈕的淡色底與選取時的實心底；顏色太淺時，選取狀態的白字可能不清楚。</p>
 <div id="topic-rows"></div>
 <div class="actions"><button id="topic-add" type="button">新增主題</button><button id="topic-save" class="primary">保存主題表</button><button id="topic-reclassify" type="button">重新分類全部</button></div></section>
 <section class="panel" aria-labelledby="webcheck-title"><h2 id="webcheck-title">精讀問答的網路查證</h2>

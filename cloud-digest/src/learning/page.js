@@ -28,7 +28,8 @@ body.app .top{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,560p
 .day-items{list-style:none;margin:0;padding:0}
 .day-items a{display:grid;grid-template-columns:8px minmax(0,1fr);gap:0 10px;padding:9px 10px;margin:0 -10px;color:var(--ink);text-decoration:none;border-radius:6px}
 .day-items a:hover{background:#f4f8f7}.day-items a[aria-current=page]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
-.topic-dot{width:8px;height:8px;border-radius:50%;margin-top:8px;background:var(--line)}
+/* 未讀只用單一藍色圓點表示；主題色不出現在列表。 */
+.unread-dot{width:8px;height:8px;border-radius:50%;margin-top:8px}.day-items .unread .unread-dot{background:var(--unread,#2563eb)}
 .day-items strong{font-size:15px;line-height:1.45;font-weight:400;color:#33504c;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .day-items .unread strong{font-weight:700;color:var(--ink)}
 .item-meta{grid-column:2;display:flex;flex-wrap:wrap;gap:0 6px;font-size:12px;line-height:1.6;color:var(--muted);margin-top:2px}
@@ -50,15 +51,17 @@ body.app .top{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,560p
 .pop .check{display:flex;align-items:center;gap:8px;min-height:44px;margin:4px 0 0;font-size:14px;color:var(--ink)}.pop .check input{min-height:auto;width:20px;height:20px}
 .pop-foot{display:flex;justify-content:space-between;gap:8px;margin-top:14px}.pop-foot button{min-height:40px}
 #triage-start{display:flex;width:100%;justify-content:center;margin:10px 0 0;min-height:40px}#triage-start[hidden]{display:none}
-.chips{display:flex;gap:6px;overflow-x:auto;margin:0 -16px;padding:2px 16px 10px;scrollbar-width:thin}
-.chips button{flex:none;min-height:36px;padding:4px 12px;border-radius:999px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
-.chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+/* 主題色：主題色 12% 的淡底與深色字；選取時改成實心主題色與白字。chips 換行全部顯示。 */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 8px}
+.chips button,.topic-tag{--c:#94a3b8;background:var(--paper);background:color-mix(in srgb,var(--c) 12%,#fff);border:1px solid var(--line);border-color:color-mix(in srgb,var(--c) 28%,#fff);color:var(--ink);border-radius:999px}
+.chips button{min-height:36px;padding:4px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.chips button[data-topic=""]{--c:var(--ink)}
+.chips button[aria-pressed=true]{background:var(--c);border-color:var(--c);color:#fff;font-weight:600}
 .chips small{opacity:.75;font-variant-numeric:tabular-nums}
-.chips .topic-dot{margin:0}
 .topic-row{display:flex;flex-wrap:wrap;align-items:center;gap:0 4px;margin-bottom:4px}
 .topic-row .linkish{min-height:32px;padding:2px 8px;border:0;background:none;color:var(--accent);text-decoration:underline;font-size:13px;margin-bottom:6px}
 .topic-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:4px 0 12px}.topic-form label{display:block;font-size:13px;margin-bottom:4px}.topic-form select{min-height:40px}
-.topic-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin:0 6px 6px 0;color:var(--ink)}.topic-tag .topic-dot{margin:0}
+.topic-tag{display:inline-flex;align-items:center;font-size:13px;padding:2px 10px;margin:0 6px 6px 0}
 .reader-bar{display:none;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px}
 body[data-view=reader] .reader-bar{display:flex}#back{visibility:hidden}#read-end{height:1px}
 #focus-toggle{margin-left:auto;min-height:36px;padding:4px 14px}#focus-toggle[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
@@ -268,16 +271,14 @@ async function loadList(){
 }
 // 主題 chip：全部、各主題、未分類，附篇數；單選，與搜尋、未讀、管理篩選並用。
 function topicById(id){return topicData.topics.find(t=>t.id===id);}
-function topicColor(id){const t=topicById(id);return t?t.color:'';}
 function topicNames(i){return [i.topic_primary,i.topic_secondary].map(topicById).filter(Boolean).map(t=>t.name);}
 function chip(value,label,count,color){
-  const b=el('button',{type:'button','aria-pressed':String(view.topic===value),'data-topic':value},[color?el('span',{class:'topic-dot',style:'background:'+color,'aria-hidden':'true'}):null,document.createTextNode(label),el('small',{text:String(count)})]);
+  const b=el('button',{type:'button','aria-pressed':String(view.topic===value),'data-topic':value,...(color?{style:'--c:'+color}:{})},[document.createTextNode(label),el('small',{text:String(count)})]);
   b.onclick=()=>run(()=>navigate({topic:view.topic===value&&value?'':value,article:null}));
   return b;
 }
 function renderTopics(){
   $('topics').replaceChildren(chip('','全部',topicData.total),...topicData.topics.map(t=>chip(t.id,t.name,t.count,t.color)),...(topicData.unclassified?[chip('unclassified','未分類',topicData.unclassified)]:[]));
-  const pressed=$('topics').querySelector('[aria-pressed=true]');if(pressed)pressed.scrollIntoView({block:'nearest',inline:'nearest'});
 }
 async function loadMore(){
   if(!hasMore||loadingMore)return;
@@ -318,7 +319,7 @@ function renderItem(i){
   const meta=el('span',{class:'item-meta'},[names.length?el('span',{text:names.join('、')}):null,names.length?el('span',{class:'sep','aria-hidden':'true'}):null,i.publisher?el('span',{text:i.publisher}):null,i.publisher?el('span',{class:'sep','aria-hidden':'true'}):null,el('span',{text:itemDate(i)})]);
   const state=stateNode(i);if(state)meta.append(el('span',{class:'sep','aria-hidden':'true'}),state);
   const title=el('strong',{},[i.starred&&i.triage==='kept'?el('span',{class:'star',text:'★','aria-label':'常用參考'}):null,document.createTextNode(i.title||(i.preview||'').slice(0,80)||i.url)]);
-  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'topic-dot','aria-hidden':'true',style:topicColor(i.topic_primary)?'background:'+topicColor(i.topic_primary):''}),title,meta]);
+  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'unread-dot','aria-hidden':'true'}),title,meta]);
   if(!i.read_at)a.classList.add('unread');
   if(i.status==='awaiting_backfill'&&i.preview)a.append(el('span',{class:'preview',text:i.preview}));
   a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:i.id},true));};
@@ -349,7 +350,7 @@ function provenance(a){if(!a)return '';if(a.legacy)return '搬移前的官方短
 // 閱讀頁主題：顯示主要與次要主題，可手動修改；手動設定的主題不會被自動分類覆寫。
 function topicRow(item){
   const tags=[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean);
-  const row=el('div',{class:'topic-row',id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag'},[el('span',{class:'topic-dot',style:'background:'+t.color,'aria-hidden':'true'}),document.createTextNode(t.name)])):[el('span',{class:'topic-tag',text:'未分類'})]);
+  const row=el('div',{class:'topic-row',id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag',style:'--c:'+t.color,text:t.name})):[el('span',{class:'topic-tag',text:'未分類'})]);
   if(item.topic_source==='manual')row.append(el('span',{class:'muted',text:'手動設定'}));
   const edit=el('button',{type:'button',class:'linkish manage','aria-expanded':'false',text:'修改主題'});
   edit.onclick=()=>{const open=!row.nextSibling||!row.nextSibling.classList.contains('topic-form');if(open)row.after(topicForm(item,edit));else row.nextSibling.remove();edit.setAttribute('aria-expanded',String(open));if(open)row.nextSibling.querySelector('select').focus();};
@@ -511,7 +512,7 @@ const triageMode={
     const open=el('a',{href:urlFor({...view,mode:'',article:item.id}),text:'開啟全文'});open.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:item.id,mode:''},true));};
     const intro=item.status==='awaiting_backfill'?(item.preview||''):(item.intro||item.preview||'');
     const card=el('article',{class:'card','data-id':item.id,'aria-labelledby':'triage-title'},[
-      names.length?el('div',{class:'topic-row'},names.map(n=>el('span',{class:'topic-tag',text:n}))):null,
+      names.length?el('div',{class:'topic-row'},[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean).map(t=>el('span',{class:'topic-tag',style:'--c:'+t.color,text:t.name}))):null,
       el('h2',{id:'triage-title',tabindex:'-1',text:item.title||item.url}),
       el('p',{class:'meta',text:meta}),
       item.status==='awaiting_backfill'?el('p',{class:'waiting',text:'等待確認回補：還沒呼叫模型，下面是保存的原文前 600 字。按保留才開始整理（會產生模型費用）。'}):null,
