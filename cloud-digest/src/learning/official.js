@@ -171,37 +171,38 @@ export async function discoverOfficial(env, collect, deps = {}) {
 // 管理頁「官方來源」：想收到的內容、來源設定，以及每個來源的最近一輪結果、狀態與最近 7 天條目。
 export async function officialOverview(env) {
   const settings = await readSettings(env);
-  const sources = [];
-  for (const source of settings.sources) {
-    const state = await query(
-      env,
-      'SELECT initialized_at,last_checked_at FROM source_state WHERE source=?',
-      source.id,
-    ).first();
-    const last = await query(
-      env,
-      'SELECT ran_at,found,collected,stale,baseline,ok,error FROM source_runs WHERE source=? ORDER BY ran_at DESC LIMIT 1',
-      source.id,
-    ).first();
-    const entries = await rows(
-      env,
-      `SELECT url,title,published_at,decision,reason,item_id,manual,first_seen_at FROM source_entries
+  // 各來源的查詢彼此獨立，同時發出；逐一等待時每個來源要多等 3 次資料庫往返。
+  const since = new Date(now() - DETAIL_DAYS * DAY).toISOString();
+  const sources = await Promise.all(
+    settings.sources.map(async (source) => {
+      const [state, last, entries] = await Promise.all([
+        query(env, 'SELECT initialized_at,last_checked_at FROM source_state WHERE source=?', source.id).first(),
+        query(
+          env,
+          'SELECT ran_at,found,collected,stale,baseline,ok,error FROM source_runs WHERE source=? ORDER BY ran_at DESC LIMIT 1',
+          source.id,
+        ).first(),
+        rows(
+          env,
+          `SELECT url,title,published_at,decision,reason,item_id,manual,first_seen_at FROM source_entries
       WHERE source=? AND first_seen_at>=? ORDER BY first_seen_at DESC,url LIMIT 200`,
-      source.id,
-      new Date(now() - DETAIL_DAYS * DAY).toISOString(),
-    );
-    sources.push({
-      id: source.id,
-      name: source.name,
-      enabled: source.enabled,
-      initialized_at: state?.initialized_at || null,
-      last_checked_at: state?.last_checked_at || null,
-      last_run: last ? { ...last, ok: !!last.ok } : null,
-      status: !source.enabled ? 'disabled' : !last ? 'never' : last.ok ? 'ok' : 'failed',
-      consecutive_failures: last && !last.ok ? await consecutiveFailures(env, source.id) : 0,
-      entries: entries.map((e) => ({ ...e, published_at: normalizePublished(e.published_at), manual: !!e.manual })),
-    });
-  }
+          source.id,
+          since,
+        ),
+      ]);
+      return {
+        id: source.id,
+        name: source.name,
+        enabled: source.enabled,
+        initialized_at: state?.initialized_at || null,
+        last_checked_at: state?.last_checked_at || null,
+        last_run: last ? { ...last, ok: !!last.ok } : null,
+        status: !source.enabled ? 'disabled' : !last ? 'never' : last.ok ? 'ok' : 'failed',
+        consecutive_failures: last && !last.ok ? await consecutiveFailures(env, source.id) : 0,
+        entries: entries.map((e) => ({ ...e, published_at: normalizePublished(e.published_at), manual: !!e.manual })),
+      };
+    }),
+  );
   return {
     max_age_days: maxArticleAgeDays(env),
     retention_days: RETENTION_DAYS,

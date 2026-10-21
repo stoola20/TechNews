@@ -830,12 +830,12 @@ function renderEntries(s){
   for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,week:'',article:null}));};
 }
 async function refreshEntries(){try{renderEntries(await api('status'));}catch(e){}}
-async function runnerStatus(){
-  try{const s=await api('status'),l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};renderEntries(s);
-    const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');
-    $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
-  }catch(e){}
+function renderStatus(s){
+  const l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};renderEntries(s);
+  const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');
+  $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
 }
+async function runnerStatus(){try{renderStatus(await api('status'));}catch(e){}}
 // 筆記與追問對話框：收合時只留分頁、快速追問與展開按鈕；沒有開啟文章時只有追問分頁。
 const dock={
   tab:'ask',
@@ -1017,7 +1017,9 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){poll();runnerStatus();}});
 bindLogin(boot);
 async function boot(){
-  await api('status');showApp();await runnerStatus();view=readView();listKey=null;await apply();
+  // 狀態同時當作登入檢查，和文章列表一起發出；未登入時兩邊都回 401，api() 會切回登入畫面。
+  view=readView();listKey=null;
+  await Promise.all([api('status').then(s=>{showApp();renderStatus(s);}),apply()]);
   clearInterval(pollTimer);clearInterval(statusTimer);pollTimer=setInterval(poll,8000);statusTimer=setInterval(runnerStatus,30000);
 }
 run(boot);
