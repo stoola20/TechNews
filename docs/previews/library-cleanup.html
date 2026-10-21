@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>設計稿・文章庫介面整理</title>
+<style>
+:root{--bg:#f3f6f5;--paper:#fff;--ink:#183a37;--muted:#4f615e;--line:#d3e0dd;--accent:#0f766e;--soft:#e6f3ef;--focus:#b45309;--warn-bg:#fff4df;--warn:#8b440a;--danger:#9f2525;--unread:#2563eb;--side:340px;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg)}
+*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;min-height:36px;padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:var(--paper)}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.switcher{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 20px;background:#fffbe8;border-bottom:1px solid #ecdca0;font-size:14px}
+.switcher .seg button{font-size:14px}
+/* 頁首：品牌、置中搜尋、模式入口與狀態 */
+.top{display:grid;grid-template-columns:1fr minmax(0,560px) 1fr;gap:16px;align-items:center;padding:10px 20px;min-height:60px;background:var(--ink);color:#fff}
+.top b{font-size:18px}
+.search{position:relative}.search input{width:100%;min-height:40px;border:0;border-radius:10px;padding:8px 12px 8px 36px;background:rgba(255,255,255,.14);color:#fff}
+.search input::placeholder{color:rgba(255,255,255,.7)}.search svg{position:absolute;left:11px;top:11px;opacity:.75}
+.search kbd{position:absolute;right:10px;top:9px;font:12px ui-monospace,monospace;padding:2px 6px;border-radius:5px;background:rgba(255,255,255,.16);color:rgba(255,255,255,.85)}
+.nav{display:flex;gap:6px;align-items:center;justify-content:flex-end;font-size:14px}
+.nav a{white-space:nowrap;color:#fff;text-decoration:none;min-height:36px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px}.nav a:hover{background:rgba(255,255,255,.1)}
+.badge{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#fff;color:var(--ink);font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
+.pill{white-space:nowrap;font-size:12px;padding:3px 10px;border-radius:999px;background:#2b524e}
+/* 版面：側邊欄可拖曳調寬 */
+.layout{display:grid;grid-template-columns:var(--side) 6px minmax(0,1fr);height:760px}
+#library{background:var(--paper);overflow:auto;padding:0 16px 16px}
+.handle{cursor:col-resize;background:var(--line);position:relative}.handle:hover,.handle.drag{background:var(--accent)}
+.handle:after{content:"";position:absolute;inset:0 -4px}
+.head{position:sticky;top:0;background:var(--paper);margin:0 -16px;padding:12px 16px 4px;border-bottom:1px solid var(--line);z-index:2}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.seg{display:inline-flex;border-radius:9px;padding:2px;background:#e9efed}
+.seg button{white-space:nowrap;min-height:32px;border:0;border-radius:7px;background:none;padding:4px 14px;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed=true]{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.filter{white-space:nowrap;display:inline-flex;align-items:center;gap:6px;font-size:14px;border-color:transparent;background:none;color:var(--muted)}
+.filter.on{color:var(--accent);font-weight:600}.filter .badge{background:var(--accent);color:#fff}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 8px}
+.chip{--c:#64748b;min-height:32px;padding:3px 11px;border-radius:999px;font-size:13px;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink)}
+.chip small{opacity:.7;font-variant-numeric:tabular-nums}
+/* 方案 A：淡色底＋深色字；選取時實心主題色＋白字 */
+[data-v=a] .chip{background:color-mix(in srgb,var(--c) 12%,#fff);border-color:color-mix(in srgb,var(--c) 28%,#fff)}
+[data-v=a] .chip[aria-pressed=true]{background:var(--c);border-color:var(--c);color:#fff}
+/* 方案 B：白底＋主題色文字（自動加深確保對比）；選取時淡色底＋主題色框 */
+[data-v=b] .chip{color:color-mix(in srgb,var(--c) 72%,#000);font-weight:600}
+[data-v=b] .chip[aria-pressed=true]{background:color-mix(in srgb,var(--c) 12%,#fff);border-color:var(--c)}
+/* 方案 C：未選取不上色；選取時實心主題色＋白字 */
+[data-v=c] .chip[aria-pressed=true]{background:var(--c);border-color:var(--c);color:#fff}
+.chip.all[aria-pressed=true]{--c:var(--ink)}
+/* 篩選選單 */
+[hidden]{display:none!important}
+.pop{position:absolute;right:16px;top:52px;width:280px;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(24,58,55,.18);padding:14px;font-size:14px;z-index:5}
+.pop h4{margin:0 0 10px;font-size:13px;color:var(--muted)}.pop label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}
+.pop select{width:100%;min-height:36px;border:1px solid var(--line);border-radius:8px;padding:4px 8px;background:#fff}
+.pop .check{display:flex;gap:8px;align-items:center;margin:10px 0;font-size:14px;color:var(--ink)}
+.pop .foot{display:flex;justify-content:space-between;margin-top:14px}
+/* 列表：未讀用藍色圓點＋粗體，主題只在灰字中出現 */
+.day{margin:14px 0 2px;font-size:12px;font-weight:700;color:var(--muted)}
+.item{display:grid;grid-template-columns:10px minmax(0,1fr);gap:0 8px;padding:9px 10px;margin:0 -10px;border-radius:8px;color:var(--ink);text-decoration:none}
+.item:hover{background:#f4f8f7}.item.cur{background:var(--soft)}
+.dot{width:8px;height:8px;border-radius:50%;margin-top:8px}.unread .dot{background:var(--unread)}
+.item strong{font-size:15px;line-height:1.45;font-weight:400;color:#33504c}.unread strong{font-weight:700;color:var(--ink)}
+.meta{grid-column:2;font-size:12px;color:var(--muted);margin-top:2px}
+.warn{color:var(--warn);font-weight:700}
+/* 閱讀區 */
+.reader{overflow:auto;padding:24px clamp(16px,4vw,48px);position:relative}
+.reader h1{font-size:28px;line-height:1.3;margin:0 0 10px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.byline{font-size:14px;color:var(--muted);margin-bottom:16px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:20px}
+.bar .grow{flex:1}
+.bar button{display:inline-flex;align-items:center;gap:6px;font-size:14px}
+.kept{background:var(--accent);border-color:var(--accent);color:#fff}
+.icon{width:36px;padding:0;justify-content:center}
+.menu{position:absolute;right:0;top:44px;width:200px;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(24,58,55,.18);padding:6px;z-index:4}
+.menu button{width:100%;border:0;justify-content:flex-start;background:none;border-radius:8px}.menu button:hover{background:var(--soft)}
+.menu p{margin:4px 10px 6px;font-size:12px;color:var(--muted)}
+.gap{display:flex;gap:12px;align-items:center;justify-content:space-between;background:var(--warn-bg);border-radius:10px;padding:12px 14px;margin-bottom:20px;font-size:14px;color:var(--warn)}
+.gap button{flex:none;background:#fff}
+.body p{font-size:17px;line-height:1.75;max-width:720px}
+.notes{max-width:1100px;margin:24px auto;padding:0 20px;font-size:14px;line-height:1.7}
+.compare{max-width:1100px;margin:0 auto 40px;padding:0 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px}.card h3{margin:0 0 4px;font-size:16px}.card p{margin:0 0 10px;font-size:13px;color:var(--muted);line-height:1.6}
+@media (max-width:900px){.compare{grid-template-columns:1fr}}
+</style></head>
+<body>
+<div class="switcher"><strong>主題色方案</strong>
+  <div class="seg" role="group" aria-label="主題色方案">
+    <button aria-pressed="true" data-set="a">A 淡色底</button><button aria-pressed="false" data-set="b">B 彩色文字</button><button aria-pressed="false" data-set="c">C 只在選取時上色</button>
+  </div>
+  <span style="color:var(--muted)">可拖曳列表與閱讀區之間的分隔線調整寬度</span>
+</div>
+
+<div id="app" data-v="a">
+<header class="top">
+  <b>TechNews 文章庫</b>
+  <div class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" placeholder="搜尋標題、正文與原文"><kbd>/</kbd></div>
+  <nav class="nav"><a href="#">今日複習 <span class="badge">4</span></a><a href="#">每週回顧</a><span class="pill">Gemini 模式</span><a href="#">管理</a></nav>
+</header>
+
+<div class="layout" id="layout">
+<aside id="library">
+  <div class="head" style="position:sticky">
+    <div class="row">
+      <div class="seg" role="group" aria-label="檢視"><button aria-pressed="true">保留</button><button aria-pressed="false">★ 常用</button><button aria-pressed="false">待決定 <span style="font-variant-numeric:tabular-nums">14</span></button></div>
+      <button class="filter on" id="filter-btn" aria-expanded="false">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>篩選 <span class="badge">1</span></button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="pop" id="pop" hidden>
+      <h4>篩選與排序</h4>
+      <label for="scope">範圍</label><select id="scope"><option>保留中</option><option>全部（不含最近刪除）</option><option>最近刪除</option></select>
+      <div class="check"><input type="checkbox" checked id="u"><label for="u" style="margin:0;color:var(--ink);font-size:14px">只看未讀</label></div>
+      <label>排序</label><select><option>發表時間</option><option>加入時間</option></select>
+      <label>收件入口</label><select><option>全部入口</option></select>
+      <label>處理狀態</label><select><option>全部（不含已略過）</option></select>
+      <div class="foot"><button>清除篩選</button><button class="kept">完成</button></div>
+    </div>
+  </div>
+  <div class="day">10 月 21 日（週三）</div>
+  <a class="item cur unread" href="#"><span class="dot"></span><strong>Agent 工具的工程實踐：從原型到上線</strong><span class="meta">企業導入案例 · docs.example.com · 10/21</span></a>
+  <a class="item unread" href="#"><span class="dot"></span><strong>兩支影片與逐段說明的示範</strong><span class="meta">example.org · 10/21 · <span class="warn">來源缺漏</span></span></a>
+  <a class="item" href="#"><span class="dot"></span><strong>商業工作如何在失敗後繼續處理</strong><span class="meta">模型發布與能力 · example.org · 10/21</span></a>
+  <a class="item unread" href="#"><span class="dot"></span><strong>★ 設定檔欄位與重試參數</strong><span class="meta">AI Coding 工具 · example.org · 10/21</span></a>
+  <div class="day">10 月 20 日（週二）</div>
+  <a class="item" href="#"><span class="dot"></span><strong>原生影片輸入與自行前處理</strong><span class="meta">模型發布與能力 · example.org · 10/20</span></a>
+  <a class="item" href="#"><span class="dot"></span><strong>時間軸示範文章 11：平台政策與審查規範</strong><span class="meta">iOS／Apple 開發 · news.example.net · 10/20</span></a>
+  <a class="item unread" href="#"><span class="dot"></span><strong>時間軸示範文章 22：Agent 工具的工程實踐</strong><span class="meta">AI Coding 工具 · docs.example.com · 10/20</span></a>
+</aside>
+<div class="handle" id="handle" role="separator" aria-orientation="vertical" aria-label="調整列表寬度" tabindex="0"></div>
+<main class="reader">
+  <h1>Agent 工具的工程實踐：從原型到上線</h1>
+  <div class="tags"><span class="chip" style="--c:#0891b2">企業導入案例</span><span class="chip" style="--c:#2563eb">Agent 架構與工程實踐</span><button class="filter" style="min-height:28px;padding:0 6px;font-size:13px">修改主題</button></div>
+  <div class="byline">docs.example.com · 發表 10/20 · 加入 10/21 · <a href="#">開啟原始來源</a></div>
+  <div class="bar">
+    <button class="kept"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>已保留</button>
+    <button><span aria-hidden="true">☆</span>常用</button>
+    <button style="color:var(--danger)">刪除</button>
+    <span class="grow"></span>
+    <button><span aria-hidden="true">◐</span>標記未讀</button>
+    <div style="position:relative"><button class="icon" id="more-btn" aria-label="更多動作" aria-expanded="false">⋯</button>
+      <div class="menu" id="menu" hidden><button>只重寫文字</button><button>重送通知</button><p>用目前的文字模型 gemini-3.8-flash</p></div></div>
+    <button>專注</button>
+  </div>
+  <div class="gap"><span>有 1 個來源沒有取到（影片 2）。這篇的整理可能不完整。</span><button>補取缺漏並整理</button></div>
+  <div class="body"><p>這是正文示意。實際頁面的正文、媒體、原始來源與精讀問答維持不變，這次只整理頁首、列表與文章頂端的操作。</p></div>
+</main>
+</div>
+
+</div>
+<div class="notes">
+<h2 style="font-size:18px">三種主題色方案並排</h2>
+<p>同一組主題，第一個是「全部」，第三個為選取狀態。主題顏色可在管理頁自訂，所以方案必須對任何顏色都看得清楚。</p>
+</div>
+<div class="compare" id="compare"></div>
+
+<script>
+const TOPICS=[['全部',58,'#183a37'],['模型發布與能力',12,'#0f766e'],['AI Coding 工具',9,'#7c3aed'],['Agent 架構與工程實踐',11,'#2563eb'],['產品功能更新',7,'#d97706'],['iOS／Apple 開發',6,'#64748b'],['安全、治理與政策',4,'#be123c'],['企業導入案例',5,'#0891b2'],['未分類',4,'#94a3b8']];
+function chips(sel){return TOPICS.map((t,i)=>`<button class="chip${i?'':' all'}" style="--c:${t[2]}" aria-pressed="${i===sel}">${t[0]} <small>${t[1]}</small></button>`).join('');}
+document.getElementById('chips').innerHTML=chips(2);
+const NOTE={a:['A 淡色底','未選取時用主題色 12% 的淡底，文字維持深色，所有顏色都能過 4.5:1 對比；選取時改成實心主題色。顏色最好辨識，但 8 個色塊同時出現較熱鬧。'],
+b:['B 彩色文字','白底，文字用主題色並自動加深 28%。比 A 安靜；但黃、灰這類顏色加深後彼此較難分辨，選取狀態也比較不明顯。'],
+c:['C 只在選取時上色','未選取完全不上色，只有選中的主題變成實心色。最安靜，但列表也不再上色，主題顏色幾乎只在選取與文章標籤時看得到。']};
+document.getElementById('compare').innerHTML=['a','b','c'].map(v=>`<div class="card" data-v="${v}"><h3>${NOTE[v][0]}</h3><p>${NOTE[v][1]}</p><div class="chips">${chips(2)}</div></div>`).join('');
+document.querySelectorAll('[data-set]').forEach(b=>b.onclick=()=>{document.getElementById('app').dataset.v=b.dataset.set;document.querySelectorAll('[data-set]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));});
+for(const [b,m] of [['filter-btn','pop'],['more-btn','menu']]){const btn=document.getElementById(b),box=document.getElementById(m);btn.onclick=()=>{box.hidden=!box.hidden;btn.setAttribute('aria-expanded',String(!box.hidden));};}
+// 拖曳調整列表寬度，雙擊還原
+const h=document.getElementById('handle'),root=document.documentElement;
+h.onpointerdown=e=>{h.setPointerCapture(e.pointerId);h.classList.add('drag');const x0=e.clientX,w0=document.getElementById('library').getBoundingClientRect().width;
+  h.onpointermove=m=>root.style.setProperty('--side',Math.min(560,Math.max(280,w0+m.clientX-x0))+'px');
+  h.onpointerup=()=>{h.classList.remove('drag');h.onpointermove=null;};};
+h.ondblclick=()=>root.style.setProperty('--side','340px');
+</script>
+</body></html>

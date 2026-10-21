@@ -119,13 +119,19 @@ async function costItems(env, month, status) {
 
 // 管理頁用的月預算明細（台灣曆月）：已結算估算、預留、未確認與人工核對調整分開列出。
 export async function budgetSummary(env, base) {
-  const lines = await rows(
-    env,
-    'SELECT category,status,SUM(amount_micro) AS amount_micro,COUNT(*) AS count FROM learning_costs WHERE month=? GROUP BY category,status ORDER BY category,status',
-    base.month,
-  );
+  // 各明細互不相依，同時查詢。
+  const [lines, control, failures, uncertain, voided] = await Promise.all([
+    rows(
+      env,
+      'SELECT category,status,SUM(amount_micro) AS amount_micro,COUNT(*) AS count FROM learning_costs WHERE month=? GROUP BY category,status ORDER BY category,status',
+      base.month,
+    ),
+    setting(env, 'control'),
+    xFailures(env, base.month),
+    costItems(env, base.month, 'uncertain'),
+    costItems(env, base.month, 'voided'),
+  ]);
   const total = (status) => lines.filter((l) => l.status === status).reduce((n, l) => n + l.amount_micro, 0);
-  const control = await setting(env, 'control');
   return {
     ...base,
     pause_reason: control.paused ? control.reason || 'manual' : null,
@@ -138,8 +144,8 @@ export async function budgetSummary(env, base) {
     },
     categories: lines,
     x_pricing: xPricing(env),
-    x_failures: await xFailures(env, base.month),
-    uncertain_items: await costItems(env, base.month, 'uncertain'),
-    voided_items: await costItems(env, base.month, 'voided'),
+    x_failures: failures,
+    uncertain_items: uncertain,
+    voided_items: voided,
   };
 }

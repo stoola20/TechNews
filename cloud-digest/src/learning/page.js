@@ -5,26 +5,35 @@ export const LEARNING_PAGE = String.raw`<!doctype html>
 <style>${STYLE}
 html,body{height:100%}
 body.app{display:flex;flex-direction:column}
-.top form{display:flex;gap:8px;flex:1 1 360px;max-width:560px}.top form input{flex:1;min-width:0}
-.layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr)}
+/* 頁首：品牌、置中搜尋、右側入口；959px 以下搜尋收成放大鏡按鈕。 */
+body.app .top{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,560px) minmax(0,1fr);flex-wrap:nowrap}
+.top .brand{margin-right:0;white-space:nowrap}.top nav{justify-self:end;gap:4px}.top nav button{white-space:nowrap}
+#search-form{position:relative}#search-form svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:16px;height:16px;opacity:.75;pointer-events:none}
+#search{width:100%;min-height:40px;border:0;border-radius:10px;padding:8px 40px 8px 36px;background:rgba(255,255,255,.14);color:#fff}
+#search::placeholder{color:rgba(255,255,255,.75)}#search:focus{background:#fff;color:var(--ink)}#search:focus::placeholder{color:var(--muted)}#search:focus+kbd,#search:not(:placeholder-shown)+kbd{display:none}
+#search-form kbd{position:absolute;right:10px;top:50%;transform:translateY(-50%);border:0;background:rgba(255,255,255,.16);color:#fff;opacity:.85;padding:1px 6px}
+.top nav a{text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:4px 10px;border-radius:8px}
+.top nav a:hover,.top nav a[aria-current=page]{background:rgba(255,255,255,.12)}
+.count{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#fff;color:var(--ink);font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}.count[hidden]{display:none}
+#search-open{display:none;width:40px;min-height:40px;padding:0;border:0;align-items:center;justify-content:center}#search-open svg{width:20px;height:20px}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:var(--side,340px) 6px minmax(0,1fr)}
+/* 列表與閱讀區之間的拖曳把手；一次一篇的模式、專注模式與手機版不顯示。 */
+#side-handle{cursor:col-resize;background:transparent;touch-action:none;outline-offset:-3px}#side-handle:hover,#side-handle.drag{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+body.resizing{cursor:col-resize;user-select:none}
+body.app:not([data-mode=""]) #side-handle,body.focus[data-view=reader][data-mode=""] #side-handle{display:none}
 #library{border-right:1px solid var(--line);overflow:auto;padding:0 16px 16px;background:var(--paper)}
 .reader-wrap{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
 #reader{flex:1;min-height:0;overflow:auto;padding:24px clamp(16px,4vw,48px) calc(var(--dock-h,64px) + 40px);scroll-padding-bottom:calc(var(--dock-h,64px) + 32px);outline:none}
 /* 列表頂端（搜尋、排序、篩選）捲動時固定；列表依日期分組，每篇只留閱讀需要的資訊。 */
 .list-head{position:sticky;top:0;z-index:3;background:var(--paper);margin:0 -16px;padding:12px 16px 0;border-bottom:1px solid var(--line)}
 #search{width:100%}
-.tools{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;margin:6px 0}
-.tools label{display:flex;align-items:center;gap:6px;min-height:44px;font-size:14px}.tools input[type=checkbox]{min-height:auto;width:20px;height:20px}
-.tools select{min-height:36px;padding:4px 8px;font-size:14px}
-#manage-toggle{min-height:36px;padding:4px 10px;font-size:14px;border-color:transparent;background:none;color:var(--muted);text-decoration:underline}
-#manage-toggle.active{color:var(--accent);font-weight:700}
-#manage{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;padding:4px 0 12px}#manage[hidden]{display:none}#manage label{display:block;margin-bottom:4px;font-size:13px}#manage select{width:100%}
 #list{padding:0 0 8px}
 .day{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:16px 0 2px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.02em}
 .day-items{list-style:none;margin:0;padding:0}
 .day-items a{display:grid;grid-template-columns:8px minmax(0,1fr);gap:0 10px;padding:9px 10px;margin:0 -10px;color:var(--ink);text-decoration:none;border-radius:6px}
 .day-items a:hover{background:#f4f8f7}.day-items a[aria-current=page]{background:var(--soft);box-shadow:inset 3px 0 0 var(--accent)}
-.topic-dot{width:8px;height:8px;border-radius:50%;margin-top:8px;background:var(--line)}
+/* 未讀只用單一藍色圓點表示；主題色不出現在列表。 */
+.unread-dot{width:8px;height:8px;border-radius:50%;margin-top:8px}.day-items .unread .unread-dot{background:var(--unread,#2563eb)}
 .day-items strong{font-size:15px;line-height:1.45;font-weight:400;color:#33504c;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .day-items .unread strong{font-weight:700;color:var(--ink)}
 .item-meta{grid-column:2;display:flex;flex-wrap:wrap;gap:0 6px;font-size:12px;line-height:1.6;color:var(--muted);margin-top:2px}
@@ -32,34 +41,50 @@ body.app{display:flex;flex-direction:column}
 .item-meta .state{font-weight:700}.item-meta .state.warn{color:var(--warn)}.item-meta .state.wait{color:#22408a}
 .preview{grid-column:2;display:block;color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
 #more{width:100%;margin-top:8px;color:var(--muted)}#more[hidden]{display:none}
-.chips{display:flex;gap:6px;overflow-x:auto;margin:0 -16px;padding:2px 16px 10px;scrollbar-width:thin}
-.chips button{flex:none;min-height:36px;padding:4px 12px;border-radius:999px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
-.chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+/* 列表頂端：保留／常用／待決定三段分頁與「篩選」選單；其他條件都收在選單裡。 */
+.list-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;position:relative}
+.seg{display:inline-flex;border-radius:9px;padding:2px;background:#e9efed}
+.seg button{white-space:nowrap;min-height:34px;border:0;border-radius:7px;background:none;padding:4px 12px;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed=true]{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.seg small{margin-left:4px;font-variant-numeric:tabular-nums}
+#filter-toggle{white-space:nowrap;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 8px;border-color:transparent;background:none;color:var(--muted);font-size:14px}
+#filter-toggle svg{width:16px;height:16px}#filter-toggle.on{color:var(--accent);font-weight:600}
+#filter-count{background:var(--accent);color:#fff}
+.pop{position:absolute;right:0;top:calc(100% + 6px);width:min(300px,calc(100vw - 32px));z-index:6;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(24,58,55,.18);padding:14px;font-size:14px}.pop[hidden]{display:none}
+.pop label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.pop label:first-child{margin-top:0}.pop select{width:100%;min-height:40px;padding:4px 8px;font-size:14px}
+.pop .check{display:flex;align-items:center;gap:8px;min-height:44px;margin:4px 0 0;font-size:14px;color:var(--ink)}.pop .check input{min-height:auto;width:20px;height:20px}
+.pop-foot{display:flex;justify-content:space-between;gap:8px;margin-top:14px}.pop-foot button{min-height:40px}
+#triage-start{display:flex;width:100%;justify-content:center;margin:10px 0 0;min-height:40px}#triage-start[hidden]{display:none}
+/* 主題色：主題色 12% 的淡底與深色字；選取時改成實心主題色與白字。chips 換行全部顯示。 */
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 8px}
+.chips button,.topic-tag{--c:#94a3b8;background:var(--paper);background:color-mix(in srgb,var(--c) 12%,#fff);border:1px solid var(--line);border-color:color-mix(in srgb,var(--c) 28%,#fff);color:var(--ink);border-radius:999px}
+.chips button{min-height:36px;padding:4px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.chips button[data-topic=""]{--c:var(--ink)}
+.chips button[aria-pressed=true]{background:var(--c);border-color:var(--c);color:#fff;font-weight:600}
 .chips small{opacity:.75;font-variant-numeric:tabular-nums}
-.chips .topic-dot{margin:0}
 .topic-row{display:flex;flex-wrap:wrap;align-items:center;gap:0 4px;margin-bottom:4px}
 .topic-row .linkish{min-height:32px;padding:2px 8px;border:0;background:none;color:var(--accent);text-decoration:underline;font-size:13px;margin-bottom:6px}
 .topic-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin:4px 0 12px}.topic-form label{display:block;font-size:13px;margin-bottom:4px}.topic-form select{min-height:40px}
-.topic-tag{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:2px 10px;border:1px solid var(--line);border-radius:999px;margin:0 6px 6px 0;color:var(--ink)}.topic-tag .topic-dot{margin:0}
+.topic-tag{display:inline-flex;align-items:center;font-size:13px;padding:2px 10px;margin:0 6px 6px 0}
 .reader-bar{display:none;margin-bottom:12px;align-items:center;justify-content:space-between;gap:8px}
-body[data-view=reader] .reader-bar{display:flex}#back{visibility:hidden}#read-end{height:1px}
-#focus-toggle{margin-left:auto;min-height:36px;padding:4px 14px}#focus-toggle[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+#read-end{height:1px}
+#focus-toggle[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
 /* 專注模式：只留標題、主題・發布者・發表日、篩選按鈕、正文、媒體、原始來源、問答與筆記追問。 */
 body.focus[data-view=reader][data-mode=""] #library,body.focus[data-view=reader][data-mode=""] header.top{display:none}
 body.focus[data-view=reader][data-mode=""] .layout{grid-template-columns:minmax(0,1fr)}
 body.focus[data-view=reader][data-mode=""] :is(.admin-info,.process-note,.versions,.manage){display:none!important}
 body.focus[data-view=reader][data-mode=""] #article{max-width:880px;margin:0 auto}
-/* 篩選檢視與頂端入口：保留是預設檢視；待決定與最近刪除用同一排切換。 */
-.entry-bar{display:flex;flex-wrap:wrap;gap:6px 12px;margin:0 0 8px;font-size:14px}.entry-bar[hidden]{display:none}
-.entry-bar a{display:inline-flex;align-items:center;min-height:36px;padding:2px 12px;border-radius:999px;background:var(--soft);color:var(--ink);text-decoration:none;font-weight:600}
-.entry-bar a strong{margin-left:4px;font-variant-numeric:tabular-nums}
-.views{display:flex;gap:4px;overflow-x:auto;margin:8px -16px 0;padding:0 16px 2px;scrollbar-width:none}
-.views button{flex:none;min-height:36px;padding:4px 12px;border:0;border-radius:8px;background:none;color:var(--muted);font-size:14px;font-weight:600}
-.views button[aria-pressed=true]{background:var(--soft);color:var(--ink)}
 .star{color:#b45309;margin-right:4px}
 .deleted-row{display:flex;align-items:flex-start;gap:8px}.deleted-row a{flex:1;min-width:0}
 .deleted-row button{flex:none;min-height:36px;padding:4px 12px;margin-top:6px}
-.triage-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 4px}
+/* 文章工具列：左邊保留／常用／刪除，右邊標記已讀、「⋯」選單與專注。 */
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 16px;padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.toolbar-end{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto}.toolbar-end button{min-height:40px;padding:6px 14px}
+.more{position:relative}.more>button{width:40px;padding:0;font-size:18px;line-height:1}
+.menu{position:absolute;right:0;top:calc(100% + 6px);min-width:200px;z-index:6;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(24,58,55,.18);padding:6px}.menu[hidden]{display:none}
+.menu button{display:flex;width:100%;border:0;background:none;border-radius:8px;min-height:40px;padding:8px 12px;text-align:left}.menu button:hover,.menu button:focus-visible{background:var(--soft)}
+.gap-note{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px 12px}.gap-note>div{flex:1 1 260px;min-width:0}.gap-note>button{flex:none;background:var(--paper)}
+.triage-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .triage-bar button{min-height:40px;padding:6px 14px}
 .triage-bar button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
 .triage-bar .muted{margin-left:4px}
@@ -131,7 +156,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 #ask-form{margin-top:8px}
 @media(prefers-reduced-motion:reduce){#dock.open .dock-body{animation:none}}
 @media(max-width:959px){
-  body.app{display:block;height:auto}.layout{display:block}
+  body.app{display:block;height:auto}.layout{display:block}#side-handle{display:none}
   #library{border-right:0;overflow:visible}.list-head{top:0}
   .reader-wrap{display:block}#reader{overflow:visible;padding:16px 16px calc(var(--dock-h,64px) + 24px)}
   html{scroll-padding-bottom:calc(var(--dock-h,64px) + 16px)}
@@ -139,31 +164,34 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
   #dock{position:fixed;left:0;right:0;bottom:0;transform:none;width:auto;border-radius:16px 16px 0 0;border-bottom:0;padding-bottom:env(safe-area-inset-bottom)}
   #dock.open{height:auto;max-height:78vh;max-height:78dvh}
   #quick-ask{display:none}
-  .top{position:static}body[data-view=reader] .reader-bar{position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:2}#back{visibility:visible}
+  .top{position:static}body[data-view=reader] .reader-bar{display:flex;position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:2}#back{visibility:visible}
   #article-title{font-size:23px}.article-body{font-size:16px}
-  .top{padding:10px 12px}.top form{order:3;flex-basis:100%;max-width:none}
+  body.app .top{display:flex;flex-wrap:wrap;padding:8px 12px;gap:8px}.top .long{display:none}
+  #search-form{display:none;order:3;flex-basis:100%}body.searching #search-form{display:block}body.searching #search-open{background:rgba(255,255,255,.12)}
+  #search-open{display:inline-flex}#runner-pill{display:none}.top .brand{flex:1;min-width:0}.top nav a{padding:4px 6px}#logout{padding:4px 10px;min-height:36px}
 }
 </style></head><body class="app" data-view="list" data-mode="">
-<header class="top"><a class="brand" href="/learning">TechNews 文章庫</a>
-<form id="collect-form"><label class="sr" for="url">分享連結</label><input id="url" type="url" placeholder="貼上 X 貼文或文章網址" required><button class="primary">加入文章庫</button></form>
-<nav><span id="runner-pill" class="pill" role="status">狀態載入中</span><a href="/learning/admin">管理</a><button id="logout" class="hidden">登出</button></nav></header>
+<header class="top"><a class="brand" href="/learning">TechNews<span class="long"> 文章庫</span></a>
+<form id="search-form" role="search"><label class="sr" for="search">搜尋標題、正文與保存的原文</label><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="search" type="search" placeholder="搜尋標題、正文與原文"><kbd aria-hidden="true">/</kbd></form>
+<nav><button type="button" id="search-open" aria-expanded="false" aria-controls="search-form"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="sr">搜尋</span></button><a href="/learning?view=review" data-mode="review" class="mode-link"><span class="long">今日</span>複習<span id="review-count" class="count" hidden></span></a><a href="/learning?view=week" data-mode="week" class="mode-link"><span class="long">每週</span>回顧</a><span id="runner-pill" class="pill" role="status">狀態載入中</span><a href="/learning/admin">管理</a><button id="logout" class="hidden">登出</button></nav></header>
 <div id="feedback" role="status" aria-live="polite"></div>
 ${LOGIN}
 <main id="app" class="layout hidden">
 <aside id="library" aria-label="文章列表">
   <div class="list-head">
-  <div id="entry-bar" class="entry-bar" hidden></div>
-  <form id="search-form" role="search"><label class="sr" for="search">搜尋標題、正文與保存的原文</label><input id="search" type="search" placeholder="搜尋標題、正文與原文（按 / ）"></form>
-  <div class="tools">
-    <label><input type="checkbox" id="unread"> 只看未讀</label>
-    <label>排序 <select id="sort"><option value="published">發表時間</option><option value="added">加入時間</option></select></label>
-    <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage">管理篩選</button>
+  <div class="list-bar">
+    <div id="views" class="seg" role="group" aria-label="檢視"></div>
+    <button type="button" id="filter-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="filter-pop"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>篩選<span id="filter-count" class="count" hidden></span></button>
+    <div id="filter-pop" class="pop" role="dialog" aria-label="篩選與排序" hidden>
+      <label for="scope">範圍</label><select id="scope"><option value="">依上方分頁</option><option value="all">全部（不含最近刪除）</option><option value="deleted">最近刪除</option></select>
+      <label class="check"><input type="checkbox" id="unread"> 只看未讀</label>
+      <label for="sort">排序</label><select id="sort"><option value="published">發表時間</option><option value="added">加入時間</option></select>
+      <label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select>
+      <label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select>
+      <div class="pop-foot"><button type="button" id="filter-clear">清除篩選</button><button type="button" id="filter-done" class="primary">完成</button></div>
+    </div>
   </div>
-  <div id="manage" hidden>
-    <div><label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select></div>
-    <div><label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select></div>
-  </div>
-  <div id="views" class="views" role="group" aria-label="篩選結果"></div>
+  <button type="button" id="triage-start" hidden></button>
   <div id="topics" class="chips" role="group" aria-label="主題"></div>
   </div>
   <p id="list-summary" class="sr" aria-live="polite"></p>
@@ -171,9 +199,10 @@ ${LOGIN}
   <div id="list-end" aria-hidden="true"></div>
   <button type="button" id="more" hidden>載入更多</button>
 </aside>
+<div id="side-handle" role="separator" aria-orientation="vertical" aria-label="調整列表寬度" aria-controls="library" aria-valuemin="280" aria-valuemax="560" aria-valuenow="340" tabindex="0" title="拖曳調整列表寬度；雙擊還原"></div>
 <div class="reader-wrap">
 <div id="reader" tabindex="-1" aria-label="閱讀區">
-  <div class="reader-bar"><button id="back">← 返回列表</button><button type="button" id="focus-toggle" aria-pressed="false" title="隱藏列表與管理資訊；Esc 離開">專注</button></div>
+  <div class="reader-bar"><button id="back">← 返回列表</button></div>
   <div id="mode" hidden></div>
   <div id="article"><div class="empty"><h1 style="font-size:22px">選一篇文章開始閱讀</h1><p>官方文章、X 書籤與分享都在左側列表。處理狀態會自動更新。</p></div></div>
 </div>
@@ -205,6 +234,8 @@ let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',triage:
 const narrow=matchMedia('(max-width: 959px)');
 // 篩選檢視：保留是預設；選擇存在網址，重新整理或返回時維持同一個檢視。
 const VIEWS=[['kept','保留'],['starred','★ 常用'],['pending','待決定'],['all','全部'],['deleted','最近刪除']];
+// 三段分頁只放前三個檢視；全部與最近刪除從「篩選」選單的範圍切換。
+const TABS=VIEWS.slice(0,3);let pendingTotal=0;
 const TRIAGE_LABEL={pending:'待決定',kept:'保留',starred:'保留 ★',deleted:'最近刪除'};
 const MODE_NAMES=['triage','review','week'];
 function readView(){const p=new URLSearchParams(location.search),t=p.get('triage'),m=p.get('view');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article'),mode:MODE_NAMES.includes(m)&&!p.get('article')?m:'',week:/^\d{4}-\d{2}-\d{2}$/.test(p.get('week')||'')?p.get('week'):''};}
@@ -213,11 +244,17 @@ function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTo
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
 function navigate(next,fromList){history.replaceState({...(history.state||{}),listScroll:listScroll()},'',location.href);view={...view,...('article' in next&&next.article?{mode:''}:{}),...next};history.pushState({fromList:!!fromList},'',urlFor(view));return apply();}
-function renderViews(){$('views').replaceChildren(...VIEWS.map(([value,label])=>{const b=el('button',{type:'button','aria-pressed':String(view.triage===value),'data-triage':value,text:label});b.onclick=()=>run(()=>navigate({triage:value,article:null}));return b;}));}
-function syncControls(){renderViews();$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;$('manage-toggle').classList.toggle('active',!!(view.origin||view.state));}
+function renderViews(){
+  $('views').replaceChildren(...TABS.map(([value,label])=>{const b=el('button',{type:'button','aria-pressed':String(view.triage===value),'data-triage':value},[document.createTextNode(label),value==='pending'&&pendingTotal?el('small',{text:String(pendingTotal)}):null]);b.onclick=()=>run(()=>navigate({triage:value,article:null}));return b;}));
+  $('triage-start').textContent='逐篇篩選（'+pendingTotal+' 篇）';$('triage-start').hidden=!(view.triage==='pending'&&pendingTotal);
+}
+// 「篩選」按鈕的數字：範圍、未讀、排序、入口、狀態；主題與搜尋本身看得到，不計入。
+function filterCount(){return (['all','deleted'].includes(view.triage)?1:0)+(view.unread?1:0)+(view.sort!=='published'?1:0)+(view.origin?1:0)+(view.state?1:0);}
+function syncControls(){renderViews();$('search').value=view.q;$('scope').value=['all','deleted'].includes(view.triage)?view.triage:'';$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;const n=filterCount();$('filter-count').textContent=n||'';$('filter-count').hidden=!n;$('filter-toggle').classList.toggle('on',!!n);}
 async function apply(){
   syncControls();
   document.body.dataset.mode=view.mode||'';
+  for(const a of document.querySelectorAll('.mode-link'))if(a.dataset.mode===view.mode)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
   // 一次一篇的模式：隱藏列表與閱讀內容，模式內容放在閱讀區。
   if(view.mode){
     document.body.dataset.view='reader';
@@ -246,16 +283,14 @@ async function loadList(){
 }
 // 主題 chip：全部、各主題、未分類，附篇數；單選，與搜尋、未讀、管理篩選並用。
 function topicById(id){return topicData.topics.find(t=>t.id===id);}
-function topicColor(id){const t=topicById(id);return t?t.color:'';}
 function topicNames(i){return [i.topic_primary,i.topic_secondary].map(topicById).filter(Boolean).map(t=>t.name);}
 function chip(value,label,count,color){
-  const b=el('button',{type:'button','aria-pressed':String(view.topic===value),'data-topic':value},[color?el('span',{class:'topic-dot',style:'background:'+color,'aria-hidden':'true'}):null,document.createTextNode(label),el('small',{text:String(count)})]);
+  const b=el('button',{type:'button','aria-pressed':String(view.topic===value),'data-topic':value,...(color?{style:'--c:'+color}:{})},[document.createTextNode(label),el('small',{text:String(count)})]);
   b.onclick=()=>run(()=>navigate({topic:view.topic===value&&value?'':value,article:null}));
   return b;
 }
 function renderTopics(){
   $('topics').replaceChildren(chip('','全部',topicData.total),...topicData.topics.map(t=>chip(t.id,t.name,t.count,t.color)),...(topicData.unclassified?[chip('unclassified','未分類',topicData.unclassified)]:[]));
-  const pressed=$('topics').querySelector('[aria-pressed=true]');if(pressed)pressed.scrollIntoView({block:'nearest',inline:'nearest'});
 }
 async function loadMore(){
   if(!hasMore||loadingMore)return;
@@ -296,7 +331,7 @@ function renderItem(i){
   const meta=el('span',{class:'item-meta'},[names.length?el('span',{text:names.join('、')}):null,names.length?el('span',{class:'sep','aria-hidden':'true'}):null,i.publisher?el('span',{text:i.publisher}):null,i.publisher?el('span',{class:'sep','aria-hidden':'true'}):null,el('span',{text:itemDate(i)})]);
   const state=stateNode(i);if(state)meta.append(el('span',{class:'sep','aria-hidden':'true'}),state);
   const title=el('strong',{},[i.starred&&i.triage==='kept'?el('span',{class:'star',text:'★','aria-label':'常用參考'}):null,document.createTextNode(i.title||(i.preview||'').slice(0,80)||i.url)]);
-  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'topic-dot','aria-hidden':'true',style:topicColor(i.topic_primary)?'background:'+topicColor(i.topic_primary):''}),title,meta]);
+  const a=el('a',{href:urlFor({...view,article:i.id}),'data-id':i.id},[el('span',{class:'unread-dot','aria-hidden':'true'}),title,meta]);
   if(!i.read_at)a.classList.add('unread');
   if(i.status==='awaiting_backfill'&&i.preview)a.append(el('span',{class:'preview',text:i.preview}));
   a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:i.id},true));};
@@ -327,7 +362,7 @@ function provenance(a){if(!a)return '';if(a.legacy)return '搬移前的官方短
 // 閱讀頁主題：顯示主要與次要主題，可手動修改；手動設定的主題不會被自動分類覆寫。
 function topicRow(item){
   const tags=[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean);
-  const row=el('div',{class:'topic-row',id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag'},[el('span',{class:'topic-dot',style:'background:'+t.color,'aria-hidden':'true'}),document.createTextNode(t.name)])):[el('span',{class:'topic-tag',text:'未分類'})]);
+  const row=el('div',{class:'topic-row',id:'article-topics'},tags.length?tags.map(t=>el('span',{class:'topic-tag',style:'--c:'+t.color,text:t.name})):[el('span',{class:'topic-tag',text:'未分類'})]);
   if(item.topic_source==='manual')row.append(el('span',{class:'muted',text:'手動設定'}));
   const edit=el('button',{type:'button',class:'linkish manage','aria-expanded':'false',text:'修改主題'});
   edit.onclick=()=>{const open=!row.nextSibling||!row.nextSibling.classList.contains('topic-form');if(open)row.after(topicForm(item,edit));else row.nextSibling.remove();edit.setAttribute('aria-expanded',String(open));if(open)row.nextSibling.querySelector('select').focus();};
@@ -360,12 +395,11 @@ function renderArticle(result){
   nodes.push(topicRow(item));
   nodes.push(el('p',{class:'meta','data-role':'article-info'},[el('span',{class:'badge admin-info '+stateTone(item.status),text:stateLabel(item)}),document.createTextNode(' '+[item.publisher,'發表 '+(item.published_at?fullDate(item.published_at):'日期未知'),'加入 '+fullDate(item.created_at)].filter(Boolean).join('・'))]));
   nodes.push(el('p',{class:'meta admin-info'},[document.createTextNode([origins.length?'收件：'+origins.join('、'):'',item.edition==='legacy_digest'?'既有導讀':'',provenance(article),'更新於 '+when(item.updated_at)].filter(Boolean).join('・')+'・'),safeLink(item.url,'開啟原始來源')]));
-  const bar=triageBar(item);if(bar)nodes.push(bar);
-  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice process-note',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以用「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
+  nodes.push(toolbar(item));
+  if(item.edition==='legacy_digest')nodes.push(el('p',{class:'notice process-note',text:'這是搬移前的官方短導讀，尚未依新規格詳細整理。可以從「⋯」選單的「只重寫文字」改成詳細教材（目前使用 '+textModelName()+'）。'}));
   if(item.status==='waiting_local')nodes.push(el('p',{class:'notice process-note',text:'來源已備齊，等待 Mac 本機模型處理。Mac 離線時會一直等待，不是失敗，也不會改用雲端模型。'}));
   if(item.status==='budget_paused')nodes.push(el('p',{class:'notice process-note',text:'費用暫停：需要付費的步驟已停下，工作保留。到管理頁確認預算後手動恢復。'}));
-  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice process-note'},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]));
-  nodes.push(actions(item));
+  if(gaps.length||item.last_error)nodes.push(el('div',{class:'notice process-note gap-note'},[el('div',{},[el('strong',{text:'來源與處理提醒'}),...gaps.map(g=>gapLine(item,g,result.sources)),item.last_error?el('div',{text:'・'+item.last_error}):null]),item.status==='awaiting_backfill'?null:retryButton(item)]));
   if(item.status==='awaiting_backfill'){
     nodes.push(el('p',{class:'notice',text:'這篇尚未呼叫模型。先閱讀同步時保存的原文，或開啟原始來源查看最新內容，再決定是否整理。'}));
     const originals=result.sources.filter(s=>s.status==='available'&&s.content);
@@ -489,7 +523,7 @@ const triageMode={
     const open=el('a',{href:urlFor({...view,mode:'',article:item.id}),text:'開啟全文'});open.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({article:item.id,mode:''},true));};
     const intro=item.status==='awaiting_backfill'?(item.preview||''):(item.intro||item.preview||'');
     const card=el('article',{class:'card','data-id':item.id,'aria-labelledby':'triage-title'},[
-      names.length?el('div',{class:'topic-row'},names.map(n=>el('span',{class:'topic-tag',text:n}))):null,
+      names.length?el('div',{class:'topic-row'},[item.topic_primary,item.topic_secondary].map(topicById).filter(Boolean).map(t=>el('span',{class:'topic-tag',style:'--c:'+t.color,text:t.name}))):null,
       el('h2',{id:'triage-title',tabindex:'-1',text:item.title||item.url}),
       el('p',{class:'meta',text:meta}),
       item.status==='awaiting_backfill'?el('p',{class:'waiting',text:'等待確認回補：還沒呼叫模型，下面是保存的原文前 600 字。按保留才開始整理（會產生模型費用）。'}):null,
@@ -759,41 +793,71 @@ const autoRead={
 };
 for(const target of [window,$('reader')])for(const type of ['scroll','wheel','touchmove'])target.addEventListener(type,()=>autoRead.interact(),{passive:true});
 document.addEventListener('keydown',e=>{if(['ArrowDown','PageDown','End',' '].includes(e.key))autoRead.interact();});
-// 專注模式：這台裝置記住開關；讀不到設定時預設關閉。
+// 專注模式：這台裝置記住開關；讀不到設定時預設關閉。按鈕放在文章工具列，每次畫文章時移入。
+const focusButton=el('button',{type:'button',id:'focus-toggle','aria-pressed':'false',title:'隱藏列表與管理資訊；Esc 離開',text:'專注'});
 const focusMode={
   on:false,
   load(){try{this.on=localStorage.getItem('technews-focus')==='1';}catch(e){this.on=false;}this.apply();},
   set(on){this.on=on;try{localStorage.setItem('technews-focus',on?'1':'0');}catch(e){}this.apply();},
-  apply(){document.body.classList.toggle('focus',this.on);const b=$('focus-toggle');b.setAttribute('aria-pressed',String(this.on));b.textContent=this.on?'離開專注':'專注';},
+  apply(){document.body.classList.toggle('focus',this.on);const b=focusButton;b.setAttribute('aria-pressed',String(this.on));b.textContent=this.on?'離開專注':'專注';},
 };
-$('focus-toggle').onclick=()=>focusMode.set(!focusMode.on);
+focusButton.onclick=()=>focusMode.set(!focusMode.on);
+// 列表寬度：桌機拖曳把手調整，這台裝置記住；雙擊或 Home 還原，方向鍵每次 16px。
+const sideWidth={
+  min:280,max:560,base:340,
+  load(){let w=this.base;try{const saved=Number(localStorage.getItem('technews-side-width'));if(saved>=this.min&&saved<=this.max)w=saved;}catch(e){}this.set(w);},
+  set(w,save){w=Math.round(Math.min(this.max,Math.max(this.min,w)));document.documentElement.style.setProperty('--side',w+'px');$('side-handle').setAttribute('aria-valuenow',String(w));if(save)try{localStorage.setItem('technews-side-width',String(w));}catch(e){}},
+  now(){return Number($('side-handle').getAttribute('aria-valuenow'));},
+};
+$('side-handle').onpointerdown=e=>{
+  if(e.button)return;e.preventDefault();
+  const h=e.currentTarget,x0=e.clientX,w0=sideWidth.now();h.setPointerCapture(e.pointerId);h.classList.add('drag');document.body.classList.add('resizing');
+  const end=()=>{h.classList.remove('drag');document.body.classList.remove('resizing');h.onpointermove=h.onpointerup=h.onpointercancel=null;sideWidth.set(sideWidth.now(),true);};
+  h.onpointermove=m=>sideWidth.set(w0+m.clientX-x0);h.onpointerup=h.onpointercancel=end;
+};
+$('side-handle').ondblclick=()=>sideWidth.set(sideWidth.base,true);
+$('side-handle').onkeydown=e=>{const next={ArrowLeft:sideWidth.now()-16,ArrowRight:sideWidth.now()+16,Home:sideWidth.base}[e.key];if(next==null)return;e.preventDefault();sideWidth.set(next,true);};
+sideWidth.load();
 focusMode.load();
-function actions(item){
-  const row=el('div',{class:'actions'});
+// 文章工具列：只放閱讀時常用的動作；重寫與重送通知收進「⋯」，補取缺漏放在缺漏提醒旁。
+function toolbar(item){
+  const bar=el('div',{class:'toolbar','data-role':'toolbar'}),left=triageBar(item);if(left)bar.append(left);
+  const end=el('div',{class:'toolbar-end'});
   const read=el('button',{id:'read-toggle',text:item.read_at?'標記未讀':'標記已讀'});
   // 手動改回未讀：這次開啟不再自動標已讀。
   read.onclick=()=>run(async()=>{const next=!current.read_at;await api('items/'+item.id,'PATCH',{read:next});if(!next)autoRead.off=true;await refreshArticle();await updateListItem(item.id);},read,'更新中…');
-  row.append(read);
+  end.append(read);
   if(item.status==='awaiting_backfill'){
     const start=el('button',{class:'primary manage',text:'開始整理這篇'});
     start.onclick=()=>run(async()=>{await api('items/'+item.id+'/backfill','POST',{});message('已啟動這篇文章的整理，完成後會通知你。');await refreshArticle();await updateListItem(item.id);},start,'啟動整理…');
-    row.append(start);return row;
-  }
-  const retry=el('button',{class:'manage',text:'補取缺漏並整理'});
-  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
-  row.append(retry);
-  if(['ready','partial','needs_attention','error'].includes(item.status)){
-    const rewrite=el('button',{class:'manage',text:'只重寫文字'});
-    rewrite.onclick=async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},rewrite,'送出中…');};
-    row.append(rewrite);
-  }
-  if(['ready','partial'].includes(item.status)&&item.edition==='detailed'){
-    const resend=el('button',{class:'manage',text:'重送通知'});
-    resend.onclick=async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},resend,'送出中…');};
-    row.append(resend);
-  }
-  return row;
+    end.append(start);
+  }else{const more=moreMenu(item);if(more)end.append(more);}
+  end.append(focusButton);focusMode.apply();
+  bar.append(end);return bar;
 }
+function retryButton(item){
+  const retry=el('button',{type:'button',class:'manage',text:'補取缺漏並整理'});
+  retry.onclick=async()=>{if(!await askConfirm('會重新取得缺漏的來源與媒體（可能產生 X 或 Flash 費用），再用 '+textModelName()+' 重新整理文字。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入補取與整理。');await refreshArticle();await updateListItem(item.id);},retry,'送出中…');};
+  return retry;
+}
+// 「⋯」選單：只列這篇可以做的維運動作；都不符合時不顯示。Esc 或點外面關閉並把焦點還給按鈕。
+function moreMenu(item){
+  const toggle=el('button',{type:'button','aria-label':'更多動作','aria-haspopup':'menu','aria-expanded':'false',text:'⋯'});
+  const entries=[];
+  if(['ready','partial','needs_attention','error'].includes(item.status))entries.push(['只重寫文字',async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},toggle,'送出中…');}]);
+  if(['ready','partial'].includes(item.status)&&item.edition==='detailed')entries.push(['重送通知',async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},toggle,'送出中…');}]);
+  if(!entries.length)return null;
+  const menu=el('div',{class:'menu',role:'menu','aria-label':'更多動作',hidden:''},entries.map(([label,act])=>{const b=el('button',{type:'button',role:'menuitem',text:label});b.onclick=()=>{closeMenu(menu);act();};return b;}));
+  toggle.onclick=()=>{if(menu.hidden){menu.hidden=false;toggle.setAttribute('aria-expanded','true');menu.querySelector('button').focus();}else closeMenu(menu);};
+  menu.onkeydown=e=>{
+    const items=[...menu.querySelectorAll('button')],i=items.indexOf(document.activeElement);
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeMenu(menu,true);}
+    else if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();items[(i+(e.key==='ArrowDown'?1:items.length-1))%items.length].focus();}
+  };
+  return el('div',{class:'more manage'},[toggle,menu]);
+}
+function closeMenu(menu,returnFocus){menu.hidden=true;const t=menu.previousElementSibling;t.setAttribute('aria-expanded','false');if(returnFocus)t.focus();}
+document.addEventListener('pointerdown',e=>{for(const m of document.querySelectorAll('.more .menu:not([hidden])'))if(!m.parentElement.contains(e.target))closeMenu(m);});
 async function updateListItem(id){const [s]=await api('items/states?ids='+id);if(s)applyState(s);}
 function applyState(s){
   const i=listItems.find(x=>x.id===s.id);if(i)Object.assign(i,s);
@@ -820,22 +884,18 @@ async function poll(){
 }
 let textModel=null;
 function textModelName(){return !textModel?'目前設定的文字模型':textModel.provider==='local'?'本機 '+textModel.model:/gemini/i.test(textModel.model)?textModel.model:'Gemini '+textModel.model;}
-// 列表頂端的入口：待決定篇數。
+// 頁首的今日複習題數；待決定篇數顯示在分頁與逐篇篩選入口。
 function renderEntries(s){
-  const links=[];
-  if(s.triage_pending)links.push(el('a',{href:urlFor({...view,mode:'triage',article:null}),'data-entry':'triage','data-mode':'triage'},[document.createTextNode('待決定'),el('strong',{text:s.triage_pending+' 篇'})]));
-  if(s.reviews_today)links.push(el('a',{href:urlFor({...view,mode:'review',article:null}),'data-entry':'review','data-mode':'review'},[document.createTextNode('今日複習'),el('strong',{text:s.reviews_today+' 題'})]));
-  links.push(el('a',{href:urlFor({...view,mode:'week',week:'',article:null}),'data-entry':'week','data-mode':'week'},[document.createTextNode('每週回顧')]));
-  $('entry-bar').replaceChildren(...links);$('entry-bar').hidden=!links.length;
-  for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,week:'',article:null}));};
+  $('review-count').textContent=s.reviews_today||'';$('review-count').hidden=!s.reviews_today;
+  pendingTotal=s.triage_pending||0;renderViews();
 }
 async function refreshEntries(){try{renderEntries(await api('status'));}catch(e){}}
-async function runnerStatus(){
-  try{const s=await api('status'),l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};renderEntries(s);
-    const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');
-    $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
-  }catch(e){}
+function renderStatus(s){
+  const l=s.local,b=s.budget;textModel={provider:l.provider,model:l.text_model||l.model};renderEntries(s);
+  const text=(b.paused?'已暫停・':'')+(l.provider==='local'?(l.online?'Mac 在線':'Mac 離線')+(l.jobs.waiting_local?'・等待 '+l.jobs.waiting_local:''):'Gemini 模式');
+  $('runner-pill').textContent=text;$('runner-pill').title=l.last_seen_at?'最後心跳 '+when(l.last_seen_at):'尚未收到 Mac 心跳';
 }
+async function runnerStatus(){try{renderStatus(await api('status'));}catch(e){}}
 // 筆記與追問對話框：收合時只留分頁、快速追問與展開按鈕；沒有開啟文章時只有追問分頁。
 const dock={
   tab:'ask',
@@ -989,19 +1049,34 @@ async function loadHistory(){
 function pollQuestion(id,quiet){clearTimeout(questionTimer);watching=id;const scope=scopeId();questionTimer=setTimeout(async()=>{if(watching!==id||scope!==scopeId())return;if(document.hidden){pollQuestion(id,quiet);return;}try{const q=await api('questions/'+id);if(watching!==id||scope!==scopeId())return;if(!quiet)renderQuestion(q);if(['waiting_local','generating'].includes(q.status))pollQuestion(id,quiet);else{watching=null;await loadHistory();}}catch(e){message('提問進度更新失敗：'+e.message,true);}},5000);}
 $('ask-form').onsubmit=e=>{e.preventDefault();run(async()=>{const scoped=document.querySelector('input[name=scope]:checked').value==='article';if(scoped&&!current)throw Error('請先選一篇文章，或改為整個文章庫。');$('answer').textContent='正在保存問題並檢索來源…';const q=await api('ask','POST',{question:$('question').value,item_id:scoped?current.id:null,include_unkept:!scoped&&$('include-unkept').checked});renderQuestion(q);if(['waiting_local','generating'].includes(q.status))pollQuestion(q.id);await loadHistory();},e.submitter||e.target.querySelector('button'),'送出中…');};
 for(const radio of document.querySelectorAll('input[name=scope]'))radio.onchange=()=>{watching=null;questions.forcedAll=false;quickHint();run(loadHistory);};
-$('search-form').onsubmit=e=>{e.preventDefault();run(()=>navigate({q:$('search').value.trim(),article:null}));};
+$('search-form').onsubmit=e=>{e.preventDefault();run(()=>navigate({q:$('search').value.trim(),article:null,mode:''}));};
+// 手機版：放大鏡展開搜尋列；搜尋框沒有內容時按 Esc 或離開就收起。
+function searchOpen(on){document.body.classList.toggle('searching',on);$('search-open').setAttribute('aria-expanded',String(on));if(on)$('search').focus();}
+$('search-open').onclick=()=>searchOpen(!document.body.classList.contains('searching'));
+$('search').addEventListener('blur',()=>{if(!$('search').value)searchOpen(false);});
+$('search').addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('search').value&&document.body.classList.contains('searching')){e.preventDefault();searchOpen(false);$('search-open').focus();}});
+function focusSearch(){if(getComputedStyle($('search-open')).display!=='none')searchOpen(true);else $('search').focus();}
+for(const a of document.querySelectorAll('.mode-link'))a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,week:'',article:null}));};
 $('unread').onchange=()=>run(()=>navigate({unread:$('unread').checked}));
 $('origin').onchange=()=>run(()=>navigate({origin:$('origin').value}));
 $('state').onchange=()=>run(()=>navigate({state:$('state').value}));
 $('sort').onchange=()=>run(()=>navigate({sort:$('sort').value}));
 $('more').onclick=e=>run(loadMore,e.currentTarget,'載入中…');
-$('manage-toggle').onclick=e=>{const open=$('manage').hidden;$('manage').hidden=!open;e.currentTarget.setAttribute('aria-expanded',String(open));};
+// 篩選選單：Esc 或點選單外面關閉，焦點回到按鈕。
+function filterPop(on,returnFocus){$('filter-pop').hidden=!on;$('filter-toggle').setAttribute('aria-expanded',String(on));if(on)$('scope').focus();else if(returnFocus)$('filter-toggle').focus();}
+$('filter-toggle').onclick=()=>filterPop($('filter-pop').hidden);
+$('filter-done').onclick=()=>filterPop(false,true);
+$('filter-pop').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();filterPop(false,true);}});
+document.addEventListener('pointerdown',e=>{if(!$('filter-pop').hidden&&!$('filter-pop').contains(e.target)&&!$('filter-toggle').contains(e.target))filterPop(false);});
+$('scope').onchange=()=>run(()=>navigate({triage:$('scope').value||'kept',article:null}));
+$('filter-clear').onclick=()=>run(()=>navigate({triage:['all','deleted'].includes(view.triage)?'kept':view.triage,unread:false,sort:'published',origin:'',state:''}));
+$('triage-start').onclick=()=>run(()=>navigate({mode:'triage',week:'',article:null}));
 // 列表底部出現在畫面中就載入下一批；不支援時保留「載入更多」按鈕。
 if('IntersectionObserver' in window)new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting))run(loadMore);},{rootMargin:'200px'}).observe($('list-end'));
 $('back').onclick=()=>{if(history.state&&history.state.fromList)history.back();else run(()=>navigate({article:null}));};
-$('collect-form').onsubmit=e=>{e.preventDefault();run(async()=>{const r=await api('collect','POST',{url:$('url').value});$('url').value='';message('已收到並保存連結。完成後會透過 Telegram 通知。');listKey=null;await navigate({article:r.id});},e.submitter||e.target.querySelector('button'),'加入中…');};
 document.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if((e.metaKey||e.ctrlKey)&&!e.altKey&&e.key.toLowerCase()==='k'){e.preventDefault();focusSearch();return;}
   // 篩選模式的按鍵只在這個模式有效；焦點在輸入框或按著修飾鍵時不觸發。
   if(view.mode==='triage'&&!typing&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&!document.querySelector('dialog[open]')){
     const key={k:'keep',s:'star',d:'delete',j:'skip',arrowright:'skip',u:'undo'}[e.key.toLowerCase()];
@@ -1011,13 +1086,15 @@ document.addEventListener('keydown',e=>{
   // Escape 先關閉筆記與追問對話框並把焦點還給展開按鈕，這次不觸發手機版的返回列表。
   if(e.key==='Escape'&&dock.isOpen()){e.preventDefault();dock.toggle(false,true);return;}
   if(e.key==='Escape'&&focusMode.on&&view.article&&!view.mode&&!typing){e.preventDefault();focusMode.set(false);$('focus-toggle').focus();return;}
-  if(e.key==='/'&&!typing){e.preventDefault();$('search').focus();}
+  if(e.key==='/'&&!typing){e.preventDefault();focusSearch();}
   if(e.key==='Escape'&&narrow.matches&&view.article&&!typing&&!$('dock').contains(document.activeElement))$('back').click();
 });
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){poll();runnerStatus();}});
 bindLogin(boot);
 async function boot(){
-  await api('status');showApp();await runnerStatus();view=readView();listKey=null;await apply();
+  // 狀態同時當作登入檢查，和文章列表一起發出；未登入時兩邊都回 401，api() 會切回登入畫面。
+  view=readView();listKey=null;
+  await Promise.all([api('status').then(s=>{showApp();renderStatus(s);}),apply()]);
   clearInterval(pollTimer);clearInterval(statusTimer);pollTimer=setInterval(poll,8000);statusTimer=setInterval(runnerStatus,30000);
 }
 run(boot);

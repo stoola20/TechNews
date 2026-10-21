@@ -255,3 +255,106 @@ test('筆記與追問在閱讀區下方可收合的對話框：分頁、展開�
   assert.ok(script.indexOf('dock.toggle(false,true);return;') < script.indexOf("$('back').click()"));
   assert.match(script, /!\$\('dock'\)\.contains\(document\.activeElement\)\)\$\('back'\)\.click\(\)/);
 });
+test('頁首：沒有加入連結表單，搜尋在頁首並可用快捷鍵與手機放大鏡開啟，複習與回顧入口在頁首', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  const header = html.slice(html.indexOf('<header class="top">'), html.indexOf('</header>'));
+  assert.doesNotMatch(html, /id="collect-form"|id="url"/);
+  assert.doesNotMatch(script, /api\('collect'/);
+  assert.match(header, /<form id="search-form" role="search">[\s\S]*<input id="search" type="search"/);
+  assert.match(header, /<button type="button" id="search-open" aria-expanded="false" aria-controls="search-form">/);
+  assert.match(header, /data-mode="review"[^>]*><span class="long">今日<\/span>複習<span id="review-count"/);
+  assert.match(header, /data-mode="week"[^>]*><span class="long">每週<\/span>回顧</);
+  // ⌘K／Ctrl+K 與 / 都聚焦搜尋；搜尋時離開一次一篇的模式。
+  assert.match(script, /\(e\.metaKey\|\|e\.ctrlKey\)&&!e\.altKey&&e\.key\.toLowerCase\(\)==='k'/);
+  assert.match(script, /e\.key==='\/'&&!typing\)\{e\.preventDefault\(\);focusSearch\(\);\}/);
+  assert.match(script, /navigate\(\{q:\$\('search'\)\.value\.trim\(\),article:null,mode:''\}\)/);
+  // 959px 以下搜尋框收起，放大鏡按鈕出現。
+  assert.match(
+    html,
+    /@media\(max-width:959px\)\{[\s\S]*#search-form\{display:none;order:3;flex-basis:100%\}body\.searching #search-form\{display:block\}/,
+  );
+});
+test('側邊欄篩選：三段分頁與篩選選單取代入口列、檢視分頁與管理篩選', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  const head = html.slice(html.indexOf('<div class="list-head">'), html.indexOf('id="list-summary"'));
+  for (const id of ['entry-bar', 'manage-toggle', 'manage']) assert.doesNotMatch(html, new RegExp(`id="${id}"`));
+  assert.match(head, /<div id="views" class="seg" role="group" aria-label="檢視">/);
+  assert.match(
+    head,
+    /<button type="button" id="filter-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="filter-pop">/,
+  );
+  // 範圍、未讀、排序、入口、狀態都在選單內。
+  const pop = head.slice(head.indexOf('id="filter-pop"'));
+  for (const id of ['scope', 'unread', 'sort', 'origin', 'state', 'filter-clear', 'filter-done'])
+    assert.match(pop, new RegExp(`id="${id}"`), id);
+  assert.match(head, /<button type="button" id="triage-start" hidden>/);
+  // 分頁只放保留、常用、待決定；全部與最近刪除從範圍切換。
+  assert.match(script, /const TABS=VIEWS\.slice\(0,3\)/);
+  assert.match(script, /navigate\(\{triage:\$\('scope'\)\.value\|\|'kept',article:null\}\)/);
+  // 按鈕數字不計主題與搜尋。
+  assert.match(
+    script,
+    /function filterCount\(\)\{return \(\['all','deleted'\]\.includes\(view\.triage\)\?1:0\)\+\(view\.unread\?1:0\)\+\(view\.sort!=='published'\?1:0\)\+\(view\.origin\?1:0\)\+\(view\.state\?1:0\);\}/,
+  );
+  assert.match(
+    script,
+    /if\(e\.key==='Escape'\)\{e\.preventDefault\(\);e\.stopPropagation\(\);filterPop\(false,true\);\}/,
+  );
+});
+test('列表只用藍色圓點表示未讀；主題 chips 與標籤用主題色淡底、選取時實心，chips 換行顯示', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  assert.doesNotMatch(html, /topic-dot/);
+  assert.match(script, /\[el\('span',\{class:'unread-dot','aria-hidden':'true'\}\),title,meta\]/);
+  assert.match(html, /\.day-items \.unread \.unread-dot\{background:var\(--unread,#2563eb\)\}/);
+  // chips 不再橫向捲動。
+  assert.match(html, /\.chips\{display:flex;flex-wrap:wrap;/);
+  assert.doesNotMatch(html.match(/\.chips\{[^}]*\}/)[0], /overflow-x/);
+  assert.match(html, /background:color-mix\(in srgb,var\(--c\) 12%,#fff\)/);
+  assert.match(html, /\.chips button\[aria-pressed=true\]\{background:var\(--c\);border-color:var\(--c\);color:#fff/);
+  assert.match(script, /'data-topic':value,\.\.\.\(color\?\{style:'--c:'\+color\}:\{\}\)/);
+  assert.match(script, /el\('span',\{class:'topic-tag',style:'--c:'\+t\.color,text:t\.name\}\)/);
+});
+test('側邊欄寬度：可聚焦的拖曳把手，寬度記在這台裝置，模式、專注與手機版不顯示', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  assert.match(
+    html,
+    /<\/aside>\n<div id="side-handle" role="separator" aria-orientation="vertical" aria-label="調整列表寬度" aria-controls="library" aria-valuemin="280" aria-valuemax="560" aria-valuenow="340" tabindex="0"/,
+  );
+  assert.match(html, /\.layout\{[^}]*grid-template-columns:var\(--side,340px\) 6px minmax\(0,1fr\)\}/);
+  assert.match(
+    html,
+    /body\.app:not\(\[data-mode=""\]\) #side-handle,body\.focus\[data-view=reader\]\[data-mode=""\] #side-handle\{display:none\}/,
+  );
+  assert.match(html, /@media\(max-width:959px\)\{[\s\S]*\.layout\{display:block\}#side-handle\{display:none\}/);
+  assert.match(script, /localStorage\.getItem\('technews-side-width'\)/);
+  // 讀寫裝置設定失敗時用預設值，不報錯。
+  assert.match(script, /try\{localStorage\.setItem\('technews-side-width',String\(w\)\);\}catch\(e\)\{\}/);
+  assert.match(script, /ArrowLeft:sideWidth\.now\(\)-16,ArrowRight:sideWidth\.now\(\)\+16,Home:sideWidth\.base/);
+});
+test('文章工具列：維運動作收進「⋯」選單，補取缺漏放在缺漏提醒旁，專注按鈕在工具列', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  assert.doesNotMatch(script, /function actions\(item\)/);
+  assert.match(html, /<div class="reader-bar"><button id="back">← 返回列表<\/button><\/div>/);
+  assert.match(script, /nodes\.push\(toolbar\(item\)\)/);
+  assert.match(script, /end\.append\(focusButton\);focusMode\.apply\(\);/);
+  // 「⋯」只在有可做的動作時出現，並有選單語意與鍵盤操作。
+  assert.match(script, /'aria-label':'更多動作','aria-haspopup':'menu','aria-expanded':'false'/);
+  assert.match(script, /if\(!entries\.length\)return null;/);
+  assert.match(
+    script,
+    /if\(e\.key==='Escape'\)\{e\.preventDefault\(\);e\.stopPropagation\(\);closeMenu\(menu,true\);\}/,
+  );
+  // 補取只出現在缺漏或錯誤提醒裡，等待回補的文章不顯示。
+  assert.match(
+    script,
+    /class:'notice process-note gap-note'\}[\s\S]*?item\.status==='awaiting_backfill'\?null:retryButton\(item\)/,
+  );
+  // 專注模式隱藏「⋯」與補取（都帶 manage）。
+  assert.match(script, /el\('div',\{class:'more manage'\},\[toggle,menu\]\)/);
+  assert.match(script, /el\('button',\{type:'button',class:'manage',text:'補取缺漏並整理'\}\)/);
+});

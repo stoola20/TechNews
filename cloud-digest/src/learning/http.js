@@ -241,19 +241,26 @@ export function createLearningHandler(deps = {}) {
       }
       const route = path.replace(/^\/learning\/api\//, '');
       if (route === 'status' && request.method === 'GET') {
-        const count = await query(
-          env,
-          "SELECT COUNT(*) AS count FROM learning_items WHERE status='awaiting_backfill'",
-        ).first();
+        // 各項狀態互不相依，同時查詢；逐一等待時每項都要多一次資料庫往返。
+        const [count, budgetState, sync, syncPartial, reads, triagePending, reviewsToday, local] = await Promise.all([
+          query(env, "SELECT COUNT(*) AS count FROM learning_items WHERE status='awaiting_backfill'").first(),
+          budget(env),
+          setting(env, 'sync'),
+          setting(env, 'sync-partial'),
+          xReads(env),
+          pendingCount(env),
+          todayCount(env),
+          runnerStatus(env),
+        ]);
         return json({
-          budget: await budget(env),
-          sync: await setting(env, 'sync'),
-          sync_partial: await setting(env, 'sync-partial'),
-          x_reads: await xReads(env),
+          budget: budgetState,
+          sync,
+          sync_partial: syncPartial,
+          x_reads: reads,
           awaiting_backfill: count.count,
-          triage_pending: await pendingCount(env),
-          reviews_today: await todayCount(env),
-          local: await runnerStatus(env),
+          triage_pending: triagePending,
+          reviews_today: reviewsToday,
+          local,
           demo: env.LEARNING_DEMO === 'true',
           configured: {
             gemini: !!env.GEMINI_API_KEY,
