@@ -255,3 +255,23 @@ test('筆記與追問在閱讀區下方可收合的對話框：分頁、展開�
   assert.ok(script.indexOf('dock.toggle(false,true);return;') < script.indexOf("$('back').click()"));
   assert.match(script, /!\$\('dock'\)\.contains\(document\.activeElement\)\)\$\('back'\)\.click\(\)/);
 });
+test('頁首：沒有加入連結表單，搜尋在頁首並可用快捷鍵與手機放大鏡開啟，複習與回顧入口在頁首', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  const header = html.slice(html.indexOf('<header class="top">'), html.indexOf('</header>'));
+  assert.doesNotMatch(html, /id="collect-form"|id="url"/);
+  assert.doesNotMatch(script, /api\('collect'/);
+  assert.match(header, /<form id="search-form" role="search">[\s\S]*<input id="search" type="search"/);
+  assert.match(header, /<button type="button" id="search-open" aria-expanded="false" aria-controls="search-form">/);
+  assert.match(header, /data-mode="review"[^>]*><span class="long">今日<\/span>複習<span id="review-count"/);
+  assert.match(header, /data-mode="week"[^>]*><span class="long">每週<\/span>回顧</);
+  // ⌘K／Ctrl+K 與 / 都聚焦搜尋；搜尋時離開一次一篇的模式。
+  assert.match(script, /\(e\.metaKey\|\|e\.ctrlKey\)&&!e\.altKey&&e\.key\.toLowerCase\(\)==='k'/);
+  assert.match(script, /e\.key==='\/'&&!typing\)\{e\.preventDefault\(\);focusSearch\(\);\}/);
+  assert.match(script, /navigate\(\{q:\$\('search'\)\.value\.trim\(\),article:null,mode:''\}\)/);
+  // 959px 以下搜尋框收起，放大鏡按鈕出現。
+  assert.match(
+    html,
+    /@media\(max-width:959px\)\{[\s\S]*#search-form\{display:none;order:3;flex-basis:100%\}body\.searching #search-form\{display:block\}/,
+  );
+});
