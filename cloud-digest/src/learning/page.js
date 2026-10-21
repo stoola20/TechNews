@@ -16,7 +16,11 @@ body.app .top{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,560p
 .top nav a:hover,.top nav a[aria-current=page]{background:rgba(255,255,255,.12)}
 .count{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#fff;color:var(--ink);font-size:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}.count[hidden]{display:none}
 #search-open{display:none;width:40px;min-height:40px;padding:0;border:0;align-items:center;justify-content:center}#search-open svg{width:20px;height:20px}
-.layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr)}
+.layout{flex:1;min-height:0;display:grid;grid-template-columns:var(--side,340px) 6px minmax(0,1fr)}
+/* 列表與閱讀區之間的拖曳把手；一次一篇的模式、專注模式與手機版不顯示。 */
+#side-handle{cursor:col-resize;background:transparent;touch-action:none;outline-offset:-3px}#side-handle:hover,#side-handle.drag{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+body.resizing{cursor:col-resize;user-select:none}
+body.app:not([data-mode=""]) #side-handle,body.focus[data-view=reader][data-mode=""] #side-handle{display:none}
 #library{border-right:1px solid var(--line);overflow:auto;padding:0 16px 16px;background:var(--paper)}
 .reader-wrap{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column}
 #reader{flex:1;min-height:0;overflow:auto;padding:24px clamp(16px,4vw,48px) calc(var(--dock-h,64px) + 40px);scroll-padding-bottom:calc(var(--dock-h,64px) + 32px);outline:none}
@@ -145,7 +149,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 #ask-form{margin-top:8px}
 @media(prefers-reduced-motion:reduce){#dock.open .dock-body{animation:none}}
 @media(max-width:959px){
-  body.app{display:block;height:auto}.layout{display:block}
+  body.app{display:block;height:auto}.layout{display:block}#side-handle{display:none}
   #library{border-right:0;overflow:visible}.list-head{top:0}
   .reader-wrap{display:block}#reader{overflow:visible;padding:16px 16px calc(var(--dock-h,64px) + 24px)}
   html{scroll-padding-bottom:calc(var(--dock-h,64px) + 16px)}
@@ -188,6 +192,7 @@ ${LOGIN}
   <div id="list-end" aria-hidden="true"></div>
   <button type="button" id="more" hidden>載入更多</button>
 </aside>
+<div id="side-handle" role="separator" aria-orientation="vertical" aria-label="調整列表寬度" aria-controls="library" aria-valuemin="280" aria-valuemax="560" aria-valuenow="340" tabindex="0" title="拖曳調整列表寬度；雙擊還原"></div>
 <div class="reader-wrap">
 <div id="reader" tabindex="-1" aria-label="閱讀區">
   <div class="reader-bar"><button id="back">← 返回列表</button><button type="button" id="focus-toggle" aria-pressed="false" title="隱藏列表與管理資訊；Esc 離開">專注</button></div>
@@ -790,6 +795,22 @@ const focusMode={
   apply(){document.body.classList.toggle('focus',this.on);const b=$('focus-toggle');b.setAttribute('aria-pressed',String(this.on));b.textContent=this.on?'離開專注':'專注';},
 };
 $('focus-toggle').onclick=()=>focusMode.set(!focusMode.on);
+// 列表寬度：桌機拖曳把手調整，這台裝置記住；雙擊或 Home 還原，方向鍵每次 16px。
+const sideWidth={
+  min:280,max:560,base:340,
+  load(){let w=this.base;try{const saved=Number(localStorage.getItem('technews-side-width'));if(saved>=this.min&&saved<=this.max)w=saved;}catch(e){}this.set(w);},
+  set(w,save){w=Math.round(Math.min(this.max,Math.max(this.min,w)));document.documentElement.style.setProperty('--side',w+'px');$('side-handle').setAttribute('aria-valuenow',String(w));if(save)try{localStorage.setItem('technews-side-width',String(w));}catch(e){}},
+  now(){return Number($('side-handle').getAttribute('aria-valuenow'));},
+};
+$('side-handle').onpointerdown=e=>{
+  if(e.button)return;e.preventDefault();
+  const h=e.currentTarget,x0=e.clientX,w0=sideWidth.now();h.setPointerCapture(e.pointerId);h.classList.add('drag');document.body.classList.add('resizing');
+  const end=()=>{h.classList.remove('drag');document.body.classList.remove('resizing');h.onpointermove=h.onpointerup=h.onpointercancel=null;sideWidth.set(sideWidth.now(),true);};
+  h.onpointermove=m=>sideWidth.set(w0+m.clientX-x0);h.onpointerup=h.onpointercancel=end;
+};
+$('side-handle').ondblclick=()=>sideWidth.set(sideWidth.base,true);
+$('side-handle').onkeydown=e=>{const next={ArrowLeft:sideWidth.now()-16,ArrowRight:sideWidth.now()+16,Home:sideWidth.base}[e.key];if(next==null)return;e.preventDefault();sideWidth.set(next,true);};
+sideWidth.load();
 focusMode.load();
 function actions(item){
   const row=el('div',{class:'actions'});

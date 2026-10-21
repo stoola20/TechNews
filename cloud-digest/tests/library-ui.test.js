@@ -317,3 +317,21 @@ test('列表只用藍色圓點表示未讀；主題 chips 與標籤用主題色�
   assert.match(script, /'data-topic':value,\.\.\.\(color\?\{style:'--c:'\+color\}:\{\}\)/);
   assert.match(script, /el\('span',\{class:'topic-tag',style:'--c:'\+t\.color,text:t\.name\}\)/);
 });
+test('側邊欄寬度：可聚焦的拖曳把手，寬度記在這台裝置，模式、專注與手機版不顯示', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  assert.match(
+    html,
+    /<\/aside>\n<div id="side-handle" role="separator" aria-orientation="vertical" aria-label="調整列表寬度" aria-controls="library" aria-valuemin="280" aria-valuemax="560" aria-valuenow="340" tabindex="0"/,
+  );
+  assert.match(html, /\.layout\{[^}]*grid-template-columns:var\(--side,340px\) 6px minmax\(0,1fr\)\}/);
+  assert.match(
+    html,
+    /body\.app:not\(\[data-mode=""\]\) #side-handle,body\.focus\[data-view=reader\]\[data-mode=""\] #side-handle\{display:none\}/,
+  );
+  assert.match(html, /@media\(max-width:959px\)\{[\s\S]*\.layout\{display:block\}#side-handle\{display:none\}/);
+  assert.match(script, /localStorage\.getItem\('technews-side-width'\)/);
+  // 讀寫裝置設定失敗時用預設值，不報錯。
+  assert.match(script, /try\{localStorage\.setItem\('technews-side-width',String\(w\)\);\}catch\(e\)\{\}/);
+  assert.match(script, /ArrowLeft:sideWidth\.now\(\)-16,ArrowRight:sideWidth\.now\(\)\+16,Home:sideWidth\.base/);
+});
