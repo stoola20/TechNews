@@ -4,8 +4,8 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] README 快速開始與 `docs/learning-setup.md` 不再提網站的「加入文章庫」
-- [ ] 示範伺服器完整走一次規格的 UI 實際操作項目，主控台無錯誤、手機無橫向捲動
-- [ ] 驗收紀錄存在 `docs/testing/`
+- [x] README 快速開始與 `docs/learning-setup.md` 不再提網站的「加入文章庫」
+- [x] 示範伺服器完整走一次規格的 UI 實際操作項目，主控台無錯誤、手機無橫向捲動
+- [x] 驗收紀錄存在 `docs/testing/`

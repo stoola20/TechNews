@@ -179,7 +179,13 @@ npx wrangler deploy
 
 ### 7. 確認可以運作
 
-開啟 `https://<Worker 網址>/learning`，用 RUN_TOKEN 登入，貼上一篇官方文章連結並按「加入文章庫」。整理完成後，Telegram 會收到通知。
+把一篇官方文章連結傳給 Telegram bot（需先完成 webhook 設定，見[設定與使用](docs/learning-setup.md)）。還沒設定 Telegram 收件時，可以用 RUN_TOKEN 直接呼叫收件 API：
+
+```bash
+curl -X POST "https://<Worker 網址>/learning/api/collect" -H "Authorization: Bearer $RUN_TOKEN" -H "content-type: application/json" -d '{"url":"https://example.org/post"}'
+```
+
+整理完成後，Telegram 會收到通知。開啟 `https://<Worker 網址>/learning` 用 RUN_TOKEN 登入就能閱讀。
 
 官方來源**只收發表 7 天內的文章**（`MAX_ARTICLE_AGE_DAYS`），新來源首次執行也只回補這段期間；沒有日期時只處理列表第一篇。擷取失敗時不使用 RSS 簡介代替全文。
 

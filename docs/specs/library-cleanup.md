@@ -1,6 +1,6 @@
 # 文章庫介面整理：頁首、篩選、主題色與文章工具列
 
-**Status:** ready-for-agent
+**Status:** done
 
 **使用者：** 單一使用者，自用。需求已逐題確認，視覺方向以設計稿 `docs/previews/library-cleanup.html` 的方案 A 為準。本規格建立在「文章篩選、精讀問答、間隔複習與保留文章 RAG」（`docs/specs/curated-study.md`）與文章頁啟動並行化（branch `perf/parallel-page-load`）之上。
 
