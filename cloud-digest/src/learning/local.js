@@ -524,18 +524,21 @@ function sanitizeMetrics(metrics = {}) {
 }
 
 export async function runnerStatus(env) {
-  const runner = await query(env, 'SELECT * FROM learning_runners ORDER BY last_seen_at DESC LIMIT 1').first();
-  const counts = await rows(
-    env,
-    "SELECT status,COUNT(*) AS count FROM learning_jobs WHERE status IN ('waiting_local','leased','failed') GROUP BY status",
-  );
-  const current = await query(
-    env,
-    "SELECT id,kind,item_id,question_id,leased_at,lease_until FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",
-    nowIso(),
-  ).first();
+  const [runner, counts, current, provider, queue] = await Promise.all([
+    query(env, 'SELECT * FROM learning_runners ORDER BY last_seen_at DESC LIMIT 1').first(),
+    rows(
+      env,
+      "SELECT status,COUNT(*) AS count FROM learning_jobs WHERE status IN ('waiting_local','leased','failed') GROUP BY status",
+    ),
+    query(
+      env,
+      "SELECT id,kind,item_id,question_id,leased_at,lease_until FROM learning_jobs WHERE status='leased' AND lease_until>? LIMIT 1",
+      nowIso(),
+    ).first(),
+    textProvider(env),
+    queueOrder(env),
+  ]);
   const lastSeen = runner?.last_seen_at || null;
-  const provider = await textProvider(env);
   return {
     provider,
     model: localModel(env),
@@ -545,7 +548,7 @@ export async function runnerStatus(env) {
     info: runner ? JSON.parse(runner.info_json) : null,
     jobs: Object.fromEntries(counts.map((c) => [c.status, c.count])),
     current,
-    queue: (await queueOrder(env)).slice(0, 20).map((j, i) => ({
+    queue: queue.slice(0, 20).map((j, i) => ({
       position: i + 1,
       kind: j.kind,
       item_id: j.item_id,

@@ -102,7 +102,7 @@ function voidedList(items,total){
 }
 function dl(id,pairs){$(id).replaceChildren(...pairs.flatMap(p=>[el('dt',{text:p[0]}),el('dd',{text:p[1]})]));}
 async function load(){
-  const s=await api('status'),b=await api('budget'),l=s.local;
+  const [s,b]=await Promise.all([api('status'),api('budget')]),l=s.local;
   dl('models',[['文字模型',l.provider==='local'?'本機 Ollama '+l.model:'Gemini'],['媒體理解','Gemini Flash（只解析圖片與影片，保存證據）'],['主題分類','Workers AI Gemma 4（不記入預算）']]);
   dl('runner',[['狀態',l.online?'在線':'離線'],['最後心跳',when(l.last_seen_at)],['目前工作',l.current?(l.current.kind==='question'?'追問':'文章')+'・領取於 '+when(l.current.leased_at):'無'],['等待中',String(l.jobs.waiting_local||0)],['失敗待處理',String(l.jobs.failed||0)],['版本',l.info?(l.info.version||'—')+'・'+(l.info.model||'')+(l.info.model_digest?' ('+l.info.model_digest+')':''):'—']]);
   $('queue').replaceChildren(l.queue.length?el('table',{},[el('thead',{},[el('tr',{},['順序','類型','優先','有效優先','建立'].map(t=>el('th',{text:t})))]),el('tbody',{},l.queue.map(q=>el('tr',{},[q.position,q.kind==='question'?'追問':'文章',q.priority,q.effective_priority,when(q.created_at)].map(v=>el('td',{text:String(v)})))))]):el('p',{class:'muted',text:'目前沒有排隊的本機工作。'}));
@@ -228,6 +228,7 @@ $('rag-rebuild').onclick=async e=>{
   run(async()=>{const r=await api('admin/index/rebuild','POST',{});await loadIndex();message('已排入 '+r.queued+' 篇重建索引。');},button,'處理中…');
 };
 bindLogin(boot);
-async function boot(){await load();await loadSources();await loadTopics();await loadIndex();await loadWebCheck();showApp();}
+// 各區塊同時載入；狀態與預算回來就顯示頁面，其他區塊載完各自填入。
+async function boot(){await Promise.all([load().then(showApp),loadSources(),loadTopics(),loadIndex(),loadWebCheck()]);}
 run(boot);
 </script></body></html>`;
