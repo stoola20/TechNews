@@ -275,3 +275,31 @@ test('頁首：沒有加入連結表單，搜尋在頁首並可用快捷鍵與�
     /@media\(max-width:959px\)\{[\s\S]*#search-form\{display:none;order:3;flex-basis:100%\}body\.searching #search-form\{display:block\}/,
   );
 });
+test('側邊欄篩選：三段分頁與篩選選單取代入口列、檢視分頁與管理篩選', () => {
+  const html = LEARNING_PAGE,
+    script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  const head = html.slice(html.indexOf('<div class="list-head">'), html.indexOf('id="list-summary"'));
+  for (const id of ['entry-bar', 'manage-toggle', 'manage']) assert.doesNotMatch(html, new RegExp(`id="${id}"`));
+  assert.match(head, /<div id="views" class="seg" role="group" aria-label="檢視">/);
+  assert.match(
+    head,
+    /<button type="button" id="filter-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="filter-pop">/,
+  );
+  // 範圍、未讀、排序、入口、狀態都在選單內。
+  const pop = head.slice(head.indexOf('id="filter-pop"'));
+  for (const id of ['scope', 'unread', 'sort', 'origin', 'state', 'filter-clear', 'filter-done'])
+    assert.match(pop, new RegExp(`id="${id}"`), id);
+  assert.match(head, /<button type="button" id="triage-start" hidden>/);
+  // 分頁只放保留、常用、待決定；全部與最近刪除從範圍切換。
+  assert.match(script, /const TABS=VIEWS\.slice\(0,3\)/);
+  assert.match(script, /navigate\(\{triage:\$\('scope'\)\.value\|\|'kept',article:null\}\)/);
+  // 按鈕數字不計主題與搜尋。
+  assert.match(
+    script,
+    /function filterCount\(\)\{return \(\['all','deleted'\]\.includes\(view\.triage\)\?1:0\)\+\(view\.unread\?1:0\)\+\(view\.sort!=='published'\?1:0\)\+\(view\.origin\?1:0\)\+\(view\.state\?1:0\);\}/,
+  );
+  assert.match(
+    script,
+    /if\(e\.key==='Escape'\)\{e\.preventDefault\(\);e\.stopPropagation\(\);filterPop\(false,true\);\}/,
+  );
+});

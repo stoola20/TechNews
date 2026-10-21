@@ -23,12 +23,6 @@ body.app .top{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,560p
 /* 列表頂端（搜尋、排序、篩選）捲動時固定；列表依日期分組，每篇只留閱讀需要的資訊。 */
 .list-head{position:sticky;top:0;z-index:3;background:var(--paper);margin:0 -16px;padding:12px 16px 0;border-bottom:1px solid var(--line)}
 #search{width:100%}
-.tools{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;margin:6px 0}
-.tools label{display:flex;align-items:center;gap:6px;min-height:44px;font-size:14px}.tools input[type=checkbox]{min-height:auto;width:20px;height:20px}
-.tools select{min-height:36px;padding:4px 8px;font-size:14px}
-#manage-toggle{min-height:36px;padding:4px 10px;font-size:14px;border-color:transparent;background:none;color:var(--muted);text-decoration:underline}
-#manage-toggle.active{color:var(--accent);font-weight:700}
-#manage{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;padding:4px 0 12px}#manage[hidden]{display:none}#manage label{display:block;margin-bottom:4px;font-size:13px}#manage select{width:100%}
 #list{padding:0 0 8px}
 .day{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:16px 0 2px;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.02em}
 .day-items{list-style:none;margin:0;padding:0}
@@ -42,6 +36,20 @@ body.app .top{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,560p
 .item-meta .state{font-weight:700}.item-meta .state.warn{color:var(--warn)}.item-meta .state.wait{color:#22408a}
 .preview{grid-column:2;display:block;color:var(--muted);font-size:13px;line-height:1.5;margin-top:4px;overflow-wrap:anywhere}
 #more{width:100%;margin-top:8px;color:var(--muted)}#more[hidden]{display:none}
+/* 列表頂端：保留／常用／待決定三段分頁與「篩選」選單；其他條件都收在選單裡。 */
+.list-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;position:relative}
+.seg{display:inline-flex;border-radius:9px;padding:2px;background:#e9efed}
+.seg button{white-space:nowrap;min-height:34px;border:0;border-radius:7px;background:none;padding:4px 12px;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed=true]{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.seg small{margin-left:4px;font-variant-numeric:tabular-nums}
+#filter-toggle{white-space:nowrap;display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:4px 8px;border-color:transparent;background:none;color:var(--muted);font-size:14px}
+#filter-toggle svg{width:16px;height:16px}#filter-toggle.on{color:var(--accent);font-weight:600}
+#filter-count{background:var(--accent);color:#fff}
+.pop{position:absolute;right:0;top:calc(100% + 6px);width:min(300px,calc(100vw - 32px));z-index:6;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(24,58,55,.18);padding:14px;font-size:14px}.pop[hidden]{display:none}
+.pop label{display:block;margin:10px 0 4px;font-size:13px;color:var(--muted)}.pop label:first-child{margin-top:0}.pop select{width:100%;min-height:40px;padding:4px 8px;font-size:14px}
+.pop .check{display:flex;align-items:center;gap:8px;min-height:44px;margin:4px 0 0;font-size:14px;color:var(--ink)}.pop .check input{min-height:auto;width:20px;height:20px}
+.pop-foot{display:flex;justify-content:space-between;gap:8px;margin-top:14px}.pop-foot button{min-height:40px}
+#triage-start{display:flex;width:100%;justify-content:center;margin:10px 0 0;min-height:40px}#triage-start[hidden]{display:none}
 .chips{display:flex;gap:6px;overflow-x:auto;margin:0 -16px;padding:2px 16px 10px;scrollbar-width:thin}
 .chips button{flex:none;min-height:36px;padding:4px 12px;border-radius:999px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
 .chips button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
@@ -59,13 +67,6 @@ body.focus[data-view=reader][data-mode=""] #library,body.focus[data-view=reader]
 body.focus[data-view=reader][data-mode=""] .layout{grid-template-columns:minmax(0,1fr)}
 body.focus[data-view=reader][data-mode=""] :is(.admin-info,.process-note,.versions,.manage){display:none!important}
 body.focus[data-view=reader][data-mode=""] #article{max-width:880px;margin:0 auto}
-/* 篩選檢視與頂端入口：保留是預設檢視；待決定與最近刪除用同一排切換。 */
-.entry-bar{display:flex;flex-wrap:wrap;gap:6px 12px;margin:0 0 8px;font-size:14px}.entry-bar[hidden]{display:none}
-.entry-bar a{display:inline-flex;align-items:center;min-height:36px;padding:2px 12px;border-radius:999px;background:var(--soft);color:var(--ink);text-decoration:none;font-weight:600}
-.entry-bar a strong{margin-left:4px;font-variant-numeric:tabular-nums}
-.views{display:flex;gap:4px;overflow-x:auto;margin:8px -16px 0;padding:0 16px 2px;scrollbar-width:none}
-.views button{flex:none;min-height:36px;padding:4px 12px;border:0;border-radius:8px;background:none;color:var(--muted);font-size:14px;font-weight:600}
-.views button[aria-pressed=true]{background:var(--soft);color:var(--ink)}
 .star{color:#b45309;margin-right:4px}
 .deleted-row{display:flex;align-items:flex-start;gap:8px}.deleted-row a{flex:1;min-width:0}
 .deleted-row button{flex:none;min-height:36px;padding:4px 12px;margin-top:6px}
@@ -164,17 +165,19 @@ ${LOGIN}
 <main id="app" class="layout hidden">
 <aside id="library" aria-label="文章列表">
   <div class="list-head">
-  <div id="entry-bar" class="entry-bar" hidden></div>
-  <div class="tools">
-    <label><input type="checkbox" id="unread"> 只看未讀</label>
-    <label>排序 <select id="sort"><option value="published">發表時間</option><option value="added">加入時間</option></select></label>
-    <button type="button" id="manage-toggle" aria-expanded="false" aria-controls="manage">管理篩選</button>
+  <div class="list-bar">
+    <div id="views" class="seg" role="group" aria-label="檢視"></div>
+    <button type="button" id="filter-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="filter-pop"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>篩選<span id="filter-count" class="count" hidden></span></button>
+    <div id="filter-pop" class="pop" role="dialog" aria-label="篩選與排序" hidden>
+      <label for="scope">範圍</label><select id="scope"><option value="">依上方分頁</option><option value="all">全部（不含最近刪除）</option><option value="deleted">最近刪除</option></select>
+      <label class="check"><input type="checkbox" id="unread"> 只看未讀</label>
+      <label for="sort">排序</label><select id="sort"><option value="published">發表時間</option><option value="added">加入時間</option></select>
+      <label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select>
+      <label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select>
+      <div class="pop-foot"><button type="button" id="filter-clear">清除篩選</button><button type="button" id="filter-done" class="primary">完成</button></div>
+    </div>
   </div>
-  <div id="manage" hidden>
-    <div><label for="origin">收件入口</label><select id="origin"><option value="">全部入口</option><option value="official">官方來源</option><option value="bookmark">X 書籤</option><option value="backfill">書籤回補</option><option value="share">Telegram 分享</option><option value="web">網站加入</option></select></div>
-    <div><label for="state">處理狀態</label><select id="state"><option value="">全部（不含已略過）</option><option value="ready">已完成</option><option value="needs_action">需要處理（錯誤、缺漏）</option><option value="waiting_local">等待本機／本機生成中</option><option value="paused">費用暫停／手動暫停</option><option value="processing">排隊與取得來源中</option><option value="awaiting_backfill">等待確認回補</option><option value="legacy">既有導讀</option><option value="filtered">主題不符・已略過</option></select></div>
-  </div>
-  <div id="views" class="views" role="group" aria-label="篩選結果"></div>
+  <button type="button" id="triage-start" hidden></button>
   <div id="topics" class="chips" role="group" aria-label="主題"></div>
   </div>
   <p id="list-summary" class="sr" aria-live="polite"></p>
@@ -216,6 +219,8 @@ let view={q:'',unread:false,origin:'',state:'',sort:'published',topic:'',triage:
 const narrow=matchMedia('(max-width: 959px)');
 // 篩選檢視：保留是預設；選擇存在網址，重新整理或返回時維持同一個檢視。
 const VIEWS=[['kept','保留'],['starred','★ 常用'],['pending','待決定'],['all','全部'],['deleted','最近刪除']];
+// 三段分頁只放前三個檢視；全部與最近刪除從「篩選」選單的範圍切換。
+const TABS=VIEWS.slice(0,3);let pendingTotal=0;
 const TRIAGE_LABEL={pending:'待決定',kept:'保留',starred:'保留 ★',deleted:'最近刪除'};
 const MODE_NAMES=['triage','review','week'];
 function readView(){const p=new URLSearchParams(location.search),t=p.get('triage'),m=p.get('view');return {q:p.get('q')||'',unread:p.get('unread')==='1',origin:p.get('origin')||'',state:p.get('state')||'',sort:p.get('sort')==='added'?'added':'published',topic:p.get('topic')||'',triage:VIEWS.some(v=>v[0]===t)?t:'kept',article:p.get('article'),mode:MODE_NAMES.includes(m)&&!p.get('article')?m:'',week:/^\d{4}-\d{2}-\d{2}$/.test(p.get('week')||'')?p.get('week'):''};}
@@ -224,8 +229,13 @@ function listScroll(){return narrow.matches?window.scrollY:$('library').scrollTo
 function restoreScroll(y){if(y==null)return;requestAnimationFrame(()=>{if(narrow.matches)window.scrollTo(0,y);else $('library').scrollTop=y;});}
 // 每次換頁前記住列表捲動位置；返回時由瀏覽器歷史還原。
 function navigate(next,fromList){history.replaceState({...(history.state||{}),listScroll:listScroll()},'',location.href);view={...view,...('article' in next&&next.article?{mode:''}:{}),...next};history.pushState({fromList:!!fromList},'',urlFor(view));return apply();}
-function renderViews(){$('views').replaceChildren(...VIEWS.map(([value,label])=>{const b=el('button',{type:'button','aria-pressed':String(view.triage===value),'data-triage':value,text:label});b.onclick=()=>run(()=>navigate({triage:value,article:null}));return b;}));}
-function syncControls(){renderViews();$('search').value=view.q;$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;$('manage-toggle').classList.toggle('active',!!(view.origin||view.state));}
+function renderViews(){
+  $('views').replaceChildren(...TABS.map(([value,label])=>{const b=el('button',{type:'button','aria-pressed':String(view.triage===value),'data-triage':value},[document.createTextNode(label),value==='pending'&&pendingTotal?el('small',{text:String(pendingTotal)}):null]);b.onclick=()=>run(()=>navigate({triage:value,article:null}));return b;}));
+  $('triage-start').textContent='逐篇篩選（'+pendingTotal+' 篇）';$('triage-start').hidden=!(view.triage==='pending'&&pendingTotal);
+}
+// 「篩選」按鈕的數字：範圍、未讀、排序、入口、狀態；主題與搜尋本身看得到，不計入。
+function filterCount(){return (['all','deleted'].includes(view.triage)?1:0)+(view.unread?1:0)+(view.sort!=='published'?1:0)+(view.origin?1:0)+(view.state?1:0);}
+function syncControls(){renderViews();$('search').value=view.q;$('scope').value=['all','deleted'].includes(view.triage)?view.triage:'';$('unread').checked=view.unread;$('origin').value=view.origin;$('state').value=view.state;$('sort').value=view.sort;const n=filterCount();$('filter-count').textContent=n||'';$('filter-count').hidden=!n;$('filter-toggle').classList.toggle('on',!!n);}
 async function apply(){
   syncControls();
   document.body.dataset.mode=view.mode||'';
@@ -832,13 +842,10 @@ async function poll(){
 }
 let textModel=null;
 function textModelName(){return !textModel?'目前設定的文字模型':textModel.provider==='local'?'本機 '+textModel.model:/gemini/i.test(textModel.model)?textModel.model:'Gemini '+textModel.model;}
-// 頁首的今日複習題數；列表頂端的入口只剩待決定篇數。
+// 頁首的今日複習題數；待決定篇數顯示在分頁與逐篇篩選入口。
 function renderEntries(s){
   $('review-count').textContent=s.reviews_today||'';$('review-count').hidden=!s.reviews_today;
-  const links=[];
-  if(s.triage_pending)links.push(el('a',{href:urlFor({...view,mode:'triage',article:null}),'data-entry':'triage','data-mode':'triage'},[document.createTextNode('待決定'),el('strong',{text:s.triage_pending+' 篇'})]));
-  $('entry-bar').replaceChildren(...links);$('entry-bar').hidden=!links.length;
-  for(const a of links)a.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:a.dataset.mode,week:'',article:null}));};
+  pendingTotal=s.triage_pending||0;renderViews();
 }
 async function refreshEntries(){try{renderEntries(await api('status'));}catch(e){}}
 function renderStatus(s){
@@ -1013,7 +1020,15 @@ $('origin').onchange=()=>run(()=>navigate({origin:$('origin').value}));
 $('state').onchange=()=>run(()=>navigate({state:$('state').value}));
 $('sort').onchange=()=>run(()=>navigate({sort:$('sort').value}));
 $('more').onclick=e=>run(loadMore,e.currentTarget,'載入中…');
-$('manage-toggle').onclick=e=>{const open=$('manage').hidden;$('manage').hidden=!open;e.currentTarget.setAttribute('aria-expanded',String(open));};
+// 篩選選單：Esc 或點選單外面關閉，焦點回到按鈕。
+function filterPop(on,returnFocus){$('filter-pop').hidden=!on;$('filter-toggle').setAttribute('aria-expanded',String(on));if(on)$('scope').focus();else if(returnFocus)$('filter-toggle').focus();}
+$('filter-toggle').onclick=()=>filterPop($('filter-pop').hidden);
+$('filter-done').onclick=()=>filterPop(false,true);
+$('filter-pop').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();filterPop(false,true);}});
+document.addEventListener('pointerdown',e=>{if(!$('filter-pop').hidden&&!$('filter-pop').contains(e.target)&&!$('filter-toggle').contains(e.target))filterPop(false);});
+$('scope').onchange=()=>run(()=>navigate({triage:$('scope').value||'kept',article:null}));
+$('filter-clear').onclick=()=>run(()=>navigate({triage:['all','deleted'].includes(view.triage)?'kept':view.triage,unread:false,sort:'published',origin:'',state:''}));
+$('triage-start').onclick=()=>run(()=>navigate({mode:'triage',week:'',article:null}));
 // 列表底部出現在畫面中就載入下一批；不支援時保留「載入更多」按鈕。
 if('IntersectionObserver' in window)new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting))run(loadMore);},{rootMargin:'200px'}).observe($('list-end'));
 $('back').onclick=()=>{if(history.state&&history.state.fromList)history.back();else run(()=>navigate({article:null}));};
