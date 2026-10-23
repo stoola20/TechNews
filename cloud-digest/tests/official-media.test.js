@@ -110,24 +110,27 @@ function browser(respond = () => new Response(new Uint8Array(4096), { headers: {
   };
 }
 const figures = `
-  <figure aria-label="effort curve"><svg width="634" height="468" viewBox="0 0 634 468"></svg><figcaption>FIG A</figcaption></figure>
+  <figure><svg width="634" height="468" viewBox="0 0 634 468"></svg><figcaption>FIG A</figcaption></figure>
   <figure aria-label="interactive app"><div class="efx"><button>low</button><button>high</button></div></figure>
   <figure><pre><code>npm install</code></pre><figcaption>安裝指令</figcaption></figure>
   <figure><svg width="16" height="16" viewBox="0 0 16 16"></svg></figure>
   <figure><img src="/diagrams/photo.png" width="960"><figcaption>照片</figcaption></figure>
-  <figure aria-label="chart"><canvas></canvas></figure>`;
+  <figure id="chart-1" aria-label="chart"><canvas></canvas></figure>`;
+const figureHtml = `<html><body><aside><figure aria-label="側欄"><svg width="900" height="900"></svg></figure></aside>
+  <article id="post"><h1>Official</h1><p>${body}</p>${figures}</article></body></html>`;
+const figureUrl = (selector) => POST + '#technews-figure=' + encodeURIComponent(selector);
 
 test('正文圖表：SVG、互動元件、canvas 登記成截圖媒體；程式碼、小圖示、已有 <img> 的 figure 不截', async () => {
-  const html = `<html><body><aside><figure aria-label="側欄"><svg width="900" height="900"></svg></figure></aside>${page(figures)}</body></html>`;
-  const s = await officialItem({ html });
+  const s = await officialItem({ html: figureHtml });
   await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  // selector 依序用 id、唯一的 aria-label、從最近有 id 的祖先算起的 nth-child 路徑；側欄的 figure 不在正文裡。
   assert.deepEqual(
     (await media(s.env, s.id)).map((m) => [m.url, m.status]),
     [
       ['https://developers.openai.com/diagrams/photo.png', 'pending'],
-      [POST + '#technews-figure-1', 'pending'],
-      [POST + '#technews-figure-2', 'pending'],
-      [POST + '#technews-figure-6', 'pending'],
+      [figureUrl('[id="post"] > figure:nth-child(3)'), 'pending'],
+      [figureUrl('figure[aria-label="interactive app"]'), 'pending'],
+      [figureUrl('figure[id="chart-1"]'), 'pending'],
     ],
   );
 });
@@ -139,24 +142,24 @@ test('正文圖表每篇最多 8 張，多的登記為待處理並寫明原因',
   const list = await media(s.env, s.id);
   assert.equal(list.filter((m) => m.status === 'pending').length, 8);
   assert.deepEqual(
-    list.filter((m) => m.status === 'needs_attention').map((m) => [m.url.split('#')[1], m.error]),
+    list.filter((m) => m.status === 'needs_attention').map((m) => [m.url, m.error]),
     [
-      ['technews-figure-8', '正文圖表超過 8 張，這張沒有截圖'],
-      ['technews-figure-9', '正文圖表超過 8 張，這張沒有截圖'],
+      [figureUrl('figure[aria-label="chart 8"]'), '正文圖表超過 8 張，這張沒有截圖'],
+      [figureUrl('figure[aria-label="chart 9"]'), '正文圖表超過 8 張，這張沒有截圖'],
     ],
   );
 });
 
-test('截圖流程：標記第 N 個 figure 只截那個元素，存進 R2 後照常上傳 Gemini；到期後重新截圖', async () => {
-  const s = await officialItem({ html: page(figures) });
+test('截圖流程：用 selector 只截那個元素，不注入 script；存進 R2 後照常上傳 Gemini；到期後重新截圖', async () => {
+  const s = await officialItem({ html: figureHtml });
   s.env.BROWSER = browser();
   const net = recorder(async (url) => gemini(url));
   await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
   await query(
     s.env,
-    "UPDATE learning_media SET status='decorative' WHERE item_id=? AND url NOT LIKE ?",
+    "UPDATE learning_media SET status='decorative' WHERE item_id=? AND url!=?",
     s.id,
-    '%figure-1',
+    figureUrl('figure[aria-label="interactive app"]'),
   ).run();
   const result = await prepareMedia(s.env, s.id, net.fetcher);
   assert.equal(result.media.length, 1);
@@ -164,8 +167,9 @@ test('截圖流程：標記第 N 個 figure 只截那個元素，存進 R2 後�
   const call = s.env.BROWSER.calls[0];
   assert.equal(call.kind, 'screenshot');
   assert.equal(call.options.url, POST);
-  assert.equal(call.options.selector, '[data-technews-figure]');
-  assert.match(call.options.addScriptTag[0].content, /querySelectorAll\('figure'\)\[1\]/);
+  assert.equal(call.options.selector, 'figure[aria-label="interactive app"]');
+  assert.equal(call.options.waitForSelector.selector, call.options.selector);
+  assert.equal(call.options.addScriptTag, undefined);
   const [asset] = await rows(s.env, "SELECT * FROM learning_media WHERE item_id=? AND status='ready'", s.id);
   assert.equal(asset.mime, 'image/png');
   assert.equal(s.env.MEDIA.objects.get(asset.object_key).bytes.length, 4096);

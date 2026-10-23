@@ -111,14 +111,36 @@ function bodyImages(root, resolved) {
   return media.filter((m, i) => media.findIndex((x) => x.url === m.url) === i);
 }
 // 正文裡沒有圖片檔的 <figure>（inline SVG 圖表、JS 互動元件）改用 Browser Rendering 截圖。
-// 網址記成「原文網址#technews-figure-N」，N 是整頁第幾個 <figure>，截圖時用同一個順序找回元素。
-export const FIGURE_MARK = '#technews-figure-';
+// 網址記成「原文網址#technews-figure=<CSS selector>」，截圖時用這個 selector 找回元素；
+// 不注入 script，因為網站的 CSP 會擋掉。selector 依序用 id、唯一的 aria-label、從最近有 id 的祖先算起的 nth-child 路徑。
+export const FIGURE_MARK = '#technews-figure=';
 export const MAX_FIGURES = 8;
-export function figureIndex(url) {
-  const match = String(url || '').match(/#technews-figure-(\d+)$/);
-  return match ? Number(match[1]) : null;
+export function figureSelector(url) {
+  const at = String(url || '').lastIndexOf(FIGURE_MARK);
+  return at < 0 ? null : decodeURIComponent(url.slice(at + FIGURE_MARK.length)) || null;
 }
 export const figurePage = (url) => url.slice(0, url.lastIndexOf(FIGURE_MARK));
+const quoted = (value) => '"' + value.replace(/["\\]/g, '\\$&') + '"';
+function cssPath(doc, figure) {
+  const id = figure.getAttribute('id');
+  if (id && doc.querySelectorAll(`[id=${quoted(id)}]`).length === 1) return `figure[id=${quoted(id)}]`;
+  const label = figure.getAttribute('aria-label');
+  if (label) {
+    const selector = `figure[aria-label=${quoted(label)}]`;
+    if (doc.querySelectorAll(selector).length === 1) return selector;
+  }
+  const steps = [];
+  for (let node = figure; node && node.tagName && node.tagName !== 'HTML'; node = node.parentElement) {
+    const anchor = node !== figure && node.getAttribute('id');
+    if (anchor && doc.querySelectorAll(`[id=${quoted(anchor)}]`).length === 1) {
+      steps.unshift(`[id=${quoted(anchor)}]`);
+      return steps.join(' > ');
+    }
+    const index = [...node.parentElement.children].indexOf(node) + 1;
+    steps.unshift(`${node.tagName.toLowerCase()}:nth-child(${index})`);
+  }
+  return 'html > ' + steps.join(' > ');
+}
 function largeSvg(svg) {
   const box = (svg.getAttribute('viewBox') || '')
     .trim()
@@ -136,15 +158,12 @@ function visualFigure(figure) {
 }
 function bodyFigures(doc, root, pageUrl) {
   if (!root) return [];
-  const all = [...doc.querySelectorAll('figure')];
   const page = canonicalUrl(pageUrl);
-  return all
-    .filter((figure) => root.contains(figure) && visualFigure(figure))
-    .map((figure, n) => ({
-      url: page + FIGURE_MARK + all.indexOf(figure),
-      type: 'photo',
-      ...(n >= MAX_FIGURES ? { error: `正文圖表超過 ${MAX_FIGURES} 張，這張沒有截圖` } : {}),
-    }));
+  return [...root.querySelectorAll('figure')].filter(visualFigure).map((figure, n) => ({
+    url: page + FIGURE_MARK + encodeURIComponent(cssPath(doc, figure)),
+    type: 'photo',
+    ...(n >= MAX_FIGURES ? { error: `正文圖表超過 ${MAX_FIGURES} 張，這張沒有截圖` } : {}),
+  }));
 }
 // 官方文章的圖片：正文區塊依來源設定的選擇器，找不到時退到 <article>／<main>／<body>。
 export function pageMedia(html, selectors, resolved) {

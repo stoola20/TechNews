@@ -1,4 +1,4 @@
-import { apiJson, publicFetch, decorativeImage, figureIndex, figurePage } from './network.js';
+import { apiJson, publicFetch, decorativeImage, figureSelector, figurePage } from './network.js';
 import { rows, query, reserve, settle, uncertain, nowIso } from './store.js';
 import { now } from './clock.js';
 
@@ -57,7 +57,7 @@ export async function prepareMedia(env, itemId, fetcher = fetch, options = {}) {
     try {
       if (!env.MEDIA) throw new Error('R2 MEDIA binding 未設定');
       if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY 未設定');
-      if (!asset.object_key && figureIndex(asset.url) != null) await storeFigure(env, asset);
+      if (!asset.object_key && figureSelector(asset.url)) await storeFigure(env, asset);
       else if (!asset.object_key) {
         const response = await publicFetch(asset.url, fetcher);
         if (!response.ok) {
@@ -228,22 +228,19 @@ export async function prepareMedia(env, itemId, fetcher = fetch, options = {}) {
   };
 }
 const MAX_FIGURE_BYTES = 20 * 1024 * 1024;
-// 正文圖表截圖：注入 script 替整頁第 N 個 <figure> 加標記，等標記出現後只截那個元素。
+// 正文圖表截圖：用登記時算好的 selector 只截那個元素，等元素出現後再截。
 // 互動元件只截得到載入後的預設狀態；捲動整頁讓延遲載入的內容先畫出來。
 async function storeFigure(env, asset) {
   if (!env.BROWSER) throw new Error('未設定 Browser Rendering，無法截取正文圖表');
-  const index = figureIndex(asset.url);
+  const selector = figureSelector(asset.url);
   const response = await env.BROWSER.quickAction('screenshot', {
     url: figurePage(asset.url),
     gotoOptions: { waitUntil: 'networkidle2', timeout: 25000 },
     viewport: { width: 1280, height: 900, deviceScaleFactor: 2 },
-    addScriptTag: [
-      { content: `document.querySelectorAll('figure')[${index}]?.setAttribute('data-technews-figure','');` },
-    ],
-    waitForSelector: { selector: '[data-technews-figure]', timeout: 10000 },
+    waitForSelector: { selector, timeout: 10000 },
     waitForTimeout: 1000,
     scrollPage: true,
-    selector: '[data-technews-figure]',
+    selector,
     screenshotOptions: { type: 'png' },
   });
   const mime = (response.headers.get('content-type') || '').split(';')[0];

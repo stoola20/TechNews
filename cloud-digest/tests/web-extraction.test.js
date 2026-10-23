@@ -62,8 +62,13 @@ test('靜態 HTML 沒有正文時才用 Browser Rendering 擷取渲染後頁面'
   await assert.rejects(webEvidence('https://example.org/app', site(shell).fetcher, {}), /Article/);
 });
 
-test('網頁分享也登記正文圖表截圖，網址記成原文網址加 figure 順序', async () => {
+test('網頁分享也登記正文圖表截圖，網址記成原文網址加元素 selector', async () => {
   const page = `<html><body><article><h1>文章</h1><p>${body}</p><figure aria-label="chart"><svg width="640" height="400"></svg></figure></article></body></html>`;
   const result = await webEvidence('https://example.org/post', site(page).fetcher);
-  assert.deepEqual(result.media, [{ url: 'https://example.org/post#technews-figure-0', type: 'photo' }]);
+  assert.deepEqual(result.media, [
+    {
+      url: 'https://example.org/post#technews-figure=' + encodeURIComponent('figure[aria-label="chart"]'),
+      type: 'photo',
+    },
+  ]);
 });
