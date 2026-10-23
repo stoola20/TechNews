@@ -92,10 +92,8 @@ export function decorativeImage(img, source) {
   if (size != null && size <= 200) return true;
   return !!img.closest?.('header,nav,footer,aside');
 }
-// 沒有 <article>／<main> 的頁面退到 <body>，先移除導覽、頁首、頁尾與表單等非正文區塊。
-function pageEvidence(raw, url, resolved) {
-  const doc = parseHTML(raw).document;
-  const root = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+// 正文區塊裡的 <img>：取最大尺寸的來源，排除裝飾圖片，同一張圖只登記一次。
+function bodyImages(root, resolved) {
   const media = [...(root?.querySelectorAll('img') || [])].flatMap((img) => {
     const source =
       img.getAttribute('data-src') ||
@@ -110,6 +108,75 @@ function pageEvidence(raw, url, resolved) {
       return [];
     }
   });
+  return media.filter((m, i) => media.findIndex((x) => x.url === m.url) === i);
+}
+// 正文裡沒有圖片檔的 <figure>（inline SVG 圖表、JS 互動元件）改用 Browser Rendering 截圖。
+// 網址記成「原文網址#technews-figure=<CSS selector>」，截圖時用這個 selector 找回元素；
+// 不注入 script，因為網站的 CSP 會擋掉。selector 依序用 id、唯一的 aria-label、從最近有 id 的祖先算起的 nth-child 路徑。
+export const FIGURE_MARK = '#technews-figure=';
+export const MAX_FIGURES = 8;
+export function figureSelector(url) {
+  const at = String(url || '').lastIndexOf(FIGURE_MARK);
+  return at < 0 ? null : decodeURIComponent(url.slice(at + FIGURE_MARK.length)) || null;
+}
+export const figurePage = (url) => url.slice(0, url.lastIndexOf(FIGURE_MARK));
+const quoted = (value) => '"' + value.replace(/["\\]/g, '\\$&') + '"';
+function cssPath(doc, figure) {
+  const id = figure.getAttribute('id');
+  if (id && doc.querySelectorAll(`[id=${quoted(id)}]`).length === 1) return `figure[id=${quoted(id)}]`;
+  const label = figure.getAttribute('aria-label');
+  if (label) {
+    const selector = `figure[aria-label=${quoted(label)}]`;
+    if (doc.querySelectorAll(selector).length === 1) return selector;
+  }
+  const steps = [];
+  for (let node = figure; node && node.tagName && node.tagName !== 'HTML'; node = node.parentElement) {
+    const anchor = node !== figure && node.getAttribute('id');
+    if (anchor && doc.querySelectorAll(`[id=${quoted(anchor)}]`).length === 1) {
+      steps.unshift(`[id=${quoted(anchor)}]`);
+      return steps.join(' > ');
+    }
+    const index = [...node.parentElement.children].indexOf(node) + 1;
+    steps.unshift(`${node.tagName.toLowerCase()}:nth-child(${index})`);
+  }
+  return 'html > ' + steps.join(' > ');
+}
+function largeSvg(svg) {
+  const box = (svg.getAttribute('viewBox') || '')
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const sizes = [Number(svg.getAttribute('width')), Number(svg.getAttribute('height')), box[2], box[3]];
+  return sizes.some((n) => Number.isFinite(n) && n > 200);
+}
+// 有圖片檔的交給 <img> 收集；只有程式碼、引言或表格的文字已在正文裡，不截圖。
+function visualFigure(figure) {
+  if (figure.querySelector('img,video,picture')) return false;
+  if (figure.querySelector('canvas') || [...figure.querySelectorAll('svg')].some(largeSvg)) return true;
+  if (figure.querySelector('pre,code,blockquote,table')) return false;
+  return !!(figure.getAttribute('aria-label') || figure.querySelector('figcaption'));
+}
+function bodyFigures(doc, root, pageUrl) {
+  if (!root) return [];
+  const page = canonicalUrl(pageUrl);
+  return [...root.querySelectorAll('figure')].filter(visualFigure).map((figure, n) => ({
+    url: page + FIGURE_MARK + encodeURIComponent(cssPath(doc, figure)),
+    type: 'photo',
+    ...(n >= MAX_FIGURES ? { error: `正文圖表超過 ${MAX_FIGURES} 張，這張沒有截圖` } : {}),
+  }));
+}
+// 官方文章的圖片：正文區塊依來源設定的選擇器，找不到時退到 <article>／<main>／<body>。
+export function pageMedia(html, selectors, resolved) {
+  const doc = parseHTML(html).document;
+  const root =
+    [...selectors, 'article', 'main'].map((selector) => doc.querySelector(selector)).find(Boolean) || doc.body;
+  return [...bodyImages(root, resolved), ...bodyFigures(doc, root, resolved)];
+}
+// 沒有 <article>／<main> 的頁面退到 <body>，先移除導覽、頁首、頁尾與表單等非正文區塊。
+function pageEvidence(raw, url, resolved) {
+  const doc = parseHTML(raw).document;
+  const root = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+  const media = [...bodyImages(root, resolved), ...bodyFigures(doc, root, resolved)];
   let entry;
   try {
     entry = extractArticle(raw, { id: 'learning', contentSelector: null }, { url: resolved, title: url });

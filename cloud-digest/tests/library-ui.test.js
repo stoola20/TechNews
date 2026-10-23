@@ -106,6 +106,8 @@ test('只重寫文字不重抓來源；重送通知只用保存內容；頁面�
     assert.doesNotMatch(script, /(^|[^.\w])confirm\(/);
     assert.match(script, /askConfirm\(/);
   }
+  // 官方文章的「⋯」選單有重抓原文，走補取端點。
+  assert.match(LEARNING_PAGE, /item\.refetchable&&[^\n]*'重抓原文並整理'[^\n]*\/retry'/);
   const admin = await handler.fetch(new Request('https://learning.example.org/learning/admin'), env);
   assert.equal(admin.status, 200);
   assert.match(admin.headers.get('content-security-policy'), /frame-ancestors 'none'/);
@@ -263,8 +265,12 @@ test('頁首：沒有加入連結表單，搜尋在頁首並可用快捷鍵與�
   assert.doesNotMatch(script, /api\('collect'/);
   assert.match(header, /<form id="search-form" role="search">[\s\S]*<input id="search" type="search"/);
   assert.match(header, /<button type="button" id="search-open" aria-expanded="false" aria-controls="search-form">/);
-  assert.match(header, /data-mode="review"[^>]*><span class="long">今日<\/span>複習<span id="review-count"/);
-  assert.match(header, /data-mode="week"[^>]*><span class="long">每週<\/span>回顧</);
+  // 「今日」與「複習」包在同一個 span，不會被連結的 flex gap 拆開。
+  assert.match(
+    header,
+    /data-mode="review"[^>]*><span><span class="long">今日<\/span>複習<\/span><span id="review-count"/,
+  );
+  assert.match(header, /data-mode="week"[^>]*><span><span class="long">每週<\/span>回顧<\/span></);
   // ⌘K／Ctrl+K 與 / 都聚焦搜尋；搜尋時離開一次一篇的模式。
   assert.match(script, /\(e\.metaKey\|\|e\.ctrlKey\)&&!e\.altKey&&e\.key\.toLowerCase\(\)==='k'/);
   assert.match(script, /e\.key==='\/'&&!typing\)\{e\.preventDefault\(\);focusSearch\(\);\}/);

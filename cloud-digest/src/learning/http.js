@@ -19,7 +19,7 @@ import {
   nowIso,
 } from './store.js';
 import { exchange, xRead, bookmarksEnabled, xReads, setXReads } from './x.js';
-import { resetIncomplete } from './evidence.js';
+import { resetIncomplete, requestRefetch } from './evidence.js';
 import { renderMarkdown } from './markdown.js';
 import {
   resolveItemId,
@@ -49,7 +49,7 @@ import { indexStatus, rebuildIndex } from './rag-index.js';
 import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
 import { listQuizzes, quizView, attemptView, QuizError } from './quiz.js';
 import { webCheckSummary, setWebCheck } from './web-check.js';
-import { todayReviews, todayCount } from './reviews.js';
+import { todayReviews, todayCount, dismissReview } from './reviews.js';
 import { weekStats } from './week-stats.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
@@ -586,6 +586,7 @@ export function createLearningHandler(deps = {}) {
         if (match[2] === '/retry' && request.method === 'POST') {
           if (current.status === 'awaiting_backfill') throw new Error('請先確認既有書籤回補');
           await resetIncomplete(env, id);
+          await requestRefetch(env, current);
           await query(
             env,
             "UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL WHERE id=?",
@@ -623,6 +624,8 @@ export function createLearningHandler(deps = {}) {
             item: {
               ...fresh,
               publisher,
+              // 官方來源收件的文章可以重抓原文與圖片；閱讀頁「⋯」選單據此顯示「重抓原文並整理」。
+              refetchable: fresh.kind !== 'x' && intakes.some((k) => k.origin === 'official'),
               purge_at: purgeAt(fresh.deleted_at),
               body_html: renderMarkdown(fresh.body || ''),
             },
@@ -697,6 +700,11 @@ export function createLearningHandler(deps = {}) {
       if (route === 'reviews/today' && request.method === 'GET') return json(await todayReviews(env));
       if (route === 'stats/week' && request.method === 'GET')
         return json(await weekStats(env, url.searchParams.get('start')));
+      const dismissMatch = route.match(/^reviews\/([0-9a-f-]{36})\/dismiss$/);
+      if (dismissMatch && request.method === 'POST') {
+        const result = await dismissReview(env, dismissMatch[1]);
+        return result.error ? json({ error: result.error[0] }, result.error[1]) : json(result);
+      }
       const reviewMatch = route.match(/^reviews\/([0-9a-f-]{36})\/attempts$/);
       if (reviewMatch && request.method === 'POST') {
         const attempt = await service.review(env, reviewMatch[1], await body(request));

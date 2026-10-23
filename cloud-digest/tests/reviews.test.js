@@ -195,6 +195,33 @@ test('取消保留的文章暫停複習、重新保留後照原到期日出現�
   assert.equal((await rows(s.env, 'SELECT id FROM learning_attempts')).length, 0);
 });
 
+test('不再複習這題：移出今日複習與計數，重做同一份測驗答錯也不加回；已移出或已完成的回 409', async () => {
+  const s = setup();
+  const { quiz } = await quizFor(s);
+  await quizAttempt(s, quiz, [
+    { number: 1, answer: '錯' },
+    { number: 2, answer: '錯' },
+  ]);
+  s.clock.now = Date.parse('2026-10-02T01:00:00Z');
+  const before = await today(s);
+  assert.equal(before.items.length, 2);
+  const id = before.items.find((i) => i.number === 1).id;
+  const dismiss = () => s.handler.fetch(request('api/reviews/' + id + '/dismiss', 'POST', {}), s.env);
+  assert.equal((await dismiss()).status, 200);
+  const after = await today(s);
+  assert.deepEqual([after.items.length, after.items[0].number, after.total_due, after.answered_today], [1, 2, 1, 0]);
+  assert.equal((await dismiss()).status, 409);
+  await quizAttempt(s, quiz, [{ number: 1, answer: '錯' }]);
+  assert.deepEqual(
+    (await reviews(s)).map((r) => [r.number, r.status]),
+    [
+      [1, 'dismissed'],
+      [2, 'active'],
+    ],
+  );
+  assert.equal((await reviewAttempt(s, id, 'RIGHT')).status, 409);
+});
+
 test('今日複習的查詢走索引', () => {
   const s = setup();
   const plan = s.env.DB.sqlite

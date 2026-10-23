@@ -206,8 +206,8 @@ export async function registerMedia(env, itemId, evidenceId, list) {
       m.url || '',
       m.type,
       m.duration_ms || null,
-      m.url ? 'pending' : 'needs_attention',
-      m.url ? null : '來源未提供可取得的完整媒體 URL',
+      m.url && !m.error ? 'pending' : 'needs_attention',
+      m.error || (m.url ? null : '來源未提供可取得的完整媒體 URL'),
       nowIso(),
     ).run();
   }
