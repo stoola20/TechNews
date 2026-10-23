@@ -4,9 +4,11 @@
 
 **Blocked by:** 01, 02, 03
 
-**Status:** pending
+**Status:** in progress
 
-- [ ] `docs/architecture.md` 更新官方文章媒體說明
-- [ ] `evidence.js` 的舊註解更新
-- [ ] `npm test`、`npm run format:check` 通過
+- [x] `docs/architecture.md` 更新官方文章媒體說明
+- [x] `evidence.js` 的舊註解更新
+- [x] `npm test`、`npm run format:check` 通過
 - [ ] 部署後實測驗收（需使用者同意部署）
+
+**實作紀錄：** 文件更新 `docs/architecture.md`（新增「官方文章與網頁的圖片」）、`docs/learning-setup.md` 與 `docs/source-strategy.md` 的 Browser Run 用量說明。`npm test` 199 個全部通過，`format:check` 通過。部署前已用本機 Chrome（playwright-core）模擬截圖流程，`spending-your-effort` 的 6 張 figure 都截到正確元素。正式環境的 Browser Run 截圖還沒驗收。

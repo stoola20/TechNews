@@ -15,7 +15,7 @@
 主題分類使用 Workers AI 的 Google Gemma 4，每篇只送標題與導讀，不記入文章庫的月預算。Workers AI 免費與付費方案都包含每日 10,000 Neurons，每日 UTC 00:00 重置；免費方案用完後請求失敗。
 來源：[Workers AI 定價](https://developers.cloudflare.com/workers-ai/platform/pricing/)。
 
-官方文章直接請求失敗時，改用 Browser Run 取得渲染後的 HTML。Browser Run 免費方案另有每日 10 分鐘瀏覽器時間，與模型額度分開。網站的防機器人措施仍能阻擋 Browser Run，不保證擷取成功。
+官方文章直接請求失敗時，改用 Browser Run 取得渲染後的 HTML。正文裡沒有圖片檔的 `<figure>` 也用 Browser Run 截圖，每張圖各載入一次頁面，每篇最多 8 張。Browser Run 免費方案另有每日 10 分鐘瀏覽器時間，與模型額度分開。網站的防機器人措施仍能阻擋 Browser Run，不保證擷取成功。
 來源：[Browser Run 定價](https://developers.cloudflare.com/browser-run/pricing/)、[擷取說明](https://developers.cloudflare.com/browser-run/quick-actions/content-endpoint/)。
 
 ## Worker 與 n8n
