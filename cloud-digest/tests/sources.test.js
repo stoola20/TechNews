@@ -93,17 +93,18 @@ test('fails rather than generating partial text or using RSS after a blocked fet
 
 test('uses official claude.dev Markdown instead of its RSS excerpt', async () => {
   const { loadArticle } = await import('../src/sources.js');
-  let requested;
+  const requested = [];
   const content = '# Complete tutorial\n\n' + 'Paragraph. '.repeat(60) + '\nFINAL SECTION';
   const article = await loadArticle(
     SOURCES[4],
     { url: 'https://claude.dev/blog/tutorial', content: 'RSS teaser' },
     async (url) => {
-      requested = url;
-      return new Response(content);
+      requested.push(url);
+      return new Response(url.endsWith('.md') ? content : '<html></html>');
     },
   );
-  assert.equal(requested, 'https://claude.dev/blog/tutorial.md');
+  // 正文用 .md；另抓網頁 HTML 只用來收圖片。
+  assert.deepEqual(requested, ['https://claude.dev/blog/tutorial.md', 'https://claude.dev/blog/tutorial']);
   assert.equal(article.content, content);
   assert.equal(article.contentMethod, 'official_markdown');
 });

@@ -1,8 +1,10 @@
-import { apiJson, publicFetch, decorativeImage } from './network.js';
+import { apiJson, publicFetch, decorativeImage, figureSelector, figurePage } from './network.js';
 import { rows, query, reserve, settle, uncertain, nowIso } from './store.js';
 import { now } from './clock.js';
 
 const MAX_BYTES = 200 * 1024 * 1024;
+// 官方網頁 HTML 取不到時登記的佔位媒體：只用來顯示缺漏，不下載；重抓原文成功後移除。
+export const PAGE_HTML_MISSING = '#technews-page-html';
 // 外部網頁的裝飾圖片（舊資料可能已登記）改標 decorative：不下載、不解析，也不算缺漏。
 const NO_ELEMENT = { getAttribute: () => null, closest: () => null };
 export async function skipDecorative(env, itemId) {
@@ -44,6 +46,10 @@ export async function prepareMedia(env, itemId, fetcher = fetch, options = {}) {
   let pending = false;
   for (const asset of assets) {
     if (['needs_attention', 'expired'].includes(asset.status)) continue;
+    if (asset.url.endsWith(PAGE_HTML_MISSING)) {
+      await fail(env, asset, asset.error || '官方網頁取不到，無法收集圖片');
+      continue;
+    }
     if (asset.duration_ms > 1200000) {
       await fail(env, asset, '影片超過 20 分鐘，保留待人工處理');
       continue;
@@ -51,7 +57,8 @@ export async function prepareMedia(env, itemId, fetcher = fetch, options = {}) {
     try {
       if (!env.MEDIA) throw new Error('R2 MEDIA binding 未設定');
       if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY 未設定');
-      if (!asset.object_key) {
+      if (!asset.object_key && figureSelector(asset.url)) await storeFigure(env, asset);
+      else if (!asset.object_key) {
         const response = await publicFetch(asset.url, fetcher);
         if (!response.ok) {
           await response.body?.cancel();
@@ -219,6 +226,58 @@ export async function prepareMedia(env, itemId, fetcher = fetch, options = {}) {
       itemId,
     ),
   };
+}
+const MAX_FIGURE_BYTES = 20 * 1024 * 1024;
+// 正文圖表截圖：用登記時算好的 selector 只截那個元素，等元素出現後再截。
+// 互動元件只截得到載入後的預設狀態；捲動整頁讓延遲載入的內容先畫出來。
+async function storeFigure(env, asset) {
+  if (!env.BROWSER) throw new Error('未設定 Browser Rendering，無法截取正文圖表');
+  const selector = figureSelector(asset.url);
+  const response = await env.BROWSER.quickAction('screenshot', {
+    url: figurePage(asset.url),
+    gotoOptions: { waitUntil: 'networkidle2', timeout: 25000 },
+    viewport: { width: 1280, height: 900, deviceScaleFactor: 2 },
+    waitForSelector: { selector, timeout: 10000 },
+    waitForTimeout: 1000,
+    scrollPage: true,
+    selector,
+    screenshotOptions: { type: 'png' },
+  });
+  const mime = (response.headers.get('content-type') || '').split(';')[0];
+  if (!response.ok || mime !== 'image/png') {
+    await response.body?.cancel();
+    throw new Error(`正文圖表截圖失敗（HTTP ${response.status}）`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.byteLength || bytes.byteLength > MAX_FIGURE_BYTES) throw new Error('正文圖表截圖大小不合理');
+  const cost = await reserve(env, 'r2-storage', Math.ceil((bytes.byteLength / 1e9) * 0.015 * 1e6) + 10);
+  try {
+    const key = `learning/${asset.id}`;
+    await env.MEDIA.put(key, bytes, { httpMetadata: { contentType: mime } });
+    await settle(env, cost, Math.ceil((bytes.byteLength / 1e9) * 0.015 * 1e6) + 10, {
+      bytes: bytes.byteLength,
+      retention_days: 30,
+    });
+    Object.assign(asset, {
+      object_key: key,
+      bytes: bytes.byteLength,
+      mime,
+      expires_at: new Date(now() + 30 * 86400000).toISOString(),
+    });
+    await query(
+      env,
+      "UPDATE learning_media SET object_key=?,bytes=?,mime=?,expires_at=?,status='stored',updated_at=? WHERE id=?",
+      key,
+      asset.bytes,
+      mime,
+      asset.expires_at,
+      nowIso(),
+      asset.id,
+    ).run();
+  } catch (error) {
+    await uncertain(env, cost);
+    throw error;
+  }
 }
 async function fail(env, asset, message) {
   await query(

@@ -208,15 +208,21 @@ export function parseAppleFeed(xml) {
   return parseFeed(xml, SOURCES[1]);
 }
 
-export function extractArticle(html, source, entry) {
-  const { document } = parseHTML(html);
-  const title = cleanText(document.querySelector('h1')?.textContent || entry.title || '');
-  const selectors = source.contentSelector
+// 官方文章的正文區塊：文字擷取與收集圖片共用同一組選擇器。
+export function contentSelectors(source) {
+  return source.contentSelector
     ? [source.contentSelector]
     : source.id === 'claude_dev'
       ? ['.prose']
       : ['article#mainContent', 'article', 'main'];
-  const root = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+}
+
+export function extractArticle(html, source, entry) {
+  const { document } = parseHTML(html);
+  const title = cleanText(document.querySelector('h1')?.textContent || entry.title || '');
+  const root = contentSelectors(source)
+    .map((selector) => document.querySelector(selector))
+    .find(Boolean);
   if (!root) throw new Error(`Article body not found for ${entry.url}`);
   // Remove adjacent posts and site controls before collecting every body section.
   for (const unwanted of root.querySelectorAll(
@@ -286,6 +292,7 @@ export async function discoverSource(source, fetcher = fetch) {
 
 export async function loadArticle(source, entry, fetcher = fetch, env = {}) {
   if (!canonicalArticleUrl(entry.url, source)) throw new Error('Article URL outside configured source');
+  // html 是抓到的網頁原始碼，供收集正文圖片；Markdown 來源另抓網頁，取不到時以 htmlError 說明原因。
   let article;
   try {
     if (source.markdown) {
@@ -299,8 +306,14 @@ export async function loadArticle(source, entry, fetcher = fetch, env = {}) {
         content,
         contentMethod: 'official_markdown',
       };
+      try {
+        article.html = await fetchText(entry.url, fetcher);
+      } catch (error) {
+        article.htmlError = error.message;
+      }
     } else {
-      article = extractArticle(await fetchText(entry.url, fetcher), source, entry);
+      const html = await fetchText(entry.url, fetcher);
+      article = { ...extractArticle(html, source, entry), html };
     }
   } catch (error) {
     if (!env.BROWSER) throw error;
@@ -310,7 +323,7 @@ export async function loadArticle(source, entry, fetcher = fetch, env = {}) {
     });
     const rendered = await readBoundedText(response);
     const html = response.headers.get('content-type')?.includes('json') ? JSON.parse(rendered).result : rendered;
-    article = { ...extractArticle(html, source, entry), contentMethod: 'browser_html' };
+    article = { ...extractArticle(html, source, entry), contentMethod: 'browser_html', html };
   }
   // Fail instead of silently dropping the end of the article.
   const limit = Number(env.MAX_ARTICLE_CHARS || 150000);

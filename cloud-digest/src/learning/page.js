@@ -845,6 +845,7 @@ function moreMenu(item){
   const toggle=el('button',{type:'button','aria-label':'更多動作','aria-haspopup':'menu','aria-expanded':'false',text:'⋯'});
   const entries=[];
   if(['ready','partial','needs_attention','error'].includes(item.status))entries.push(['只重寫文字',async()=>{if(!await askConfirm('沿用已保存的來源與媒體解析，用 '+textModelName()+' 重寫文字。'+(item.edition==='legacy_digest'?'舊導讀沒有保存原文時，會先重抓官方公開原文。':'不重新取得來源。')+'要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/rewrite','POST',{});message('已排入重寫。');await refreshArticle();await updateListItem(item.id);},toggle,'送出中…');}]);
+  if(item.refetchable&&['ready','partial','needs_attention','error'].includes(item.status))entries.push(['重抓原文並整理',async()=>{if(!await askConfirm('重新抓取官方原文與正文圖片（圖表會用 Browser Run 截圖，圖片解析產生少量 Flash 費用），再用 '+textModelName()+' 重新整理文字。手動貼上的原文不會被覆蓋。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/retry','POST',{});message('已排入重抓與整理。');await refreshArticle();await updateListItem(item.id);},toggle,'送出中…');}]);
   if(['ready','partial'].includes(item.status)&&item.edition==='detailed')entries.push(['重送通知',async()=>{if(!await askConfirm('用目前保存的內容再發一次 Telegram 通知，不重新生成。要繼續嗎？'))return;run(async()=>{await api('items/'+item.id+'/renotify','POST',{});message('已重送通知。');},toggle,'送出中…');}]);
   if(!entries.length)return null;
   const menu=el('div',{class:'menu',role:'menu','aria-label':'更多動作',hidden:''},entries.map(([label,act])=>{const b=el('button',{type:'button',role:'menuitem',text:label});b.onclick=()=>{closeMenu(menu);act();};return b;}));
