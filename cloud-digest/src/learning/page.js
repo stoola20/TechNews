@@ -5,8 +5,8 @@ export const LEARNING_PAGE = String.raw`<!doctype html>
 <style>${STYLE}
 html,body{height:100%}
 body.app{display:flex;flex-direction:column}
-/* 頁首：品牌、置中搜尋、右側入口；959px 以下搜尋收成放大鏡按鈕。 */
-body.app .top{display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,560px) minmax(0,1fr);flex-wrap:nowrap}
+/* 頁首：品牌、置中搜尋、右側入口；兩側欄至少放得下內容，避免入口蓋到搜尋框。959px 以下搜尋收成放大鏡按鈕。 */
+body.app .top{display:grid;grid-template-columns:minmax(max-content,1fr) minmax(240px,560px) minmax(max-content,1fr);flex-wrap:nowrap}
 .top .brand{margin-right:0;white-space:nowrap}.top nav{justify-self:end;gap:4px}.top nav button{white-space:nowrap}
 #search-form{position:relative}#search-form svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:16px;height:16px;opacity:.75;pointer-events:none}
 #search{width:100%;min-height:40px;border:0;border-radius:10px;padding:8px 40px 8px 36px;background:rgba(255,255,255,.14);color:#fff}
@@ -173,7 +173,7 @@ section.block{border-top:1px solid var(--line);margin-top:28px;padding-top:20px;
 </style></head><body class="app" data-view="list" data-mode="">
 <header class="top"><a class="brand" href="/learning">TechNews<span class="long"> 文章庫</span></a>
 <form id="search-form" role="search"><label class="sr" for="search">搜尋標題、正文與保存的原文</label><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="search" type="search" placeholder="搜尋標題、正文與原文"><kbd aria-hidden="true">/</kbd></form>
-<nav><button type="button" id="search-open" aria-expanded="false" aria-controls="search-form"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="sr">搜尋</span></button><a href="/learning?view=review" data-mode="review" class="mode-link"><span class="long">今日</span>複習<span id="review-count" class="count" hidden></span></a><a href="/learning?view=week" data-mode="week" class="mode-link"><span class="long">每週</span>回顧</a><span id="runner-pill" class="pill" role="status">狀態載入中</span><a href="/learning/admin">管理</a><button id="logout" class="hidden">登出</button></nav></header>
+<nav><button type="button" id="search-open" aria-expanded="false" aria-controls="search-form"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="sr">搜尋</span></button><a href="/learning?view=review" data-mode="review" class="mode-link"><span><span class="long">今日</span>複習</span><span id="review-count" class="count" hidden></span></a><a href="/learning?view=week" data-mode="week" class="mode-link"><span><span class="long">每週</span>回顧</span></a><span id="runner-pill" class="pill" role="status">狀態載入中</span><a href="/learning/admin">管理</a><button id="logout" class="hidden">登出</button></nav></header>
 <div id="feedback" role="status" aria-live="polite"></div>
 ${LOGIN}
 <main id="app" class="layout hidden">
@@ -576,10 +576,10 @@ const triageMode={
     }finally{this.busy=false;}
   },
 };
-// 今日複習：一次一題，送出後由 AI 批改，顯示回饋後進下一題。
+// 今日複習：一次一題，送出後由 AI 批改，顯示回饋後進下一題。每題作答前後都可以移出複習。
 const reviewMode={
-  data:null,attempt:null,timer:null,
-  async open(){clearTimeout(this.timer);this.attempt=null;this.data=await api('reviews/today');this.render();},
+  data:null,attempt:null,reviewId:null,timer:null,
+  async open(){clearTimeout(this.timer);this.attempt=null;this.reviewId=null;this.data=await api('reviews/today');this.render();},
   head(){
     const back=el('a',{href:urlFor({...view,mode:'',article:null}),text:'回到列表'});back.onclick=e=>{if(e.metaKey||e.ctrlKey||e.shiftKey||e.button)return;e.preventDefault();run(()=>navigate({mode:'',article:null}));};
     const d=this.data;
@@ -591,8 +591,9 @@ const reviewMode={
       const a=this.attempt;
       if(ATTEMPT_WAIT[a.status]){box.replaceChildren(this.head(),el('div',{class:'card'},[el('p',{},[el('span',{class:'spinner','aria-hidden':'true'}),document.createTextNode(ATTEMPT_WAIT[a.status])])]));this.poll();return;}
       const next=el('button',{type:'button',class:'primary',text:'下一題'});next.onclick=()=>run(()=>this.open(),next,'載入中…');
+      const dismiss=this.dismissButton();
       const card=el('div',{class:'card',id:'review-card'},a.status==='error'?[el('p',{class:'error',text:'批改失敗：'+(a.error||'原因不明')})]:attemptNodes(a,quizArea));
-      box.replaceChildren(this.head(),card,el('div',{class:'actions'},[next]));
+      box.replaceChildren(this.head(),card,el('div',{class:'actions'},[next,...(dismiss?[dismiss]:[])]));
       const h=card.querySelector('.summary');if(h){h.setAttribute('tabindex','-1');h.focus({preventScroll:true});}
       return;
     }
@@ -604,13 +605,24 @@ const reviewMode={
     }
     const open=quizArea.articleLink(item.item_id,item.title);
     const area=el('textarea',{id:'review-answer',maxlength:'2000',placeholder:'用自己的話回答'}),unsure=el('input',{type:'checkbox',id:'review-unsure'});
-    const submit=el('button',{class:'primary',text:'送出答案'});
+    this.reviewId=item.id;
+    const submit=el('button',{class:'primary',text:'送出答案'}),dismiss=this.dismissButton();
     const form=el('form',{class:'card',id:'review-card'},[el('p',{class:'meta',text:'第 '+item.stage+' 階・到期 '+item.due_date}),el('h2',{id:'review-question',tabindex:'-1',text:item.question}),
       el('p',{class:'muted'},[document.createTextNode('出自：'),open,document.createTextNode(item.publisher?'・'+item.publisher:'')]),
-      el('label',{class:'sr',for:'review-answer',text:'你的答案'}),area,el('label',{class:'unsure'},[unsure,document.createTextNode('不確定')]),el('div',{class:'actions'},[submit])]);
+      el('label',{class:'sr',for:'review-answer',text:'你的答案'}),area,el('label',{class:'unsure'},[unsure,document.createTextNode('不確定')]),el('div',{class:'actions'},[submit,dismiss])]);
     form.onsubmit=e=>{e.preventDefault();run(async()=>{this.attempt=await api('reviews/'+item.id+'/attempts','POST',{answer:area.value,unsure:unsure.checked});this.data=await api('reviews/today');this.render();refreshEntries();},submit,'批改中…');};
     box.replaceChildren(this.head(),form);
     $('review-question').focus({preventScroll:true});$('reader').scrollTop=0;
+  },
+  // 不再複習這題：確認後移出排程，直接換下一題。
+  dismissButton(){
+    const id=this.reviewId;if(!id)return null;
+    const b=el('button',{type:'button',text:'不再複習這題'});
+    b.onclick=async()=>{
+      if(!await askConfirm('這題會移出複習，之後不會再出現。重做同一份測驗答錯也不會加回。','不再複習',true))return;
+      run(async()=>{await api('reviews/'+id+'/dismiss','POST',{});await this.open();refreshEntries();},b,'移出中…');
+    };
+    return b;
   },
   poll(){clearTimeout(this.timer);this.timer=setTimeout(async()=>{if(view.mode!=='review'||!this.attempt)return;try{this.attempt=await api('attempts/'+this.attempt.id);}catch(e){}this.render();},5000);},
 };
