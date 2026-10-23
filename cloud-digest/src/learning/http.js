@@ -19,7 +19,7 @@ import {
   nowIso,
 } from './store.js';
 import { exchange, xRead, bookmarksEnabled, xReads, setXReads } from './x.js';
-import { resetIncomplete } from './evidence.js';
+import { resetIncomplete, requestRefetch } from './evidence.js';
 import { renderMarkdown } from './markdown.js';
 import {
   resolveItemId,
@@ -586,6 +586,7 @@ export function createLearningHandler(deps = {}) {
         if (match[2] === '/retry' && request.method === 'POST') {
           if (current.status === 'awaiting_backfill') throw new Error('請先確認既有書籤回補');
           await resetIncomplete(env, id);
+          await requestRefetch(env, current);
           await query(
             env,
             "UPDATE learning_items SET status='queued',attempts=0,next_attempt_at=NULL,last_error=NULL WHERE id=?",

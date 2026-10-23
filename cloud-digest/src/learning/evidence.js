@@ -49,12 +49,20 @@ function officialMedia(source, url, article) {
   return article.html ? pageMedia(article.html, contentSelectors(source), url) : [];
 }
 
+// 補取並整理時，官方文章也重抓原文與媒體；只有官方來源的文章會留這個標記。
+export async function requestRefetch(env, item) {
+  if (item.kind === 'x' || !(await officialSourceFor(env, item))) return false;
+  await setSetting(env, `refetch:${item.id}`, true);
+  return true;
+}
 export async function acquireEvidence(env, item, deps = {}) {
   const fetcher = deps.fetcher || fetch;
   const loadWeb = deps.webEvidence || webEvidence;
   let sources = await evidence(env, item.id);
   let primary = sources.find((s) => s.relation === 'primary' && s.status === 'available' && s.content);
-  if (!primary) {
+  // 重抓失敗時丟錯、標記保留，文章照一般失敗流程重試，不用舊原文默默完成。
+  const refetch = item.kind !== 'x' && (await setting(env, `refetch:${item.id}`, false));
+  if (!primary || refetch) {
     const official = item.kind === 'x' ? null : await officialSourceFor(env, item);
     const source =
       item.kind === 'x'
@@ -69,8 +77,17 @@ export async function acquireEvidence(env, item, deps = {}) {
       } else throw new Error('來源沒有可取得的主文');
     }
     const key = await saveEvidence(env, item.id, source);
+    // 這次取得網頁 HTML 的話，先前「網頁取不到」的佔位缺漏就不再成立。
+    if (item.kind !== 'x' && !source.media?.some((m) => m.url?.endsWith(PAGE_HTML_MISSING)))
+      await query(
+        env,
+        'DELETE FROM learning_media WHERE item_id=? AND url LIKE ?',
+        item.id,
+        '%' + PAGE_HTML_MISSING,
+      ).run();
     await registerMedia(env, item.id, key, source.media);
     await saveArticle(env, item.id, source);
+    if (refetch) await query(env, 'DELETE FROM settings WHERE key=?', `learning:refetch:${item.id}`).run();
     primary = (await evidence(env, item.id)).find((s) => s.id === key);
   }
   if (item.kind !== 'x') return { pending: false, sources: await evidence(env, item.id) };

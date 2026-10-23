@@ -4,9 +4,11 @@
 
 **Blocked by:** 01, 02
 
-**Status:** pending
+**Status:** done
 
-- [ ] retry 對官方文章留一個重抓標記；`acquireEvidence` 看到標記時重新走官方擷取，成功後清掉標記
-- [ ] 非官方文章、X 貼文行為不變
-- [ ] 舊導讀搬移來的官方文章（`legacy_official`）也能重抓
-- [ ] 測試：重抓更新原文與補登記圖片、手動貼上原文不被覆蓋、重抓失敗留待重試、非官方文章不重抓
+- [x] retry 對官方文章留一個重抓標記；`acquireEvidence` 看到標記時重新走官方擷取，成功後清掉標記
+- [x] 非官方文章、X 貼文行為不變
+- [x] 舊導讀搬移來的官方文章（`legacy_official`）也能重抓
+- [x] 測試：重抓更新原文與補登記圖片、手動貼上原文不被覆蓋、重抓失敗留待重試、非官方文章不重抓
+
+**實作紀錄：** 重抓標記存在 `settings` 的 `learning:refetch:<文章 ID>`，由 retry 端點寫入，`acquireEvidence` 重抓成功後刪除。證據 ID 由文章、網址與關係決定，所以重抓會更新同一筆；媒體用 `INSERT OR IGNORE`，已登記的不重複。重抓後發表時間仍以收件時間判斷是否過期，已通知過的文章不會因此被篩掉。舊導讀搬移來的文章收件紀錄 `origin` 也是 `official`，正式資料庫已確認 `spending-your-effort` 這篇有 `source_id: claude_dev`。

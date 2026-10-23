@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLearningHandler } from '../src/learning/http.js';
-import { acquireEvidence } from '../src/learning/evidence.js';
+import { acquireEvidence, requestRefetch } from '../src/learning/evidence.js';
 import { prepareMedia } from '../src/learning/media.js';
 import { item, rows, query } from '../src/learning/store.js';
 import { SOURCES, loadArticle } from '../src/sources.js';
-import { environment, recorder } from './helpers.js';
+import { environment, recorder, request } from './helpers.js';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z'),
   now = () => NOW;
@@ -196,4 +196,89 @@ test('截圖失敗：沒有 Browser Rendering、回應錯誤或不是 PNG 都記
   assert.equal(result.pending, false);
   assert.equal(result.gaps[0].status, 'needs_attention');
   assert.equal(s.env.MEDIA.objects.size, 0);
+});
+
+const setting = async (env, id) =>
+  !!(await query(env, 'SELECT 1 FROM settings WHERE key=?', 'learning:refetch:' + id).first());
+const primaryContent = async (env, id) =>
+  (await query(env, "SELECT content FROM learning_evidence WHERE item_id=? AND relation='primary'", id).first())
+    .content;
+
+test('補取並整理：官方文章重抓原文，同一筆證據更新內容、補登記圖片並移除網頁缺漏', async () => {
+  const s = await officialItem({ htmlError: 'Source HTTP 503' });
+  await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  const before = await primaryContent(s.env, s.id);
+  assert.equal((await s.handler.fetch(request('api/items/' + s.id + '/retry', 'POST', {}), s.env)).status, 202);
+  assert.equal(await setting(s.env, s.id), true);
+  const deps = {
+    loadArticle: async (source, entry) => ({
+      ...entry,
+      content: body + '更新段落',
+      contentMethod: 'article_html',
+      html: page('<img src="/diagrams/new.png" width="960">'),
+    }),
+  };
+  await acquireEvidence(s.env, await item(s.env, s.id), deps);
+  assert.notEqual(await primaryContent(s.env, s.id), before);
+  assert.match(await primaryContent(s.env, s.id), /更新段落/);
+  assert.equal(
+    (await rows(s.env, "SELECT id FROM learning_evidence WHERE item_id=? AND relation='primary'", s.id)).length,
+    1,
+  );
+  assert.deepEqual(
+    (await media(s.env, s.id)).map((m) => m.url),
+    ['https://developers.openai.com/diagrams/new.png'],
+  );
+  assert.equal(await setting(s.env, s.id), false);
+  // 標記清掉後，下次處理沿用已存原文，不再重抓。
+  let loads = 0;
+  await acquireEvidence(s.env, await item(s.env, s.id), { loadArticle: async () => (loads++, {}) });
+  assert.equal(loads, 0);
+});
+
+test('重抓失敗：標記保留、原文不變，文章照一般失敗流程重試', async () => {
+  const s = await officialItem({ html: page('') });
+  await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  await s.handler.fetch(request('api/items/' + s.id + '/retry', 'POST', {}), s.env);
+  await assert.rejects(
+    acquireEvidence(s.env, await item(s.env, s.id), {
+      loadArticle: async () => {
+        throw new Error('Source HTTP 500');
+      },
+    }),
+    /500/,
+  );
+  assert.equal(await setting(s.env, s.id), true);
+  assert.equal(await primaryContent(s.env, s.id), body);
+});
+
+test('重抓不覆蓋手動貼上的原文，但仍補登記網頁圖片', async () => {
+  const s = await officialItem({ html: page('') });
+  await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  await query(
+    s.env,
+    "UPDATE learning_evidence SET content='使用者貼上的原文',metadata_json=json_set(metadata_json,'$.provided_by','user') WHERE item_id=?",
+    s.id,
+  ).run();
+  await s.handler.fetch(request('api/items/' + s.id + '/retry', 'POST', {}), s.env);
+  await acquireEvidence(s.env, await item(s.env, s.id), {
+    loadArticle: async (source, entry) => ({
+      ...entry,
+      content: body,
+      html: page('<img src="/a/chart.png" width="900">'),
+    }),
+  });
+  assert.equal(await primaryContent(s.env, s.id), '使用者貼上的原文');
+  assert.deepEqual(
+    (await media(s.env, s.id)).map((m) => m.url),
+    ['https://developers.openai.com/a/chart.png'],
+  );
+});
+
+test('非官方文章與 X 貼文按補取不留重抓標記', async () => {
+  const s = await officialItem({ html: page('') });
+  await query(s.env, 'DELETE FROM learning_intakes WHERE item_id=?', s.id).run();
+  await s.handler.fetch(request('api/items/' + s.id + '/retry', 'POST', {}), s.env);
+  assert.equal(await setting(s.env, s.id), false);
+  assert.equal(await requestRefetch(s.env, { id: 'x1', kind: 'x' }), false);
 });
