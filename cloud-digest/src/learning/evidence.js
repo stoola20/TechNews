@@ -1,12 +1,13 @@
 import { rows, query, saveEvidence, evidence, setting, setSetting } from './store.js';
-import { webEvidence, canonicalUrl } from './network.js';
+import { webEvidence, canonicalUrl, pageMedia } from './network.js';
 import { postEvidence, xRead, postParameters, normalizePost, registerMedia, saveArticle } from './x.js';
-import { loadArticle, getSources } from '../sources.js';
+import { loadArticle, getSources, contentSelectors } from '../sources.js';
 import { effectiveEnvironment } from '../settings.js';
 import { xArticleUrl, queueXArticle } from './local.js';
 import { now } from './clock.js';
+import { PAGE_HTML_MISSING } from './media.js';
 
-// 官方來源沿用既有官方擷取（含 Markdown 與瀏覽器備援），第一版只取全文文字，不抓媒體。
+// 官方來源沿用既有官方擷取（含 Markdown 與瀏覽器備援）；圖片從網頁 HTML 的正文區塊收集。
 async function officialSourceFor(env, item) {
   const intake = await query(
     env,
@@ -36,8 +37,16 @@ async function officialEvidence(env, { source, metadata }, item, deps, fetcher) 
     content: article.content,
     published_at: article.publishedAt,
     metadata: { title: article.title, content_method: article.contentMethod, official_source: source.id },
-    media: [],
+    media: officialMedia(source, item.url, article),
   };
+}
+// 網頁 HTML 取不到時登記一筆待處理媒體，讓缺漏看得到，不當作這篇沒有圖片。
+function officialMedia(source, url, article) {
+  if (article.htmlError)
+    return [
+      { url: `${url}${PAGE_HTML_MISSING}`, type: 'photo', error: `官方網頁取不到，無法收集圖片：${article.htmlError}` },
+    ];
+  return article.html ? pageMedia(article.html, contentSelectors(source), url) : [];
 }
 
 export async function acquireEvidence(env, item, deps = {}) {

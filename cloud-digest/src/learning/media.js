@@ -3,6 +3,8 @@ import { rows, query, reserve, settle, uncertain, nowIso } from './store.js';
 import { now } from './clock.js';
 
 const MAX_BYTES = 200 * 1024 * 1024;
+// 官方網頁 HTML 取不到時登記的佔位媒體：只用來顯示缺漏，不下載；重抓原文成功後移除。
+export const PAGE_HTML_MISSING = '#technews-page-html';
 // 外部網頁的裝飾圖片（舊資料可能已登記）改標 decorative：不下載、不解析，也不算缺漏。
 const NO_ELEMENT = { getAttribute: () => null, closest: () => null };
 export async function skipDecorative(env, itemId) {
@@ -44,6 +46,10 @@ export async function prepareMedia(env, itemId, fetcher = fetch, options = {}) {
   let pending = false;
   for (const asset of assets) {
     if (['needs_attention', 'expired'].includes(asset.status)) continue;
+    if (asset.url.endsWith(PAGE_HTML_MISSING)) {
+      await fail(env, asset, asset.error || '官方網頁取不到，無法收集圖片');
+      continue;
+    }
     if (asset.duration_ms > 1200000) {
       await fail(env, asset, '影片超過 20 分鐘，保留待人工處理');
       continue;

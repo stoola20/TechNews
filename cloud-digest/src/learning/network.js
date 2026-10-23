@@ -92,10 +92,8 @@ export function decorativeImage(img, source) {
   if (size != null && size <= 200) return true;
   return !!img.closest?.('header,nav,footer,aside');
 }
-// 沒有 <article>／<main> 的頁面退到 <body>，先移除導覽、頁首、頁尾與表單等非正文區塊。
-function pageEvidence(raw, url, resolved) {
-  const doc = parseHTML(raw).document;
-  const root = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+// 正文區塊裡的 <img>：取最大尺寸的來源，排除裝飾圖片，同一張圖只登記一次。
+function bodyImages(root, resolved) {
   const media = [...(root?.querySelectorAll('img') || [])].flatMap((img) => {
     const source =
       img.getAttribute('data-src') ||
@@ -110,6 +108,20 @@ function pageEvidence(raw, url, resolved) {
       return [];
     }
   });
+  return media.filter((m, i) => media.findIndex((x) => x.url === m.url) === i);
+}
+// 官方文章的圖片：正文區塊依來源設定的選擇器，找不到時退到 <article>／<main>／<body>。
+export function pageMedia(html, selectors, resolved) {
+  const doc = parseHTML(html).document;
+  const root =
+    [...selectors, 'article', 'main'].map((selector) => doc.querySelector(selector)).find(Boolean) || doc.body;
+  return bodyImages(root, resolved);
+}
+// 沒有 <article>／<main> 的頁面退到 <body>，先移除導覽、頁首、頁尾與表單等非正文區塊。
+function pageEvidence(raw, url, resolved) {
+  const doc = parseHTML(raw).document;
+  const root = doc.querySelector('article') || doc.querySelector('main') || doc.body;
+  const media = bodyImages(root, resolved);
   let entry;
   try {
     entry = extractArticle(raw, { id: 'learning', contentSelector: null }, { url: resolved, title: url });
