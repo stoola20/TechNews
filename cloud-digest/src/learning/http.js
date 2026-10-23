@@ -624,6 +624,8 @@ export function createLearningHandler(deps = {}) {
             item: {
               ...fresh,
               publisher,
+              // 官方來源收件的文章可以重抓原文與圖片；閱讀頁「⋯」選單據此顯示「重抓原文並整理」。
+              refetchable: fresh.kind !== 'x' && intakes.some((k) => k.origin === 'official'),
               purge_at: purgeAt(fresh.deleted_at),
               body_html: renderMarkdown(fresh.body || ''),
             },

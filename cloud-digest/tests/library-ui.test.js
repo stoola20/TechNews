@@ -106,6 +106,8 @@ test('只重寫文字不重抓來源；重送通知只用保存內容；頁面�
     assert.doesNotMatch(script, /(^|[^.\w])confirm\(/);
     assert.match(script, /askConfirm\(/);
   }
+  // 官方文章的「⋯」選單有重抓原文，走補取端點。
+  assert.match(LEARNING_PAGE, /item\.refetchable&&[^\n]*'重抓原文並整理'[^\n]*\/retry'/);
   const admin = await handler.fetch(new Request('https://learning.example.org/learning/admin'), env);
   assert.equal(admin.status, 200);
   assert.match(admin.headers.get('content-security-policy'), /frame-ancestors 'none'/);

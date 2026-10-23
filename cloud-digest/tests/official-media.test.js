@@ -212,6 +212,8 @@ test('補取並整理：官方文章重抓原文，同一筆證據更新內容�
   const s = await officialItem({ htmlError: 'Source HTTP 503' });
   await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
   const before = await primaryContent(s.env, s.id);
+  const view = await (await s.handler.fetch(request('api/items/' + s.id), s.env)).json();
+  assert.equal(view.item.refetchable, true);
   assert.equal((await s.handler.fetch(request('api/items/' + s.id + '/retry', 'POST', {}), s.env)).status, 202);
   assert.equal(await setting(s.env, s.id), true);
   const deps = {
@@ -282,6 +284,8 @@ test('重抓不覆蓋手動貼上的原文，但仍補登記網頁圖片', async
 test('非官方文章與 X 貼文按補取不留重抓標記', async () => {
   const s = await officialItem({ html: page('') });
   await query(s.env, 'DELETE FROM learning_intakes WHERE item_id=?', s.id).run();
+  const view = await (await s.handler.fetch(request('api/items/' + s.id), s.env)).json();
+  assert.equal(view.item.refetchable, false);
   await s.handler.fetch(request('api/items/' + s.id + '/retry', 'POST', {}), s.env);
   assert.equal(await setting(s.env, s.id), false);
   assert.equal(await requestRefetch(s.env, { id: 'x1', kind: 'x' }), false);
