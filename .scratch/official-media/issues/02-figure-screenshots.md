@@ -6,10 +6,12 @@
 
 **Blocked by:** 01
 
-**Status:** pending
+**Status:** done
 
-- [ ] 選圖函式與 `#technews-figure-N` 網址格式
-- [ ] 官方文章與網頁分享都登記 figure 媒體
-- [ ] `prepareMedia` 對 figure 媒體改用截圖；沒有 `BROWSER` binding、截圖失敗、回應不是圖片時記錯誤
-- [ ] 截圖預設狀態：桌機 viewport、PNG；R2 費用預估與結算沿用現有規則
-- [ ] 測試：選圖規則（SVG、互動元件、程式碼 figure、小 SVG、含 img）、上限、截圖成功與失敗、到期後重截
+- [x] 選圖函式與 `#technews-figure-N` 網址格式
+- [x] 官方文章與網頁分享都登記 figure 媒體
+- [x] `prepareMedia` 對 figure 媒體改用截圖；沒有 `BROWSER` binding、截圖失敗、回應不是圖片時記錯誤
+- [x] 截圖預設狀態：桌機 viewport、PNG；R2 費用預估與結算沿用現有規則
+- [x] 測試：選圖規則（SVG、互動元件、程式碼 figure、小 SVG、含 img）、上限、截圖成功與失敗、到期後重截
+
+**實作紀錄：** N 依整頁 `<figure>` 的順序計算（包含正文外的），截圖時注入的 script 用同一個 `document.querySelectorAll('figure')` 找回元素，等標記出現後再截；整頁先捲動一次，讓延遲載入的互動元件畫出來。viewport 1280×900、`deviceScaleFactor: 2`，讓圖表小字清楚。截圖不經過一般下載與大小宣告檢查，改成上限 20 MB。靜態 HTML 與瀏覽器渲染後的 `<figure>` 數量不同時，截圖會截錯或找不到元素；後者會記錯誤留待處理。實際截圖品質要在票 04 部署後確認。

@@ -87,3 +87,113 @@ test('loadArticle：一般來源帶回抓到的 HTML；Markdown 來源另抓網�
   assert.equal(failed.contentMethod, 'official_markdown');
   assert.match(failed.htmlError, /503/);
 });
+
+// Gemini 檔案上傳的替身：截圖存進 R2 之後照常上傳。
+function gemini(url) {
+  if (url.hostname !== 'generativelanguage.googleapis.com') return null;
+  if (url.pathname === '/upload/v1beta/files')
+    return new Response(null, {
+      headers: { 'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/session/1' },
+    });
+  return Response.json({
+    file: { name: 'files/f1', state: 'ACTIVE', uri: 'https://generativelanguage.googleapis.com/v1beta/files/f1' },
+  });
+}
+function browser(respond = () => new Response(new Uint8Array(4096), { headers: { 'content-type': 'image/png' } })) {
+  const calls = [];
+  return {
+    calls,
+    async quickAction(kind, options) {
+      calls.push({ kind, options });
+      return respond(options);
+    },
+  };
+}
+const figures = `
+  <figure aria-label="effort curve"><svg width="634" height="468" viewBox="0 0 634 468"></svg><figcaption>FIG A</figcaption></figure>
+  <figure aria-label="interactive app"><div class="efx"><button>low</button><button>high</button></div></figure>
+  <figure><pre><code>npm install</code></pre><figcaption>安裝指令</figcaption></figure>
+  <figure><svg width="16" height="16" viewBox="0 0 16 16"></svg></figure>
+  <figure><img src="/diagrams/photo.png" width="960"><figcaption>照片</figcaption></figure>
+  <figure aria-label="chart"><canvas></canvas></figure>`;
+
+test('正文圖表：SVG、互動元件、canvas 登記成截圖媒體；程式碼、小圖示、已有 <img> 的 figure 不截', async () => {
+  const html = `<html><body><aside><figure aria-label="側欄"><svg width="900" height="900"></svg></figure></aside>${page(figures)}</body></html>`;
+  const s = await officialItem({ html });
+  await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  assert.deepEqual(
+    (await media(s.env, s.id)).map((m) => [m.url, m.status]),
+    [
+      ['https://developers.openai.com/diagrams/photo.png', 'pending'],
+      [POST + '#technews-figure-1', 'pending'],
+      [POST + '#technews-figure-2', 'pending'],
+      [POST + '#technews-figure-6', 'pending'],
+    ],
+  );
+});
+
+test('正文圖表每篇最多 8 張，多的登記為待處理並寫明原因', async () => {
+  const many = Array.from({ length: 10 }, (_, i) => `<figure aria-label="chart ${i}"><canvas></canvas></figure>`);
+  const s = await officialItem({ html: page(many.join('')) });
+  await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  const list = await media(s.env, s.id);
+  assert.equal(list.filter((m) => m.status === 'pending').length, 8);
+  assert.deepEqual(
+    list.filter((m) => m.status === 'needs_attention').map((m) => [m.url.split('#')[1], m.error]),
+    [
+      ['technews-figure-8', '正文圖表超過 8 張，這張沒有截圖'],
+      ['technews-figure-9', '正文圖表超過 8 張，這張沒有截圖'],
+    ],
+  );
+});
+
+test('截圖流程：標記第 N 個 figure 只截那個元素，存進 R2 後照常上傳 Gemini；到期後重新截圖', async () => {
+  const s = await officialItem({ html: page(figures) });
+  s.env.BROWSER = browser();
+  const net = recorder(async (url) => gemini(url));
+  await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  await query(
+    s.env,
+    "UPDATE learning_media SET status='decorative' WHERE item_id=? AND url NOT LIKE ?",
+    s.id,
+    '%figure-1',
+  ).run();
+  const result = await prepareMedia(s.env, s.id, net.fetcher);
+  assert.equal(result.media.length, 1);
+  assert.equal(s.env.BROWSER.calls.length, 1);
+  const call = s.env.BROWSER.calls[0];
+  assert.equal(call.kind, 'screenshot');
+  assert.equal(call.options.url, POST);
+  assert.equal(call.options.selector, '[data-technews-figure]');
+  assert.match(call.options.addScriptTag[0].content, /querySelectorAll\('figure'\)\[1\]/);
+  const [asset] = await rows(s.env, "SELECT * FROM learning_media WHERE item_id=? AND status='ready'", s.id);
+  assert.equal(asset.mime, 'image/png');
+  assert.equal(s.env.MEDIA.objects.get(asset.object_key).bytes.length, 4096);
+  // 沒有對原文網址發出一般下載。
+  assert.equal(net.calls.filter((c) => c.url.startsWith(POST)).length, 0);
+  // 30 天到期清掉 R2 後，補取時重新截圖。
+  await query(
+    s.env,
+    "UPDATE learning_media SET object_key=NULL,file_json=NULL,status='pending' WHERE id=?",
+    asset.id,
+  ).run();
+  await prepareMedia(s.env, s.id, net.fetcher);
+  assert.equal(s.env.BROWSER.calls.length, 2);
+});
+
+test('截圖失敗：沒有 Browser Rendering、回應錯誤或不是 PNG 都記錯誤，三次後待處理', async () => {
+  const s = await officialItem({ html: page('<figure aria-label="chart"><canvas></canvas></figure>') });
+  const net = recorder(async (url) => gemini(url));
+  await acquireEvidence(s.env, await item(s.env, s.id), s.deps);
+  let result = await prepareMedia(s.env, s.id, net.fetcher);
+  assert.equal(result.pending, true);
+  assert.match(result.gaps[0].error, /未設定 Browser Rendering/);
+  s.env.BROWSER = browser(() => Response.json({ errors: ['selector not found'] }, { status: 422 }));
+  result = await prepareMedia(s.env, s.id, net.fetcher);
+  assert.match(result.gaps[0].error, /截圖失敗（HTTP 422）/);
+  s.env.BROWSER = browser(() => new Response('<html></html>', { headers: { 'content-type': 'text/html' } }));
+  result = await prepareMedia(s.env, s.id, net.fetcher);
+  assert.equal(result.pending, false);
+  assert.equal(result.gaps[0].status, 'needs_attention');
+  assert.equal(s.env.MEDIA.objects.size, 0);
+});

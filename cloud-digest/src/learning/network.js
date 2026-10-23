@@ -110,18 +110,54 @@ function bodyImages(root, resolved) {
   });
   return media.filter((m, i) => media.findIndex((x) => x.url === m.url) === i);
 }
+// 正文裡沒有圖片檔的 <figure>（inline SVG 圖表、JS 互動元件）改用 Browser Rendering 截圖。
+// 網址記成「原文網址#technews-figure-N」，N 是整頁第幾個 <figure>，截圖時用同一個順序找回元素。
+export const FIGURE_MARK = '#technews-figure-';
+export const MAX_FIGURES = 8;
+export function figureIndex(url) {
+  const match = String(url || '').match(/#technews-figure-(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+export const figurePage = (url) => url.slice(0, url.lastIndexOf(FIGURE_MARK));
+function largeSvg(svg) {
+  const box = (svg.getAttribute('viewBox') || '')
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  const sizes = [Number(svg.getAttribute('width')), Number(svg.getAttribute('height')), box[2], box[3]];
+  return sizes.some((n) => Number.isFinite(n) && n > 200);
+}
+// 有圖片檔的交給 <img> 收集；只有程式碼、引言或表格的文字已在正文裡，不截圖。
+function visualFigure(figure) {
+  if (figure.querySelector('img,video,picture')) return false;
+  if (figure.querySelector('canvas') || [...figure.querySelectorAll('svg')].some(largeSvg)) return true;
+  if (figure.querySelector('pre,code,blockquote,table')) return false;
+  return !!(figure.getAttribute('aria-label') || figure.querySelector('figcaption'));
+}
+function bodyFigures(doc, root, pageUrl) {
+  if (!root) return [];
+  const all = [...doc.querySelectorAll('figure')];
+  const page = canonicalUrl(pageUrl);
+  return all
+    .filter((figure) => root.contains(figure) && visualFigure(figure))
+    .map((figure, n) => ({
+      url: page + FIGURE_MARK + all.indexOf(figure),
+      type: 'photo',
+      ...(n >= MAX_FIGURES ? { error: `正文圖表超過 ${MAX_FIGURES} 張，這張沒有截圖` } : {}),
+    }));
+}
 // 官方文章的圖片：正文區塊依來源設定的選擇器，找不到時退到 <article>／<main>／<body>。
 export function pageMedia(html, selectors, resolved) {
   const doc = parseHTML(html).document;
   const root =
     [...selectors, 'article', 'main'].map((selector) => doc.querySelector(selector)).find(Boolean) || doc.body;
-  return bodyImages(root, resolved);
+  return [...bodyImages(root, resolved), ...bodyFigures(doc, root, resolved)];
 }
 // 沒有 <article>／<main> 的頁面退到 <body>，先移除導覽、頁首、頁尾與表單等非正文區塊。
 function pageEvidence(raw, url, resolved) {
   const doc = parseHTML(raw).document;
   const root = doc.querySelector('article') || doc.querySelector('main') || doc.body;
-  const media = bodyImages(root, resolved);
+  const media = [...bodyImages(root, resolved), ...bodyFigures(doc, root, resolved)];
   let entry;
   try {
     entry = extractArticle(raw, { id: 'learning', contentSelector: null }, { url: resolved, title: url });
