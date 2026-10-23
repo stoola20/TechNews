@@ -49,7 +49,7 @@ import { indexStatus, rebuildIndex } from './rag-index.js';
 import { relatedArticles, SIMILAR_MIN } from './retrieval.js';
 import { listQuizzes, quizView, attemptView, QuizError } from './quiz.js';
 import { webCheckSummary, setWebCheck } from './web-check.js';
-import { todayReviews, todayCount } from './reviews.js';
+import { todayReviews, todayCount, dismissReview } from './reviews.js';
 import { weekStats } from './week-stats.js';
 
 // 列表狀態群組：「需要處理」只放需要動手的情況；等待本機與費用暫停各自分開，不當成失敗。
@@ -700,6 +700,11 @@ export function createLearningHandler(deps = {}) {
       if (route === 'reviews/today' && request.method === 'GET') return json(await todayReviews(env));
       if (route === 'stats/week' && request.method === 'GET')
         return json(await weekStats(env, url.searchParams.get('start')));
+      const dismissMatch = route.match(/^reviews\/([0-9a-f-]{36})\/dismiss$/);
+      if (dismissMatch && request.method === 'POST') {
+        const result = await dismissReview(env, dismissMatch[1]);
+        return result.error ? json({ error: result.error[0] }, result.error[1]) : json(result);
+      }
       const reviewMatch = route.match(/^reviews\/([0-9a-f-]{36})\/attempts$/);
       if (reviewMatch && request.method === 'POST') {
         const attempt = await service.review(env, reviewMatch[1], await body(request));

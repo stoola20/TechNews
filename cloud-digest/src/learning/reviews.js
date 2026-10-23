@@ -77,11 +77,12 @@ export async function applyReviews(env, attemptId) {
       changed++;
     } else if (attempt.context === 'quiz' && (r.verdict !== 'correct' || unsure)) {
       const time = nowIso();
-      // 已完成的同一題又答錯：重新開始第 1 階。
+      // 已完成的同一題又答錯：重新開始第 1 階。移出複習的題目不再加回。
       await query(
         env,
         `INSERT INTO learning_reviews(id,quiz_id,number,item_id,stage,due_date,status,last_result,created_at,updated_at) VALUES(?,?,?,?,1,?,'active',?,?,?)
-        ON CONFLICT(quiz_id,number) DO UPDATE SET stage=1,due_date=excluded.due_date,status='active',last_result=excluded.last_result,completed_at=NULL,updated_at=excluded.updated_at`,
+        ON CONFLICT(quiz_id,number) DO UPDATE SET stage=1,due_date=excluded.due_date,status='active',last_result=excluded.last_result,completed_at=NULL,updated_at=excluded.updated_at
+        WHERE learning_reviews.status<>'dismissed'`,
         crypto.randomUUID(),
         attempt.quiz_id,
         r.number,
@@ -175,4 +176,14 @@ export async function reviewForAttempt(env, id) {
   if (review.status !== 'active' || !row || row.triage !== 'kept') return { error: ['這題目前不在複習中', 409] };
   if (review.due_date > taiwanDate()) return { error: ['這題還沒到期', 409] };
   return { review };
+}
+
+// 不再複習這題：移出複習排程，之後重做同一份測驗答錯也不會加回。不計入每週完成數。
+export async function dismissReview(env, id) {
+  const review = await query(env, 'SELECT * FROM learning_reviews WHERE id=?', id).first();
+  if (!review) return { error: ['複習題不存在', 404] };
+  if (review.status === 'done') return { error: ['這題已完成全部複習，之後不會再出現', 409] };
+  if (review.status !== 'active') return { error: ['這題已經移出複習', 409] };
+  await query(env, "UPDATE learning_reviews SET status='dismissed',updated_at=? WHERE id=?", nowIso(), id).run();
+  return { ok: true };
 }
